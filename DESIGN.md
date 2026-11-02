@@ -124,7 +124,7 @@ herdr-relay devices  # 列出、移除设备
 
 测试：`test/rtc-link.test.mjs`（主机端，werift 扮手机），`dev/rtc-smoke.mjs`（无头 Chrome，10 项：自动直连、终端、83 KB 回复分片、断开退回、再直连、关掉直连）。
 
-没在真 iPhone 上验证：Safari 的 mDNS 地址、同一 Wi-Fi 下能不能打通、Mac 上的代理软件（TUN 模式）会不会挡住局域网 UDP。
+真机：2026-11-03 在 iPhone 上的 **Chrome** 里打通，首页显示「已直连」。iPhone 上的 Chrome 也用 WebKit 引擎（苹果要求，欧盟以外），WebRTC 和 Safari 是同一套，所以 Safari 很可能也行，但没直接试过。蜂窝网络下能不能打通也没试过。
 
 ## 安全
 
