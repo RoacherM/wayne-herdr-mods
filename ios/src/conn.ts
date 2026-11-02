@@ -44,7 +44,8 @@ function start(saved: Saved, pair?: { token: string; name: string }) {
   problem.set("");
   const l = new Link({ relay: saved.relay, desktopId: saved.desktopId, desktopKey: saved.desktopKey, deviceKeys: boxKeysFromSecret(unb64(saved.deviceSecret)), pair });
   link = l;
-  l.addEventListener("status", (e: any) => { if (link === l) status.set(e.detail.status); });
+  console.log(`link: start ${pair ? "pairing" : "resume"} → ${saved.relay} desktop ${saved.desktopId}`);
+  l.addEventListener("status", (e: any) => { console.log(`link: status ${JSON.stringify(e.detail)}`); if (link === l) status.set(e.detail.status); });
   l.addEventListener("confirm", (e: any) => sas.set(e.detail.sas));
   l.addEventListener("ready", async (e: any) => {
     const r = e.detail;
@@ -53,6 +54,7 @@ function start(saved: Saved, pair?: { token: string; name: string }) {
     refresh();
   });
   l.addEventListener("fatal", async (e: any) => {
+    console.warn(`link: fatal ${JSON.stringify(e.detail)}`);
     problem.set(e.detail.message ?? e.detail.code);
     if (["unknown-device", "revoked"].includes(e.detail.code)) await save(null);
   });
@@ -73,7 +75,9 @@ export async function boot() {
 
 /** Pair with a link from `herdr-relay pair`. */
 export async function pairWith(text: string, deviceName: string) {
+  console.log(`pair: link of ${text.trim().length} chars`);
   const offer = decodePairLink(text.trim());
+  if (offer.e && offer.e < Date.now()) throw new Error("这个配对链接已过期，在 Mac 上重新运行 herdr-relay pair");
   const saved: Saved = { relay: offer.r, desktopId: offer.i, desktopKey: offer.k, desktopName: offer.n, deviceSecret: b64(newBoxKeys().secretKey) };
   paired.set(null);
   start(saved, { token: offer.t, name: deviceName });

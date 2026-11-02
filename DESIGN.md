@@ -220,8 +220,10 @@ nsh（Native Shell，https://nsh.dev ，Longbridge 开源，Apache-2.0）：用 
 终端页的做法：`ios/build-term.mjs` 把 xterm.js、`term/term.js`、CSS 打成一个 HTML 字符串（约 346 KB），用 `<WebView html>` 显示，不需要网络。原生和页面之间用字符串互发 JSON：原生 → 页面 `size/out/reset`；页面 → 原生 `ready/ack/input`。信用（credit）仍然在 xterm 画完之后才回给 Mac。
 
 遇到的问题：
+- **nsh 0.3.0 的 `wss://` 坏了**（真机配对失败的原因）：原生宿主的全局 `WebSocket` 和 `websocket` 模块一连 TLS 就报 rustls 的 `Could not automatically determine the process-level CryptoProvider`。`https` 的 fetch 和不加密的 `ws://` 正常。上游 10-27 修复（`464e7be`），晚于 0.3.0 发布。现在用 `curl -fsSL https://nsh.dev/install.sh | sh -s -- --source` 装 main 分支（实测 `df6aa34`）：真实中继在 macOS、Mac Catalyst 和 iOS 模拟器上都通过。无界面测试用的是测试工具自己的网络实现，测不出这个问题，所以 `ios/probe/NetProbe.tsx` 要在真宿主里跑。
+- main 分支和 0.3.0 的 API 有出入：Input 的 `onChange` 收到 `{ value }`；`numberOfLines` 写在 style 里；ref 类型从 `nsh/types` 导入（`WebViewRef`）；`websocket` 模块导出 `connect`。
 - 系统导航栏右侧插槽（`headerRight`）里的按钮在模拟器里点不动，处理函数没有被调用。是 nsh 的问题还是测试代理的问题，没有分清。暂时把「设置」放到页面内容里。
-- 文档和类型定义有出入：`hidesBottomBarWhenPushed` 文档里有，类型里没有；Input 的 `onChange` 收到的是字符串，不是 `{ value }`。
+- 文档和类型定义有出入：`hidesBottomBarWhenPushed` 文档里有，类型里没有。
 - 逐字输入很长的文字在真 UIKit 上很慢（350 个字符超过 30 秒），测试里改用粘贴。
 
 还没做：语音和扫码（需要 Swift 宿主）、APNs 推送、发图片（nsh 有 `Picker.pickImages`，预计不需要宿主）、回到前台时立即重连（nsh 没有找到 App 状态 API，原型目前靠 Link 自己的计时器）、slash 命令模式、真机。
@@ -236,6 +238,7 @@ npm run ios:term                       # 生成 ios/src/term-html.ts
 # 把链接写进 ios/probe/link.json（{"link":"…"}），然后：
 cd ios && nsh test App.test.tsx                 # 无界面
 cd ios && nsh test App.test.tsx --target ios    # iOS 模拟器，截图在 ios/shots/
+cd ios && nsh test App.test.tsx --target macos  # macOS 原生宿主
 npm run ios:dev                        # Mac 上的 iPhone 尺寸窗口（Catalyst），手动点
 ```
 

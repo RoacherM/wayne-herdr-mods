@@ -1,5 +1,6 @@
 import "./src/shim";
-import { cleanup, Clipboard, computed, effect, mount, Scroll, signal, Text, View, WebView, type YNode } from "nsh";
+import { cleanup, Clipboard, computed, effect, mount, Scroll, signal, Text, View, WebView } from "nsh";
+import type { WebViewRef } from "nsh/types";
 import { Button, createNavStack, Input, NavPage, NavStack } from "nsh/base";
 import { boot, forget, info, list, notify, paired, pairWith, problem, refresh, rpc, sas, setStreamListener, status, type Space, type Terminal } from "./src/conn";
 import { TERM_HTML } from "./src/term-html";
@@ -18,13 +19,14 @@ function PairScreen() {
   const text = signal("");
   const busy = computed(() => status() === "connecting" && !problem());
   async function go() {
-    try { await pairWith(text(), "nsh iPhone"); } catch (e: any) { problem.set(e.message); }
+    problem.set("");
+    try { await pairWith(text(), "nsh iPhone"); } catch (e: any) { console.warn(`pair failed: ${e.message}`); problem.set(e.message); }
   }
   return (
     <View class="flex-1 justify-center gap-4 bg-background px-6 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
       <Text class="text-3xl font-semibold text-foreground">herdr 远程</Text>
       <Text class="text-base text-muted-foreground">在 Mac 上运行 herdr-relay pair，把配对链接复制过来。</Text>
-      <Input value={text()} onChange={(v) => text.set(v)} placeholder="https://…/#p=…" autoCapitalize="none" autoCorrect={false}
+      <Input value={text()} onChange={(e) => text.set(e.value)} placeholder="https://…/#p=…" autoCapitalize="none" autoCorrect={false}
         class="rounded-lg border border-border px-3 py-3 text-base text-foreground" testID="pair-link" />
       <View class="flex-row gap-3">
         <Button onPress={async () => text.set(await Clipboard.readText())} class="flex-1 items-center rounded-lg bg-secondary py-3 active:opacity-70">
@@ -43,6 +45,9 @@ function PairScreen() {
         )}
       </If>
       <If when={problem()}>{(p) => <Text class="text-sm text-[#d1242f]">{p()}</Text>}</If>
+      <If when={status() !== "idle" && !sas() && !problem()}>
+        <Text class="text-sm text-muted-foreground" testID="pair-status">{STATUS_TEXT[status()] ?? status()}</Text>
+      </If>
     </View>
   );
 }
@@ -56,8 +61,8 @@ function Row(props: { t: Terminal }) {
     <Button onPress={() => nav.push({ name: "term", address: t.address })} class="flex-row items-center gap-3 px-4 py-3 active:bg-secondary" testID={`row-${t.address}`}>
       <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: STATE_COLOR[t.state ?? ""] ?? "#8c959f" }} />
       <View class="flex-1 gap-0.5">
-        <Text class="text-base font-semibold text-foreground" numberOfLines={1}>{t.app || t.program || "shell"}</Text>
-        {sub ? <Text class="text-sm text-muted-foreground" numberOfLines={1}>{sub}</Text> : null}
+        <Text class="text-base font-semibold text-foreground" style={{ numberOfLines: 1 }}>{t.app || t.program || "shell"}</Text>
+        {sub ? <Text class="text-sm text-muted-foreground" style={{ numberOfLines: 1 }}>{sub}</Text> : null}
       </View>
       {label ? <Text class="text-xs" style={{ color: STATE_COLOR[t.state ?? ""] ?? "#57606a" }}>{label}</Text> : null}
     </Button>
@@ -155,7 +160,7 @@ function TermScreen(props: { address: string }) {
   const term = computed(() => list().terminals.find((t) => t.address === address));
   const notice = signal("");
   const draft = signal("");
-  let web!: YNode;
+  let web!: WebViewRef;
   let s: number | null = null;
   let opening = false;
   let pageReady = false;
@@ -234,7 +239,7 @@ function TermScreen(props: { address: string }) {
             ))}
           </Scroll>
           <View class="flex-row items-end gap-2">
-            <Input value={draft()} onChange={(v) => draft.set(v)} placeholder="发消息" multiline submitBehavior="submit" onSubmit={send}
+            <Input value={draft()} onChange={(e) => draft.set(e.value)} placeholder="发消息" multiline submitBehavior="submit" onSubmit={send}
               autoCapitalize="none" autoCorrect={false} class="max-h-30 flex-1 rounded-2xl border border-border px-3.5 py-2 text-base text-foreground" testID="composer" />
             <Button onPress={send} class="h-9 w-9 items-center justify-center rounded-full bg-primary active:opacity-80" testID="send">
               <Text class="text-base font-semibold text-primary-foreground">↑</Text>
