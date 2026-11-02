@@ -35,7 +35,9 @@ check(await until(() => globalThis.__herdrLink?.via === 'direct', 15_000), `it g
 check(await until(() => document.querySelector('#status')?.innerText.includes('已直连'), 3000), 'the status says so: 已直连');
 const direct = await rtt('direct'), relay = await rtt('relay');
 console.log(`     round trip: direct p50 ${direct.p50.toFixed(1)} ms p90 ${direct.p90.toFixed(1)} ms; relay p50 ${relay.p50.toFixed(1)} ms p90 ${relay.p90.toFixed(1)} ms`);
-check(direct.p50 < relay.p50, 'direct is quicker than the relay');
+// On this machine both are under a millisecond with a local relay; the gap shows against the real one.
+if (relay.p50 > 20) check(direct.p50 < relay.p50 / 4, 'direct is much quicker than the relay');
+else check(direct.p50 < 20, 'direct answers within 20 ms (a local relay: nothing to compare)');
 
 // 2. A terminal works over it: output in, typing out.
 await page.evaluate(async () => {

@@ -122,7 +122,7 @@ herdr-relay devices  # 列出、移除设备
 - **看得到**：首页状态写「已直连」或「已连接」（中继）。`localStorage['herdr-relay.direct'] = 'off'` 只用中继，用来对比。
 - **主机端**：`host/rtc-link.js`，用纯 JS 的 werift（不用原生模块），打包进 `dist/herdr-relay.mjs`（打包后 1.5 MB）。最多 6 条直连，多了关最旧的。
 
-测试：`test/rtc-link.test.mjs`（主机端，werift 扮手机），`dev/rtc-smoke.mjs`（无头 Chrome，11 项：自动直连、终端、83 KB 回复分片、断开退回、再直连、关掉直连）。
+测试：`test/rtc-link.test.mjs`（主机端，werift 扮手机），`dev/rtc-smoke.mjs`（无头 Chrome，10 项：自动直连、终端、83 KB 回复分片、断开退回、再直连、关掉直连）。
 
 没在真 iPhone 上验证：Safari 的 mDNS 地址、同一 Wi-Fi 下能不能打通、Mac 上的代理软件（TUN 模式）会不会挡住局域网 UDP。
 

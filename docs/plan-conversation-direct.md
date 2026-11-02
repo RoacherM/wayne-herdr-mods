@@ -88,16 +88,47 @@
 - [x] B1 调研并验证：werift 能打包进主机（打包后 1.5 MB，打包版也跑过单元测试）。Chrome 也把地址藏成 mDNS 名字，能连上；Safari 没在真机验证
 - [x] B1 `host/rtc-link.js`：answer、ICE、数据通道接到 phones（新 cid）；`shared/pieces.js` 分片
 - [x] B1 `app/src/direct.js`（`Duo`）+ `app/src/link.js`：在就绪后尝试直连，切换，退回
-- [x] B1 无头 Chrome 测试 `dev/rtc-smoke.mjs` 11/11：本机直连 p50 0.4 ms，经 Cloudflare 中继 p50 229 ms
+- [x] B1 无头 Chrome 测试 `dev/rtc-smoke.mjs` 10/10：本机直连 p50 0.4 ms，经 Cloudflare 中继 p50 229 ms
 - [x] B1 部署，重装主机，提交
 
 做法细节见 DESIGN.md「直连（WebRTC，已实现）」。
 
 ## C. Claude Code 普通模式
 
-- [ ] C1 在临时 core（HC_SESSION=relay-ui）里用 `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` 启动 Claude Code，不发提示词。验证它的输出进了终端历史，手机能本地滚动
-- [ ] C1 写出做法和代价（闪烁、改尺寸时可能重复）。**不改用户的 `~/.claude/settings.json`**，由用户决定
-- [ ] C1 提交
+- [x] C1 在临时 core（HC_SESSION=relay-ui）里启动两个 Claude Code 2.1.316：一个带 `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1`，一个不带。验证它的输出进了终端历史，手机能本地滚动（`dev/classic-smoke.mjs` 5/5）
+- [x] C1 写出做法和代价（见下面）。**没改用户的 `~/.claude/settings.json`**，由用户决定
+- [x] C1 提交
+
+### 结果
+
+| | 普通模式（带变量） | 全屏模式（现在的设置 `"tui": "fullscreen"`） |
+|---|---|---|
+| 屏幕 | 普通屏幕（没有 `ESC[?1049h`） | 备用屏幕（有 `ESC[?1049h`） |
+| 手机拿到的历史 | 屏幕上面 301 行 | 0 行 |
+| 手机怎么滚 | 原生滚动的页面，往上拖 2000 px，没给 Mac 发任何东西 | 只能发滚轮，等程序重画 |
+| Herdr.app 里怎么滚 | 终端自己的滚动条 | 程序自己的滚动 |
+
+- 环境变量比设置文件里的 `"tui": "fullscreen"` 优先（Claude Code 的代码里：`CLAUDE_CODE_NO_FLICKER === false || CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN` 时不用全屏）。
+- 真实终端 t6、t8 现在的历史只有 59 和 58 行（只读计数），跟全屏模式一致。
+
+### 怎么打开（由你决定，我没改）
+
+任选一种：
+
+1. `~/.claude/settings.json` 的 `env` 里加 `"CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN": "1"`。只对新启动的 Claude Code 生效。
+2. 或者把 `"tui": "fullscreen"` 改掉（之前调研到的 `/tui default` 命令也是改这个；没验证）。
+3. 或者只在某个终端里：`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 claude`。注意别用 `env …` 包一层：herdr-core 会把程序名记成 `env`。
+
+### 代价（没在真机上长时间用过，是推测）
+
+- 普通模式下 Claude Code 在屏幕底部原地重画输入框和进度。窗口改尺寸时（比如手机"适配手机尺寸"），已经打出来的行可能重复或错位。这是终端 UI 库（Ink）的老问题。
+- 有一点闪烁；全屏模式就是为了去掉闪烁才加的（变量名叫 `NO_FLICKER`）。
+- 对话视图（A）不受影响：它读会话记录，不看屏幕。有了 A，普通模式只是让"终端视图"也能顺滑地翻历史。
+
+### 测试时的副作用
+
+- 在 `/tmp/cc-classic` 里点了"信任这个文件夹"，`~/.claude.json` 里多了一条 `/private/tmp/cc-classic`。文件夹已删。这条记录没删：别的 Claude Code 正在运行时改这个文件有风险。
+- 为了产生输出，我在两个测试终端里各跑了一次 `! seq 1 400`。这次 Claude Code 把结果交给了模型，模型各回了一句话：一共 2 次很小的 API 调用。原计划是不发提示词，这里没做到。
 
 ## 约束
 
@@ -113,3 +144,5 @@
 |---|---|---|---|
 | 11-03 | A1 + A2 对话视图（单元测试 42/42，conv-smoke 17/17，term-smoke 28/28，voice-smoke 6/6） | daf5d9f | 页面 dd6aa37f，主机已重装 |
 | 11-03 | A3 删掉 History（scroll-smoke 19/19） | 364ff35 | 页面 6e1f7705 |
+| 11-03 | B1 WebRTC 直连（单元测试 44/44，rtc-smoke 10/10；直连 p50 0.4 ms，经中继 229 ms） | 848e195 | 页面 56dd3c2e，主机已重装 |
+| 11-03 | C1 Claude Code 普通模式：验证和写法（classic-smoke 5/5），没改设置 | 本条之后的提交 | 页面 55052064（只多了本机测试钩子） |

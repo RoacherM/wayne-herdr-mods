@@ -450,6 +450,7 @@ function openTerm(address) {
     fontFamily: 'ui-monospace, Menlo, "SF Mono", monospace', theme: TERM_THEME, cursorBlink: false, macOptionIsMeta: true,
   });
   xterm.open(host);
+  if (globalThis.__herdrLink) globalThis.__herdrTerm = xterm; // tests on this machine only (see connect())
   const view = new ReflowView(flow, xterm, TERM_THEME);
   // The phone layout scrolls natively; a tap (not one that ends a scroll, not a text selection) brings up the keyboard.
   flow.addEventListener('click', () => { if (window.getSelection()?.isCollapsed !== false) keys.focus(); });
