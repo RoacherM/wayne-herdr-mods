@@ -30,9 +30,10 @@ export class Link extends EventTarget {
     this.nextId = 1;
     this.attempt = 0;
     this.closed = false;
-    this.onVisible = () => { if (document.visibilityState === 'visible') this.wake(); };
-    document.addEventListener('visibilitychange', this.onVisible);
-    window.addEventListener('online', this.onVisible);
+    // Browser only (the native app calls wake() from its own app-state events).
+    this.onVisible = () => { if (globalThis.document?.visibilityState !== 'hidden') this.wake(); };
+    globalThis.document?.addEventListener('visibilitychange', this.onVisible);
+    globalThis.window?.addEventListener('online', this.onVisible);
     this.connect();
   }
 
@@ -197,8 +198,8 @@ export class Link extends EventTarget {
     clearTimeout(this.retryTimer);
     clearTimeout(this.deadline);
     clearInterval(this.pingTimer);
-    document.removeEventListener('visibilitychange', this.onVisible);
-    window.removeEventListener('online', this.onVisible);
+    globalThis.document?.removeEventListener('visibilitychange', this.onVisible);
+    globalThis.window?.removeEventListener('online', this.onVisible);
     this.failAll('已断开');
     try { this.ws?.close(); } catch {}
   }

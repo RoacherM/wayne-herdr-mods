@@ -183,7 +183,7 @@ A 部分在 `HC_SESSION=relay-probe` 的独立 core 里自己开一个 `/bin/sh`
 
 参考：火山引擎接入说明 https://docs.volcengine.com/docs/DoubaoVoice/Accessmust-read?lang=zh ；极速版字段对照了社区实现 https://github.com/lanbinleo/bili2text （src/b2t/transcribers/volcengine.py）。官方极速版页面里只找到旧版 v1 submit/query 接口，v3 flash 的字段是从接入说明和社区实现交叉得到的，第一次真实请求前都算猜测。
 
-## 原生 App（nsh）评估（TODO，未开始）
+## 原生 App（nsh）：评估 + 第 0 步原型（`ios/`）
 
 nsh（Native Shell，https://nsh.dev ，Longbridge 开源，Apache-2.0）：用 Rust 或 TSX 写界面，iOS 上画的是 UIKit 原生控件，不是 WebView。TSX 在 QuickJS（一个小型 JS 引擎）里运行。
 
@@ -209,6 +209,35 @@ nsh（Native Shell，https://nsh.dev ，Longbridge 开源，Apache-2.0）：用 
 | 合计 | 不带推送约 6–8，带推送约 8–11 |
 
 估计是猜测，第 0 步做完再修正。
+
+### 第 0 步结果（2026-11-02，nsh 0.3.0，只在本机 Mac 验证，没有打包上手机）
+
+已验证：
+- **连接代码原样能用。** PWA 的 `app/src/link.js` 和 `shared/e2e.js`（tweetnacl）在 nsh 的 QuickJS 里直接运行。QuickJS 有 `WebSocket`、`TextEncoder`、`atob/btoa`、`crypto.getRandomValues`、`crypto.subtle.digest`、`EventTarget`、`CustomEvent`；没有 `document`、`window`、`self`。只改了两处：`link.js` 里对 `document`/`window` 加了判空；`ios/src/shim.ts` 设 `globalThis.self = globalThis`，让 tweetnacl 找到随机数来源（不设的话它会去调 `require('crypto')`，打包就失败）。
+- **QuickJS 直连中继**（`ios/probe/link.test.ts`）：配对、列终端、开流、打字往返、用同一把设备密钥重连，0.3 秒内完成。
+- **整个 App**（`ios/App.test.tsx`）：配对（粘贴链接）→ 原生首页（按 Herdr 工作区分组、状态点、「+」新建）→ 终端页（WebView 里跑 xterm.js，连接留在原生一侧，只有一条连接）→ 发消息 → 返回 → 设置 → 取消配对。无界面运行和 iOS 模拟器（`nsh test --target ios`，真 UIKit 渲染、截图）都通过。
+
+终端页的做法：`ios/build-term.mjs` 把 xterm.js、`term/term.js`、CSS 打成一个 HTML 字符串（约 346 KB），用 `<WebView html>` 显示，不需要网络。原生和页面之间用字符串互发 JSON：原生 → 页面 `size/out/reset`；页面 → 原生 `ready/ack/input`。信用（credit）仍然在 xterm 画完之后才回给 Mac。
+
+遇到的问题：
+- 系统导航栏右侧插槽（`headerRight`）里的按钮在模拟器里点不动，处理函数没有被调用。是 nsh 的问题还是测试代理的问题，没有分清。暂时把「设置」放到页面内容里。
+- 文档和类型定义有出入：`hidesBottomBarWhenPushed` 文档里有，类型里没有；Input 的 `onChange` 收到的是字符串，不是 `{ value }`。
+- 逐字输入很长的文字在真 UIKit 上很慢（350 个字符超过 30 秒），测试里改用粘贴。
+
+还没做：语音和扫码（需要 Swift 宿主）、APNs 推送、发图片（nsh 有 `Picker.pickImages`，预计不需要宿主）、回到前台时立即重连（nsh 没有找到 App 状态 API，原型目前靠 Link 自己的计时器）、slash 命令模式、真机。
+
+修正后的估计：第 0 步 + 第 1 步 + 大部分第 2、3 步已经完成（原型能用）。剩下的：界面打磨和图片约 1.5 天，Swift 宿主（录音、扫码）1.5–2 天，推送 1.5 天，打包上真机 0.5 天。合计不带推送约 3.5–4 天，带推送约 5–5.5 天。
+
+本地跑法：
+```sh
+npm run relay:dev                      # 本地中继
+node dev/fake-desktop.mjs              # 临时 herdr-core + 假终端，打印配对链接
+npm run ios:term                       # 生成 ios/src/term-html.ts
+# 把链接写进 ios/probe/link.json（{"link":"…"}），然后：
+cd ios && nsh test App.test.tsx                 # 无界面
+cd ios && nsh test App.test.tsx --target ios    # iOS 模拟器，截图在 ios/shots/
+npm run ios:dev                        # Mac 上的 iPhone 尺寸窗口（Catalyst），手动点
+```
 
 实测（2026-11-02，真 Key，2.0 标准版）：Mac 朗读一句 9.7 秒中文，1.4–1.9 秒返回。中文全对；火山原样输出「phones js」「NPM Test」，经过拼写还原后是「phones.js」「npm test」。
 

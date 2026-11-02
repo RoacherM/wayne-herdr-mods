@@ -1,0 +1,5 @@
+.nsh/
+target/
+shots/
+probe/link.json
+src/term-html.ts
