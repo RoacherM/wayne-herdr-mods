@@ -1,0 +1,29 @@
+{
+  "name": "herdr-relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Control Herdr.app terminals from a phone browser through an end-to-end encrypted Cloudflare relay",
+  "bin": {
+    "herdr-relay": "host/main.js"
+  },
+  "scripts": {
+    "build": "node app/build.mjs && node host/build.mjs",
+    "test": "node --test --test-force-exit test/*.test.mjs",
+    "probe": "node probe/sync.mjs",
+    "relay:dev": "wrangler dev -c relay/wrangler.jsonc --port 8799",
+    "relay:deploy": "node app/build.mjs && wrangler deploy -c relay/wrangler.jsonc"
+  },
+  "dependencies": {
+    "@xterm/xterm": "^6.0.0",
+    "jsqr": "^1.4.0",
+    "qrcode": "^1.5.4",
+    "tweetnacl": "^1.0.3",
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "puppeteer-core": "^25.16.0",
+    "wrangler": "^4.156.1"
+  }
+}

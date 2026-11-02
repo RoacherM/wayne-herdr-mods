@@ -1,0 +1,13 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "herdr-relay",
+  "main": "src/index.js",
+  "compatibility_date": "2025-09-01",
+  "assets": { "directory": "./public", "binding": "ASSETS" },
+  "durable_objects": { "bindings": [{ "name": "ROOM", "class_name": "Room" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
+  "observability": { "enabled": true }
+  // Free address: https://herdr-relay.sir-housir.workers.dev
+  // Own domain later (every phone re-pairs once):
+  // "routes": [{ "pattern": "herdr.example.com", "custom_domain": true }]
+}
