@@ -112,7 +112,9 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
    * One phone viewer of one terminal. It attaches as a non-observe viewer with `resumed: true`
    * at the terminal's current size: herdr-core then never lets it lead the size until it types.
    * Before each burst of input it re-states the terminal's *current* size, so typing on the phone
-   * never shrinks the Mac windows (DESIGN.md「多个窗口怎么同步」). `fit` opts into the phone's size.
+   * never shrinks the Mac windows (DESIGN.md「多个窗口怎么同步」). `fit` opts into the phone's size:
+   * the program lays itself out for the phone; the Mac windows show that size until someone types
+   * there (herdr-core: the last active viewer sets the size). `before` is the size to give back.
    */
   async function openStream(peer, address, { fit } = {}) {
     if (peer.streams.size >= MAX_STREAMS) {
@@ -135,6 +137,7 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
     peer.streams.set(id, stream);
     const cols = fit?.cols ?? t.cols;
     const rows = fit?.rows ?? t.rows;
+    const before = { cols: t.cols, rows: t.rows }; // now: `t` follows the core's size events
     let reply;
     try {
       reply = await core.call('terminal.attach', { terminal: address, cols, rows, history: HISTORY_LINES, resumed: !fit });
@@ -144,7 +147,7 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
     }
     if (stream.stopped) { core.release(reply.channel); return { s: id }; }
     stream.channel = reply.channel;
-    if (fit) stream.fit = { cols, rows };
+    if (fit) { stream.fit = { cols, rows }; stream.before = before; }
     core.on(reply.channel, {
       onData: (bytes) => event(peer, 'out', { s: id, d: bytes.toString('base64') }),
       onClose: (reason) => {
@@ -199,13 +202,18 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
     'terminals.list': () => ({ core: terminals.state(), terminals: terminals.list(), layout: terminals.layout() }),
     'term.open': (peer, p) => openStream(peer, addressOf(p), { fit: p.fit && validSize(p.fit) }),
     'term.close': (peer, p) => { peer.streams.get(Number(p.s))?.stop(); return {}; },
+    // The phone's size (fit), or back to the size from before the phone took it (fit: null).
     'term.fit': (peer, p) => {
       const stream = streamOf(peer, p.s);
       const fit = p.fit ? validSize(p.fit) : null;
-      stream.fit = fit;
       const t = terminals.get(stream.address);
-      const want = fit ?? (t ? { cols: t.cols, rows: t.rows } : null);
-      if (fit && want) stream.core.send(stream.channel, RESIZE, size(want.cols, want.rows));
+      if (fit && !stream.fit && t) stream.before = { cols: t.cols, rows: t.rows };
+      // Give the size back only while the phone still leads it (the Mac may have taken it since).
+      const leads = stream.fit && t && t.cols === stream.fit.cols && t.rows === stream.fit.rows;
+      const want = fit ?? (leads ? stream.before : null);
+      if (!fit) stream.before = null;
+      stream.fit = fit;
+      if (want) stream.core.send(stream.channel, RESIZE, size(want.cols, want.rows));
       return { fit: Boolean(fit) };
     },
     'term.send': async (peer, p) => {

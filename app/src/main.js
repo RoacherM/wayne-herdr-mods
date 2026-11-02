@@ -10,7 +10,8 @@ import { Terminal } from '@xterm/xterm';
 import { b64, boxKeysFromSecret, decodePairLink, newBoxKeys, unb64 } from '../../shared/e2e.js';
 import { Link } from './link.js';
 import { scanQr } from './scan.js';
-import { touchScroll } from './touch-scroll.js';
+import { touchScroll, wheel as wheelTo } from './touch-scroll.js';
+import { History } from './history.js';
 import { ReflowView } from './reflow.js';
 import { LiveLine, pasteText } from './live-line.js';
 import { MAX_MS, shrinkImage, startRecording, transcribe, upload, voiceSupported } from './voice.js';
@@ -59,6 +60,7 @@ const ICONS = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   mac: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
   phone: '<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/>',
+  down: '<path d="M12 5v14M6 13l6 6 6-6"/>',
 };
 const icon = (name) => { const s = h('span', { class: 'ico' }); s.innerHTML = `<svg viewBox="0 0 24 24">${ICONS[name]}</svg>`; return s; };
 
@@ -260,6 +262,15 @@ function termRow(t) {
     label ? h('span', { class: `tag ${st}` }, label) : null);
 }
 
+// A space's name as the Mac shows it. Herdr.app names a space after where its terminals are now
+// (the `where` label it writes on each one: "herdr-relay / 1"), not the folder it was made in.
+function spaceName(space, byAddr) {
+  if (space.name) return space.name;
+  const tabs = space.tabs.map((tab) => tab.terminals.map((a) => byAddr.get(a)?.where).find(Boolean));
+  const where = tabs.find(Boolean);
+  return where?.replace(/ \/ \d+$/, '') || base(space.folder) || '工作区';
+}
+
 function renderHomeList() {
   const groups = $('#groups');
   const needs = $('#needs');
@@ -287,7 +298,7 @@ function renderHomeList() {
     }
     if (rows.length || space.id) sections.push(h('section', { class: 'group' },
       h('div', { class: 'group-head' },
-        h('h2', {}, space.name || base(space.folder) || '工作区'),
+        h('h2', {}, spaceName(space, byAddr)),
         h('button', { class: 'group-add', 'aria-label': '新建终端', onClick: (e) => newTab(space, e.currentTarget) }, icon('plus'))),
       rows.length ? h('div', { class: 'list' }, rows) : null));
   }
@@ -352,16 +363,16 @@ const KEYBAR = [
 ];
 // Coding agents: their full screen is text, input box and rules, and reads well in the phone's layout.
 const AGENT = /^(claude|codex|epi|gemini|opencode|aider|amp|droid|goose|crush|qwen|kimi|cursor-agent|copilot)\b/i;
-const VIEWS = 'herdr-relay.views'; // program → 'phone' | 'mac', the person's choice
-const programKey = (t) => t?.app || t?.program || '';
-function views() { try { return JSON.parse(localStorage.getItem(VIEWS) || '{}'); } catch { return {}; } }
-function setView(t, v) { const all = views(); all[programKey(t) || '?'] = v; localStorage.setItem(VIEWS, JSON.stringify(all)); }
-/** Lay a full screen out for the phone? The person's choice for this program, else: is it an agent. */
+/** Keeping the Mac's size: lay a full screen out for the phone? Yes for coding agents. */
 function reflows(t) {
-  const v = views()[programKey(t) || '?'];
-  if (v) return v === 'phone';
-  return Boolean(t?.app) || AGENT.test(programKey(t)) || AGENT.test(t?.title ?? '');
+  const name = t?.app || t?.program || '';
+  return Boolean(t?.app) || AGENT.test(name) || AGENT.test(t?.title ?? '');
 }
+// The phone's size (the program lays itself out for the phone; the Mac windows show that size while
+// the phone is the one in use), or the Mac's (laid out again for the phone). The person's choice.
+const SIZE = 'herdr-relay.size';
+const FIT_FONT = 12; // px, the phone's own size
+const fitsPhone = () => localStorage.getItem(SIZE) !== 'keep';
 const MOUSE_REPORT = /^(\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[M[\s\S]{3})+$/; // SGR, or the default encoding
 const ANSWERS = new Set(['Esc', '⏎', '1', '2', '3', 'y', 'n']); // blue while the program asks
 // Hardware keys that go to the program as keys, not into the line.
@@ -385,6 +396,8 @@ function openTerm(address) {
   const viewport = h('div', { class: 'term-viewport', hidden: true }, host); // full-screen programs only
   const flow = h('div', { class: 'term-flow' }); // everything else, in the phone's layout
   const bubble = h('div', { class: 'term-bubble', hidden: true });
+  // An agent's view scrolled up (by a pull past the top): back to the latest, as its own ↓ would.
+  const latestBtn = h('button', { class: 'term-latest', hidden: true, 'aria-label': '回到最新', onClick: () => { toLatest(); if (flow.hidden) xterm.scrollToBottom(); else view.bottom(); } }, icon('down'));
   // The keyboard: an invisible textarea that holds the burst (what was typed since the last commit).
   const keys = h('textarea', { class: 'term-keys', rows: 1, enterkeyhint: 'send', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', 'aria-label': '输入到终端' });
   const picker = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true });
@@ -392,9 +405,8 @@ function openTerm(address) {
   const pickBtn = h('button', { class: 'round', 'aria-label': '插入图片', onClick: () => pick() }, icon('plus'));
   const talkBtn = h('button', { class: `talk ${voiceOk ? '' : 'off'}`, 'aria-label': '按住说话' }, '按住 说话');
   const kbdBtn = h('button', { class: 'round', 'aria-label': '键盘', onClick: () => (document.activeElement === keys ? keys.blur() : keys.focus()) }, icon('kbd'));
-  // Full-screen programs only: the phone's layout or the Mac's screen as it is (kept per program).
-  // It shows where a tap goes: the Mac's screen (a monitor) or back to the phone's layout (a phone).
-  const viewBtn = h('button', { class: 'icon-btn view-btn', onClick: () => toggleView() });
+  // The phone's size or the Mac's. It shows where a tap goes: the Mac's (a monitor) or the phone's (a phone).
+  const viewBtn = h('button', { class: 'icon-btn view-btn shown', onClick: () => toggleSize() });
   const keyBtns = KEYBAR.map(([label, seq]) => h('button', { class: 'key', 'data-label': label, onClick: () => key(seq) }, label));
 
   const screen = h('main', { class: 'screen term' },
@@ -402,17 +414,17 @@ function openTerm(address) {
       h('button', { class: 'icon-btn', 'aria-label': '返回', onClick: () => { app.view = { name: 'home' }; render(); } }, icon('back')),
       h('div', { class: 'bar-title' }, title, sub),
       viewBtn),
-    h('div', { class: 'term-stage' }, flow, viewport, bubble),
+    h('div', { class: 'term-stage' }, flow, viewport, bubble, latestBtn),
     h('footer', { class: 'term-foot' },
       h('div', { class: 'keybar' }, keyBtns),
       h('div', { class: 'term-actions' }, pickBtn, talkBtn, kbdBtn, keys, picker)));
   fill(root(), screen);
   // Buttons must not take the focus: the keyboard stays up while you press Esc or ⏎.
-  for (const b of [pickBtn, kbdBtn, ...keyBtns]) b.addEventListener('pointerdown', (e) => e.preventDefault());
+  for (const b of [pickBtn, kbdBtn, latestBtn, ...keyBtns]) b.addEventListener('pointerdown', (e) => e.preventDefault());
 
   // ---- the terminal
   const xterm = new Terminal({
-    cols: page.cols, rows: page.rows, scrollback: 3000, fontSize: 10, lineHeight: 1.0,
+    cols: page.cols, rows: page.rows, scrollback: 3000, fontSize: FIT_FONT, lineHeight: 1.0,
     fontFamily: 'ui-monospace, Menlo, "SF Mono", monospace', theme: TERM_THEME, cursorBlink: false, macOptionIsMeta: true,
   });
   xterm.open(host);
@@ -420,41 +432,67 @@ function openTerm(address) {
   // The phone layout scrolls natively; a tap (not one that ends a scroll, not a text selection) brings up the keyboard.
   flow.addEventListener('click', () => { if (window.getSelection()?.isCollapsed !== false) keys.focus(); });
   // Full-screen programs: xterm itself, at the Mac's size; drags reach the program as the wheel.
-  const stopTouch = touchScroll(viewport, xterm, { onTap: () => keys.focus() });
+  // A coding agent's history, scrolled on the phone (history.js).
+  const history = new History({
+    xterm, theme: TERM_THEME, wheel: (n) => wheelTo(xterm, n), latest: () => toLatest(),
+    cellHeight: () => xterm._core?._renderService?.dimensions?.css?.cell?.height || xterm.options.fontSize * 1.2,
+  });
+  const stopTouch = touchScroll(viewport, xterm, {
+    onTap: () => keys.focus(), history, agent: () => reflows(current()),
+    key: () => { const t = current(); return t?.app || t?.program; },
+  });
   viewport.addEventListener('pointerup', (e) => { if (e.pointerType === 'mouse' && !xterm.hasSelection()) keys.focus(); });
-  // Coding agents draw text on their full screen too: the phone layout works for them. Other
-  // full-screen programs (vim, htop) need the Mac's grid. The header button overrides either way.
+  // The phone's size: xterm itself, as the program draws it. The Mac's size: coding agents and shells
+  // are laid out again for the phone (reflow.js); other full-screen programs (vim, htop) need the
+  // Mac's grid, shrunk to the phone's width.
+  page.fit = null; // the size we asked for, while we fit the terminal to the phone
+  let fitMode = fitsPhone();
   const current = () => app.list.terminals.find((x) => x.address === address);
   const showMode = () => {
-    const t = current();
-    const alt = xterm.buffer.active.type === 'alternate';
-    const full = alt && !reflows(t);
+    const full = fitMode || (xterm.buffer.active.type === 'alternate' && !reflows(current()));
     flow.hidden = full;
     viewport.hidden = !full;
-    viewBtn.classList.toggle('shown', alt);
-    if (viewBtn.dataset.to !== (full ? 'phone' : 'mac')) {
-      viewBtn.dataset.to = full ? 'phone' : 'mac';
-      viewBtn.setAttribute('aria-label', full ? '按手机排版' : '按 Mac 原样显示');
-      fill(viewBtn, icon(full ? 'phone' : 'mac'));
+    const to = fitMode ? 'mac' : 'phone';
+    if (viewBtn.dataset.to !== to) {
+      viewBtn.dataset.to = to;
+      viewBtn.setAttribute('aria-label', fitMode ? '保持 Mac 的尺寸' : '按手机的尺寸');
+      fill(viewBtn, icon(to));
     }
     if (full) layout(); else view.schedule();
   };
-  const toggleView = () => {
-    const t = current();
-    const to = xterm.buffer.active.type === 'alternate' && !reflows(t) ? 'phone' : 'mac';
-    setView(t, to);
+  const toggleSize = () => {
+    fitMode = !fitMode;
+    localStorage.setItem(SIZE, fitMode ? 'fit' : 'keep');
+    if (fitMode) { if (xterm.options.fontSize !== FIT_FONT) xterm.options.fontSize = FIT_FONT; fitNow(); } else unfit();
     showMode();
-    toast(to === 'phone' ? '按手机排版' : 'Mac 原样');
+    toast(fitMode ? '按手机的尺寸' : '保持 Mac 的尺寸');
   };
-  xterm.buffer.onBufferChange(showMode);
+  xterm.buffer.onBufferChange(() => { if (xterm.buffer.active.type !== 'alternate') setBack(0); showMode(); });
   // An agent's full screen has no history of its own here: past the top (or the bottom) of the
   // laid-out screen, a pull scrolls the agent's own view, as the Mac's wheel would.
-  function wheel(up) {
-    if (!page.s || xterm.modes.mouseTrackingMode === 'none') return false;
+  // The agent's view is the Mac's too: how far up we scrolled it is kept (`back`, in wheel steps),
+  // and any input first takes it back to the latest, so what you send and its answer are in view.
+  let back = 0;
+  const wheelReport = (up) => {
     const b = up ? 64 : 65;
     const sgr = String(xterm._core?.coreMouseService?.activeEncoding ?? '').startsWith('SGR');
-    out(sgr ? `\x1b[<${b};2;2M` : `\x1b[M${String.fromCharCode(32 + b, 34, 34)}`, 0, false);
+    return sgr ? `\x1b[<${b};2;2M` : `\x1b[M${String.fromCharCode(32 + b, 34, 34)}`;
+  };
+  function wheel(up) {
+    if (!page.s || xterm.modes.mouseTrackingMode === 'none') return false;
+    out(wheelReport(up), 0, false);
+    setBack(Math.max(0, back + (up ? 1 : -1)));
     return true;
+  }
+  function setBack(n) { back = n; latestBtn.hidden = back === 0; }
+  /** Scroll the agent's own view back down to the latest (a few steps more: extra ones do nothing). */
+  function toLatest(now = false) {
+    history.close(false); // the live screen again, once the program has redrawn
+    if (!back) return;
+    const d = wheelReport(false).repeat(back + 2);
+    setBack(0);
+    if (!page.s || xterm.modes.mouseTrackingMode === 'none') return;
+    if (now) app.link.notify('term.input', { s: page.s, d }); else out(d, 0, false);
   }
   const atTop = () => flow.scrollTop <= 0;
   const atEnd = () => flow.scrollHeight - flow.scrollTop - flow.clientHeight <= 1;
@@ -484,12 +522,18 @@ function openTerm(address) {
   // What xterm itself sends: only mouse reports (the wheel, for full-screen programs). Keys come from
   // the phone's own field. Never focus reports: a blur of xterm's hidden input sent ESC [ O, which
   // a program that does not read it shows as "^[[O" in its input line; focus is Herdr's to report.
-  xterm.onData((d) => { if (page.s && MOUSE_REPORT.test(d)) app.link.notify('term.input', { s: page.s, d }); });
+  xterm.onData((d) => {
+    if (!page.s || !MOUSE_REPORT.test(d)) return;
+    app.link.notify('term.input', { s: page.s, d });
+    // A drag on xterm itself scrolled the program's view: count it, for ↓ and for typing after it.
+    const ups = (d.match(/\x1b\[<64;|\x1b\[M`/g) ?? []).length, downs = (d.match(/\x1b\[<65;|\x1b\[Ma/g) ?? []).length;
+    if (ups || downs) setBack(Math.max(0, back + ups - downs));
+  });
 
   function write(b64data) {
     const bytes = unb64(b64data);
     xterm.write(bytes, () => {
-      view.schedule();
+      if (!flow.hidden) view.schedule();
       // Credit only what xterm has actually drawn: a slow phone slows the stream down.
       page.unacked += bytes.length;
       if (page.unacked >= 32 * 1024) { app.link.notify('term.ack', { s: page.s, n: page.unacked }); page.unacked = 0; }
@@ -498,12 +542,47 @@ function openTerm(address) {
     page.ackTimer = setTimeout(() => { if (page.unacked && page.s) { app.link.notify('term.ack', { s: page.s, n: page.unacked }); page.unacked = 0; } }, 100);
   }
 
-  // ---- size: always the Mac's (the phone never resizes the terminal). Full-screen programs get a
-  // font that fits the Mac's columns in the phone's width (down to 6 px).
+  // ---- size. The phone's (fit): as many cells as fit the screen at FIT_FONT; the terminal takes that
+  // size while the phone leads it (until someone types on the Mac; the phone's next input takes it
+  // back, see host/phones.js). The Mac's: full-screen programs get a font that fits the Mac's
+  // columns in the phone's width (down to 6 px).
+  let fitCell = null, fitTimer = 0;
+  const cellNow = () => xterm._core?._renderService?.dimensions?.css?.cell;
+  function fitGrid() {
+    const cell = cellNow();
+    if (cell?.width && xterm.options.fontSize === FIT_FONT) fitCell = { width: cell.width, height: cell.height };
+    const w = viewport.clientWidth - PAD[0], hgt = viewport.clientHeight - PAD[1];
+    if (!fitCell || viewport.hidden || w <= 0 || hgt <= 0) return null;
+    return { cols: Math.max(20, Math.floor(w / fitCell.width)), rows: Math.max(6, Math.floor(hgt / fitCell.height)) };
+  }
+  const same = (a, b) => a && b && a.cols === b.cols && a.rows === b.rows;
+  function fitNow() {
+    clearTimeout(fitTimer);
+    const g = fitGrid();
+    if (!g || !page.s) return;
+    if (!same(g, page.fit)) app.link.rpc('term.fit', { s: page.s, fit: g }).catch(() => {});
+    page.fit = g;
+    page.fitAt = Date.now();
+    resizeTo(g.cols, g.rows);
+  }
+  function unfit() {
+    clearTimeout(fitTimer);
+    if (page.fit && page.s) app.link.rpc('term.fit', { s: page.s, fit: null }).catch(() => {});
+    page.fit = null;
+  }
   function layout() {
     if (viewport.hidden) return;
+    if (fitMode) {
+      // The phone's size, or the Mac took it back: then the Mac's, shrunk to fit, until the phone types.
+      const own = same(page, page.fit) || !page.fit;
+      if (own && xterm.options.fontSize !== FIT_FONT) xterm.options.fontSize = FIT_FONT;
+      const g = fitGrid();
+      if (!g) { setTimeout(layout, 100); return; }
+      if (page.fit && !same(g, page.fit)) { clearTimeout(fitTimer); fitTimer = setTimeout(fitNow, 150); }
+      if (own) return;
+    }
     const w = viewport.clientWidth - PAD[0];
-    const cell = xterm._core?._renderService?.dimensions?.css?.cell;
+    const cell = cellNow();
     if (!w || !cell?.width) { setTimeout(layout, 100); return; }
     const want = Math.max(6, Math.min(13, Math.floor(((w * xterm.options.fontSize) / page.cols / cell.width) * 2) / 2));
     if (want !== xterm.options.fontSize) xterm.options.fontSize = want;
@@ -521,11 +600,15 @@ function openTerm(address) {
     page.opening = true;
     page.early = [];
     try {
-      const r = await app.link.rpc('term.open', { address });
+      let fit = null;
+      for (let i = 0; fitMode && !fit && i < 20; i++) { fit = fitGrid(); if (!fit) await new Promise((r) => setTimeout(r, 50)); }
+      const r = await app.link.rpc('term.open', fit ? { address, fit } : { address });
       if (page.closed) { app.link.rpc('term.close', { s: r.s }).catch(() => {}); return; }
       page.s = r.s;
+      page.fit = fit;
+      page.fitAt = Date.now();
       xterm.reset();
-      resizeTo(r.cols, r.rows);
+      resizeTo(fit?.cols ?? r.cols, fit?.rows ?? r.rows);
       setStatus('notice', '');
       for (const msg of page.early.splice(0)) onEvent(msg);
     } catch (e) {
@@ -538,7 +621,8 @@ function openTerm(address) {
     if (!t) { setStatus('notice', '这个终端已经结束。'); return; }
     title.textContent = t.app || t.program || address;
     sub.textContent = [t.where, t.state === 'blocked' ? (KIND_TEXT[t.kind] ?? '等你处理') : STATE_TEXT[t.state]].filter(Boolean).join(' · ');
-    resizeTo(t.cols, t.rows); // follow the Mac windows' size
+    // Follow the size the Mac windows set; not just after the phone asked for its own (the list lags).
+    if (!(fitMode && page.fit && Date.now() - page.fitAt < 1500)) resizeTo(t.cols, t.rows);
     showMode();
     const blocked = t.state === 'blocked';
     keyBtns.forEach((b) => b.classList.toggle('answer', blocked && ANSWERS.has(b.dataset.label)));
@@ -563,8 +647,14 @@ function openTerm(address) {
   // ---- typing: everything goes out in order; an image path waits for the program to read the file.
   let chain = Promise.resolve();
   function out(d, after = 0, follow = true) {
+    if (follow) toLatest();
     chain = chain.then(async () => {
-      if (page.s) { app.link.notify('term.input', { s: page.s, d }); if (follow) view.bottom(); }
+      if (page.s) {
+        app.link.notify('term.input', { s: page.s, d });
+        // The phone's input takes the size back (host/phones.js): show it at the phone's size again.
+        if (fitMode && page.fit && !same(page, page.fit)) { page.fitAt = Date.now(); resizeTo(page.fit.cols, page.fit.rows); }
+        if (follow) { if (flow.hidden) xterm.scrollToBottom(); else view.bottom(); }
+      }
       if (after) await new Promise((r) => setTimeout(r, after));
     });
   }
@@ -640,8 +730,10 @@ function openTerm(address) {
   });
 
   // ---- hold to talk: speak, release → the words go into the program's line (Enter still yours).
+  // The microphone takes a moment to start (the first time, iOS asks for permission meanwhile): a
+  // finger lifted before that is a release too, else a tap would record until the time limit.
   {
-    let rec = null, startY = 0, cancelled = false, raf = 0, limit = 0;
+    let rec = null, startY = 0, cancelled = false, raf = 0, limit = 0, held = false;
     const show = (text, kind = 'rec') => { status.voice = text ? { text, kind, level: rec ? rec.level() : undefined } : null; sync(); };
     const meter = () => {
       if (!rec) return;
@@ -652,14 +744,19 @@ function openTerm(address) {
     const begin = async (e) => {
       e.preventDefault();
       if (!voiceOk) { toast(app.info?.voice ? '这个浏览器不能录音' : '这台 Mac 没开语音识别：在 Mac 上运行 herdr-relay voice 设置'); return; }
-      if (rec || talkBtn.disabled) return;
+      if (rec || held || talkBtn.disabled) return;
+      held = true;
       startY = e.clientY;
       cancelled = false;
       talkBtn.setPointerCapture?.(e.pointerId);
-      try { rec = await startRecording(); } catch (error) {
+      let r;
+      try { r = await startRecording(); } catch (error) {
+        held = false;
         toast(error.name === 'NotAllowedError' ? '没有麦克风权限：在 设置 → Safari → 麦克风 里允许' : `录音失败：${error.message}`, 'err');
         return;
       }
+      if (!held) { r.cancel(); toast('按住说话，松开输入'); return; } // let go before it started
+      rec = r;
       vibrate(15);
       talkBtn.classList.add('on');
       talkBtn.textContent = '松开 输入';
@@ -672,6 +769,7 @@ function openTerm(address) {
       if (away !== cancelled) { cancelled = away; vibrate(5); }
     };
     const finish = async () => {
+      held = false;
       if (!rec) return;
       const r = rec;
       rec = null;
@@ -694,6 +792,12 @@ function openTerm(address) {
     talkBtn.addEventListener('pointermove', move);
     talkBtn.addEventListener('pointerup', finish);
     talkBtn.addEventListener('pointercancel', () => { cancelled = true; finish(); });
+    // iOS can lose the button's pointerup (the microphone starting mid-press): a finger lifted
+    // anywhere is a release too, else it records on until the time limit.
+    const lifted = (e) => { if ((held || rec) && !(e.touches?.length)) finish(); };
+    window.addEventListener('touchend', lifted, true);
+    window.addEventListener('pointerup', lifted, true);
+    page.stopTalk = () => { window.removeEventListener('touchend', lifted, true); window.removeEventListener('pointerup', lifted, true); if (rec) { cancelled = true; finish(); } };
     talkBtn.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
@@ -733,6 +837,7 @@ function openTerm(address) {
     reopen() { page.s = null; open(); },
     lost() { if (page.s) { page.s = null; setStatus('notice', '连接断开，正在重连…'); } },
     dispose() {
+      toLatest(true); // leave the Mac's view at the latest too, before the stream closes
       page.closed = true;
       ro.disconnect();
       vv?.removeEventListener('resize', followViewport);
@@ -742,6 +847,8 @@ function openTerm(address) {
       checks.forEach(clearTimeout);
       screen.style.height = screen.style.transform = '';
       stopTouch();
+      history.dispose();
+      page.stopTalk?.();
       clearTimeout(page.ackTimer);
       view.dispose();
       if (page.s && app.link?.status === 'ready') app.link.rpc('term.close', { s: page.s }).catch(() => {});

@@ -247,7 +247,7 @@ export class ReflowView {
     el.addEventListener('scroll', () => { this.atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 32; }, { passive: true });
     xterm.onResize(() => { this.cache.clear(); this.schedule(); });
   }
-  schedule() { if (!this.frame) this.frame = requestAnimationFrame(() => { this.frame = 0; this.render(); }); }
+  schedule() { if (!this.el.hidden && !this.frame) this.frame = requestAnimationFrame(() => { this.frame = 0; this.render(); }); }
   bottom() { this.atBottom = true; this.el.scrollTop = this.el.scrollHeight; }
   render() {
     const buffer = this.xterm.buffer.active;

@@ -12,6 +12,7 @@ await page.emulate({ viewport: { width: 390, height: 844, deviceScaleFactor: 2, 
 const errors = [];
 page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warn') console.log('[console]', m.type(), m.text()); });
 page.on('pageerror', (e) => { errors.push(e.message); console.log('[pageerror]', e.message); });
+const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) process.exitCode = 1; };
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 const shot = async (name) => { await pause(700); await page.screenshot({ path: `dev/shots/${name}.png` }); console.log('shot', name); };
 const clickText = async (text) => {
@@ -26,6 +27,9 @@ await clickText('开始配对');
 await page.waitForFunction(() => document.querySelectorAll('.trow').length >= 4, { timeout: 25_000 });
 await shot('2-home');
 
+// A space without a name is named the way the Mac names it: after where its terminals are.
+const heads = await page.$$eval('.group h2', (hs) => hs.map((x) => x.textContent));
+check(heads.includes('site') && !heads.includes('old-site'), `a space is named after where its terminals are (${heads.join(', ')})`);
 // Open the blocked claude terminal from the "needs you" group.
 await page.evaluate(() => document.querySelector('.group.needs .trow').click());
 await page.waitForFunction(() => (document.querySelector('.xterm-rows')?.innerText ?? '').includes('npm test'), { timeout: 15_000 });
@@ -38,11 +42,11 @@ await clickText('⏎');
 await page.waitForFunction(() => (document.querySelector('.xterm-rows')?.innerText ?? '').includes('你选了'), { timeout: 10_000 });
 await shot('4-term-answered');
 
-// Fit to phone.
-await page.click('.bar .icon-btn[aria-label="适配手机"]');
+// The size toggle (the Mac's size, then back to the phone's).
+await page.click('.bar .view-btn');
 await pause(1200);
 await shot('5-term-fit');
-await page.click('.bar .icon-btn[aria-label="适配手机"]');
+await page.click('.bar .view-btn');
 
 // Back home, open the zsh shell, type through the composer.
 await page.click('.bar .icon-btn[aria-label="返回"]');

@@ -2,8 +2,9 @@
 //   npm run build; npm run relay:dev; node dev/fake-desktop.mjs > /tmp/fake.log &; node dev/scroll-smoke.mjs "<pairing link>"
 // Normal output: the phone layout scrolls natively and a tap brings up the keyboard. A full-screen
 // program (vim, htop) shows xterm itself and a drag reaches it as the wheel. A coding agent's full
-// screen is laid out for the phone too; a pull past its top reaches the agent as the wheel.
-import { readFileSync } from 'node:fs';
+// screen is laid out for the phone too; a pull past its top reaches the agent as the wheel. All that at
+// the Mac's size; then at the phone's size: xterm itself, and the agent's ↓ works the same.
+import { readFileSync, writeFileSync } from 'node:fs';
 import puppeteer from 'puppeteer-core';
 
 const link = process.argv[2];
@@ -29,6 +30,7 @@ const keyboardUp = () => page.evaluate(() => document.activeElement?.classList.c
 const flowText = () => page.evaluate(() => document.querySelector('.term-flow').innerText);
 const readFile = (p) => { try { return readFileSync(p, 'latin1'); } catch { return ''; } };
 
+await page.evaluateOnNewDocument(() => { if (!localStorage.getItem('herdr-relay.size')) localStorage.setItem('herdr-relay.size', 'keep'); });
 await page.goto(link, { waitUntil: 'networkidle0' });
 await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => b.innerText.includes('开始配对')).click());
 await page.waitForFunction(() => document.querySelectorAll('.trow').length >= 4, { timeout: 25_000 });
@@ -66,6 +68,128 @@ check("an agent's full screen is laid out for the phone", (await shown()) === 'f
 for (let i = 0; i < 3; i++) await drag(box.x, box.mid - 100, box.x, box.mid + 200, { steps: 20 });
 await page.waitForFunction(() => document.querySelector('.term-flow').innerText.includes('AGENT_DONE'), { timeout: 8_000 }).catch(() => {});
 check('… and a pull past its top reaches the agent as the wheel', /\x1b\[<64;/.test(readFile('/tmp/relay-wheel2.txt')), JSON.stringify(readFile('/tmp/relay-wheel2.txt').slice(0, 30)));
+
+// Scrolled up, then typing: the agent's view goes back to the latest first, so what you send and
+// its answer are in view (the agent gets the wheel-downs, then the key).
+writeFileSync('/tmp/relay-readz.py', "import os\nb=b''\nwhile not b.endswith(b'Z'): b+=os.read(0,1)\nopen('/tmp/relay-wheel3.txt','wb').write(b)\n");
+await send("rm -f /tmp/relay-wheel3.txt; printf '\\033]7501;state=idle:app=claude\\033\\\\\\033[?1049h\\033[?1000h\\033[?1006h\\033[HAGENT_TWO top line'; stty raw -echo; python3 /tmp/relay-readz.py; stty sane; printf '\\033[?1000l\\033[?1006l\\033[?1049l'; echo AGENT2_DONE");
+await page.waitForFunction(() => document.querySelector('.term-flow').innerText.includes('AGENT_TWO'), { timeout: 10_000 }).catch(() => {});
+await pause(600);
+for (let i = 0; i < 2; i++) await drag(box.x, box.mid - 100, box.x, box.mid + 200, { steps: 20 });
+await pause(300);
+check('scrolled up: a ↓ button offers the latest', await page.$eval('.term-latest', (b) => !b.hidden));
+await page.focus('.term-keys');
+await page.keyboard.type('Z');
+await page.waitForFunction(() => document.querySelector('.term-flow').innerText.includes('AGENT2_DONE'), { timeout: 8_000 }).catch(() => {});
+const got = readFile('/tmp/relay-wheel3.txt');
+const ups = (got.match(/\x1b\[<64;/g) ?? []).length, downs = (got.match(/\x1b\[<65;/g) ?? []).length;
+check('typing takes the agent back to the latest first', ups > 0 && downs >= ups && /(\x1b\[<65;2;2M)+Z$/.test(got), `${ups} up, ${downs} down, ends ${JSON.stringify(got.slice(-14))}`);
+check('… and the ↓ button goes', await page.$eval('.term-latest', (b) => b.hidden));
+await page.evaluate(() => document.activeElement?.blur());
+
+// The phone's size: xterm itself, also for an agent; a drag on it scrolls the agent, ↓ and typing as above.
+await page.evaluate(() => document.querySelector('.view-btn').click());
+await pause(800);
+const rowsText = () => page.evaluate(() => document.querySelector('.xterm-rows').textContent);
+check("the phone's size shows xterm itself", (await shown()) === 'xterm');
+await send("rm -f /tmp/relay-wheel3.txt; printf '\\033]7501;state=idle:app=claude\\033\\\\\\033[?1049h\\033[?1000h\\033[?1006h\\033[HAGENT_FIT top line'; stty raw -echo; python3 /tmp/relay-readz.py; stty sane; printf '\\033[?1000l\\033[?1006l\\033[?1049l'; echo AGENT3_DONE");
+await page.waitForFunction(() => document.querySelector('.xterm-rows').textContent.includes('AGENT_FIT'), { timeout: 10_000 }).catch(() => {});
+await pause(600);
+check("… also for an agent's full screen", (await shown()) === 'xterm' && (await rowsText()).includes('AGENT_FIT'));
+for (let i = 0; i < 2; i++) await drag(box.x, box.mid - 100, box.x, box.mid + 200, { steps: 20 });
+await pause(300);
+check('a drag scrolls it up: ↓ shows', await page.$eval('.term-latest', (b) => !b.hidden));
+await page.focus('.term-keys');
+await page.keyboard.type('Z');
+await page.waitForFunction(() => document.querySelector('.xterm-rows').textContent.includes('AGENT3_DONE'), { timeout: 8_000 }).catch(() => {});
+const got3 = readFile('/tmp/relay-wheel3.txt');
+const ups3 = (got3.match(/\x1b\[<64;/g) ?? []).length, downs3 = (got3.match(/\x1b\[<65;/g) ?? []).length;
+check('typing takes it back to the latest first', ups3 > 0 && downs3 >= ups3 && /(\x1b\[<65;\d+;\d+M)+Z$/.test(got3), `${ups3} up, ${downs3} down, ends ${JSON.stringify(got3.slice(-14))}`);
+check('… and the ↓ button goes', await page.$eval('.term-latest', (b) => b.hidden));
+
+// An agent that moves its view 5 lines per wheel step (as Claude Code moves several); row-300 is
+// its latest. The first drag learns how it scrolls.
+writeFileSync('/tmp/relay-scroller.py', `import os, re, shutil, sys
+cols, rows = shutil.get_terminal_size()
+top = 300
+def draw():
+    out = '\\x1b[H\\x1b[2J' + ''.join('\\x1b[%d;1Hrow-%03d of the agent talk' % (y + 1, top + y) for y in range(rows - 2))
+    sys.stdout.write(out + '\\x1b[%d;1H> INPUT' % rows); sys.stdout.flush()
+sys.stdout.write('\\x1b]7501;state=idle:app=claude\\x1b\\\\\\x1b[?1049h\\x1b[?1000h\\x1b[?1006h'); draw()
+buf = b''
+while True:
+    buf += os.read(0, 64)
+    if b'Z' in buf: break
+    for m in re.finditer(rb'\\x1b\\[<(6[45]);\\d+;\\d+M', buf):
+        top = max(0, top - 5) if m.group(1) == b'64' else min(300, top + 5)
+    buf = buf[buf.rfind(b'M') + 1:] if b'M' in buf else buf
+    draw()
+sys.stdout.write('\\x1b[?1000l\\x1b[?1006l\\x1b[?1049l'); sys.stdout.flush()
+`);
+await send("stty raw -echo; python3 /tmp/relay-scroller.py; stty sane; echo SCROLLER_DONE");
+await page.waitForFunction(() => document.querySelector('.xterm-rows').textContent.includes('> INPUT'), { timeout: 10_000 }).catch(() => {});
+await pause(500);
+const topRow = () => page.evaluate(() => Number(/row-(\d+)/.exec(document.querySelector('.xterm-rows').textContent)?.[1] ?? NaN));
+const cellH = await page.evaluate(() => document.querySelector('.xterm-rows > div').getBoundingClientRect().height);
+const r0 = await topRow();
+await drag(box.x, box.mid - 120, box.x, box.mid - 120 + cellH * 4, { steps: 8, ms: 30 }); // the first drag learns how it scrolls
+await pause(1000);
+check('how the agent scrolls was learned (5 lines a step, its rows)', await page.evaluate(() => { const v = JSON.parse(localStorage.getItem('herdr-relay.wheel') || '{}').claude; return v?.s === 5 && v.t === 0 && v.b === 2; }), await page.evaluate(() => localStorage.getItem('herdr-relay.wheel')));
+await page.evaluate(() => document.querySelector('.term-latest:not([hidden])')?.click());
+await pause(1200);
+check('↓: the live screen again, at the latest', !(await page.$('.term-history')) && (await topRow()) === 300, `top row ${await topRow()}, was ${r0}`);
+const springs = await page.evaluate(() => [...document.querySelectorAll('.xterm-rows > div')].every((d) => !d.style.transform));
+check('the text moved ahead of the redraw is back in place', springs);
+
+// Its history on the phone: the next drag shows the phone's copy, which follows the finger exactly
+// (no round trip), loads older rows ahead, and goes back to the live screen past the bottom.
+const at = (text) => page.evaluate((t) => { // where the row with `text` is on screen (y), in the phone's copy
+  const el = document.querySelector('.term-history');
+  if (!el) return null;
+  const row = [...el.firstChild.children].find((d) => d.textContent.includes(t));
+  return row ? row.getBoundingClientRect().top : null;
+}, text);
+const liveTop = await topRow();
+await touch('touchStart', box.x, box.mid - 200);
+for (let i = 1; i <= 10; i++) { await touch('touchMove', box.x, box.mid - 200 + i * 7); await pause(16); }
+const shownTop = `row-${String(liveTop).padStart(3, '0')}`;
+const y1 = await at(shownTop);
+for (let i = 11; i <= 30; i++) { await touch('touchMove', box.x, box.mid - 200 + i * 7); await pause(16); }
+const y2 = await at(shownTop);
+check('a drag shows the phone\'s copy of its history', y1 !== null, `row ${shownTop} at ${y1}`);
+check('… which moves exactly with the finger', y2 !== null && Math.abs((y2 - y1) - 140) <= 1, `moved ${y2 - y1}px for 140px`);
+await pause(1500);
+const kept = await page.evaluate(() => Number(document.querySelector('.term-history')?.dataset.lines));
+check('older rows load ahead of the reader (two screens)', kept >= 32 * 3, `${kept} rows kept`);
+for (let i = 31; i <= 90; i++) { await touch('touchMove', box.x, box.mid - 200 + i * 7); await pause(16); } // on up, into what loaded
+await pause(300);
+const seq = await page.evaluate(() => [...document.querySelector('.term-history').firstChild.children].map((d) => Number(/row-(\d+)/.exec(d.textContent)?.[1])).filter((n) => !Number.isNaN(n)));
+check('… stitched in order: no row lost, none twice', seq.length > 60 && seq.every((n, i) => i === 0 || n === seq[i - 1] + 1), `${seq[0]}…${seq.at(-1)} (${seq.length} rows)`);
+await touch('touchEnd');
+await pause(300);
+await drag(box.x, box.mid, box.x, box.mid - 400, { steps: 30 });
+await drag(box.x, box.mid, box.x, box.mid - 400, { steps: 30 });
+await pause(1500);
+check('past the bottom: the live screen again, at the latest', !(await page.$('.term-history')) && (await topRow()) === liveTop, `top row ${await topRow()}, was ${liveTop}; ↓ ${await page.$eval('.term-latest', (b) => (b.hidden ? 'hidden' : 'shown'))}`);
+// Again: the copy was kept, so the text moves at the first move; paging on goes past what was kept.
+await touch('touchStart', box.x, box.mid - 200);
+const ys2 = [];
+for (let i = 1; i <= 6; i++) { await touch('touchMove', box.x, box.mid - 200 + i * 7); await pause(16); ys2.push(await at('row-300')); }
+const [ya, yb] = [ys2[4], ys2[5]];
+check('opened again: the kept copy, moving at once', (await page.evaluate(() => Number(document.querySelector('.term-history')?.dataset.lines))) >= 100 && yb - ya === 7, ys2.join(' '));
+for (let i = 7; i <= 140; i++) { await touch('touchMove', box.x, box.mid - 200 + i * 7); await pause(16); }
+await pause(2500);
+for (let i = 141; i <= 160; i++) { await touch('touchMove', box.x, box.mid - 200 + i * 7); await pause(16); }
+await pause(300);
+const seq2 = await page.evaluate(() => [...document.querySelector('.term-history').firstChild.children].map((d) => Number(/row-(\d+)/.exec(d.textContent)?.[1])).filter((n) => !Number.isNaN(n)));
+check('… and pages on past what was kept, in order', seq2[0] < 200 && seq2.every((n, i) => i === 0 || n === seq2[i - 1] + 1), `${seq2[0]}…${seq2.at(-1)} (${seq2.length} rows)`);
+await touch('touchEnd');
+await page.evaluate(() => document.querySelector('.term-latest:not([hidden])')?.click());
+await pause(1500);
+check('↓ from deep in the history: the latest', !(await page.$('.term-history')) && (await topRow()) === 300, `top row ${await topRow()}`);
+await page.focus('.term-keys'); await page.keyboard.type('Z');
+await page.evaluate(() => document.activeElement?.blur());
+await pause(500);
 
 console.log(`\n${pass}/${pass + fail} pass`);
 await browser.close();

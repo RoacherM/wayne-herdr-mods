@@ -124,6 +124,10 @@ button { font: inherit; color: inherit; }
 .term-flow .gut .c { flex: 1 1 auto; min-width: 0; }
 .term-flow .tbl { white-space: pre; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
 .term-flow .tbl::-webkit-scrollbar { display: none; }
+.term-latest { position: absolute; right: 12px; bottom: 12px; width: 38px; height: 38px; display: grid; place-items: center; border: none; border-radius: 19px;
+  background: #2c2c2e; color: var(--fg); box-shadow: 0 2px 10px rgba(0,0,0,.45); }
+.term-latest[hidden] { display: none; }
+.term-latest .ico { width: 20px; height: 20px; }
 .term-flow .cur { background: #e6e6e1; color: #0b0b0c; }
 .xterm-host { width: max-content; }
 .term-bubble { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); max-width: calc(100% - 32px); display: flex; align-items: center; gap: 10px;
@@ -437,3 +441,7 @@ button { font: inherit; color: inherit; }
 .xterm .xterm-scrollable-element > .shadow.top.left {
 	box-shadow: var(--vscode-scrollbar-shadow, #000) 6px 0 6px -6px inset;
 }
+
+/* A coding agent's history, kept and scrolled on the phone (history.js), over its scrolling rows. */
+.term-history { position: absolute; left: 0; right: 0; overflow: hidden; background: #0b0b0c; white-space: pre; pointer-events: none; z-index: 5; }
+.term-history > div { will-change: transform; }

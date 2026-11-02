@@ -1,4 +1,5 @@
-// The PWA terminal page, end to end: one input box, the phone's own layout (the Mac size never changes), the ＋ | 按住 说话 | ⌨ bar.
+// The PWA terminal page, end to end: the phone's size (the default) and back to the Mac's; then, at the
+// Mac's size, one input box, the phone's own layout (the Mac size never changes), the ＋ | 按住 说话 | ⌨ bar.
 //   npm run build; npm run relay:dev (another shell); node dev/fake-desktop.mjs > /tmp/fake.log &
 //   node dev/term-smoke.mjs "<pairing link>"        → screenshots in dev/shots/term-*.png
 import { execFileSync } from 'node:child_process';
@@ -27,9 +28,39 @@ await page.goto(link, { waitUntil: 'networkidle0' });
 await clickText('button', '开始配对');
 await page.waitForFunction(() => document.querySelectorAll('.trow').length >= 4, { timeout: 25_000 });
 
-// --- a shell: fit, then type straight into its line
+const openRow = (w) => page.evaluate((a) => [...document.querySelectorAll('.trow')].find((b) => b.querySelector('.addr')?.innerText === a).click(), where(w));
+const rows = () => page.evaluate(() => document.querySelector('.xterm-rows')?.innerText ?? '');
 const before = size('herdr-relay · shell');
-await page.evaluate((a) => [...document.querySelectorAll('.trow')].find((b) => b.querySelector('.addr')?.innerText === a).click(), where('herdr-relay · shell'));
+
+// --- the phone's size (the default): the terminal takes the phone's grid; back to the Mac's on the toggle
+await openRow('herdr-relay · shell');
+const grid = await page.evaluate(() => {
+  const v = document.querySelector('.term-viewport'), c = document.querySelector('.xterm-rows > div');
+  return { visible: !v.hidden, w: v.clientWidth, h: v.clientHeight, font: getComputedStyle(c).fontSize };
+});
+check(grid.visible, `the phone's size shows xterm itself (${JSON.stringify(grid)})`);
+await until(`the terminal takes the phone's size (was ${before})`, () => { const [c] = size('herdr-relay · shell').split('x').map(Number); return c >= 40 && c <= 70; });
+const phoneSize = size('herdr-relay · shell');
+await page.focus('.term-keys');
+await page.keyboard.type('echo fit-$((6*7))'); await page.keyboard.press('Enter');
+await until('typing works at the phone size', async () => (await rows()).includes('fit-42'));
+await shot('0-fit');
+const fits = await page.evaluate(() => { const x = document.querySelector('.xterm-screen'), v = document.querySelector('.term-viewport'); return x.getBoundingClientRect().width <= v.clientWidth; });
+check(fits, 'the grid fits the phone width');
+check(size('herdr-relay · shell') === phoneSize, `the size holds after typing (${phoneSize})`);
+await page.evaluate(() => document.activeElement?.blur());
+await page.evaluate(() => document.querySelector('.icon-btn[aria-label="返回"]')?.click());
+await until(`leaving gives the Mac its size back (${before})`, () => size('herdr-relay · shell') === before);
+await openRow('herdr-relay · shell');
+await until('opening again takes the phone size again', () => size('herdr-relay · shell') === phoneSize);
+await page.evaluate(() => document.querySelector('.view-btn').click());
+await until(`the toggle gives the Mac its size back (${before})`, () => size('herdr-relay · shell') === before);
+check(await page.evaluate(() => localStorage.getItem('herdr-relay.size')) === 'keep', 'the choice is kept');
+await page.evaluate(() => document.querySelector('.icon-btn[aria-label="返回"]')?.click());
+await pause(300);
+
+// --- a shell at the Mac's size: type straight into its line
+await openRow('herdr-relay · shell');
 await until('the shell shows', async () => (await screen()).includes('%'));
 check(size('herdr-relay · shell') === before, `the Mac size stays ${before} (now ${size('herdr-relay · shell')})`);
 await page.focus('.term-keys');
