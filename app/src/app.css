@@ -442,10 +442,6 @@ button { font: inherit; color: inherit; }
 	box-shadow: var(--vscode-scrollbar-shadow, #000) 6px 0 6px -6px inset;
 }
 
-/* A coding agent's history, kept and scrolled on the phone (history.js), over its scrolling rows. */
-.term-history { position: absolute; left: 0; right: 0; overflow: hidden; background: #0b0b0c; white-space: pre; pointer-events: none; z-index: 5; }
-.term-history > div { will-change: transform; }
-
 /* ---- the conversation view (conversation.js): the agent's transcript, scrolled natively */
 .mode-btn { flex: none; color: var(--fg2); }
 .mode-btn .ico svg { stroke-width: 1.8; }

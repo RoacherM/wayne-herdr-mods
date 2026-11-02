@@ -137,56 +137,17 @@ await pause(1000);
 check('how the agent scrolls was learned (5 lines a step, its rows)', await page.evaluate(() => { const v = JSON.parse(localStorage.getItem('herdr-relay.wheel') || '{}').claude; return v?.s === 5 && v.t === 0 && v.b === 2; }), await page.evaluate(() => localStorage.getItem('herdr-relay.wheel')));
 await page.evaluate(() => document.querySelector('.term-latest:not([hidden])')?.click());
 await pause(1200);
-check('↓: the live screen again, at the latest', !(await page.$('.term-history')) && (await topRow()) === 300, `top row ${await topRow()}, was ${r0}`);
+check('↓: the live screen again, at the latest', (await topRow()) === 300, `top row ${await topRow()}, was ${r0}`);
 const springs = await page.evaluate(() => [...document.querySelectorAll('.xterm-rows > div')].every((d) => !d.style.transform));
 check('the text moved ahead of the redraw is back in place', springs);
 
-// Its history on the phone: the next drag shows the phone's copy, which follows the finger exactly
-// (no round trip), loads older rows ahead, and goes back to the live screen past the bottom.
-const at = (text) => page.evaluate((t) => { // where the row with `text` is on screen (y), in the phone's copy
-  const el = document.querySelector('.term-history');
-  if (!el) return null;
-  const row = [...el.firstChild.children].find((d) => d.textContent.includes(t));
-  return row ? row.getBoundingClientRect().top : null;
-}, text);
-const liveTop = await topRow();
-await touch('touchStart', box.x, box.mid - 200);
-for (let i = 1; i <= 10; i++) { await touch('touchMove', box.x, box.mid - 200 + i * 7); await pause(16); }
-const shownTop = `row-${String(liveTop).padStart(3, '0')}`;
-const y1 = await at(shownTop);
-for (let i = 11; i <= 30; i++) { await touch('touchMove', box.x, box.mid - 200 + i * 7); await pause(16); }
-const y2 = await at(shownTop);
-check('a drag shows the phone\'s copy of its history', y1 !== null, `row ${shownTop} at ${y1}`);
-check('… which moves exactly with the finger', y2 !== null && Math.abs((y2 - y1) - 140) <= 1, `moved ${y2 - y1}px for 140px`);
+// Once it is learned, a drag scrolls the agent's own view (wheel steps as the finger moves); ↓ back.
+await drag(box.x, box.mid - 200, box.x, box.mid + 100, { steps: 30 });
 await pause(1500);
-const kept = await page.evaluate(() => Number(document.querySelector('.term-history')?.dataset.lines));
-check('older rows load ahead of the reader (two screens)', kept >= 32 * 3, `${kept} rows kept`);
-for (let i = 31; i <= 90; i++) { await touch('touchMove', box.x, box.mid - 200 + i * 7); await pause(16); } // on up, into what loaded
-await pause(300);
-const seq = await page.evaluate(() => [...document.querySelector('.term-history').firstChild.children].map((d) => Number(/row-(\d+)/.exec(d.textContent)?.[1])).filter((n) => !Number.isNaN(n)));
-check('… stitched in order: no row lost, none twice', seq.length > 60 && seq.every((n, i) => i === 0 || n === seq[i - 1] + 1), `${seq[0]}…${seq.at(-1)} (${seq.length} rows)`);
-await touch('touchEnd');
-await pause(300);
-await drag(box.x, box.mid, box.x, box.mid - 400, { steps: 30 });
-await drag(box.x, box.mid, box.x, box.mid - 400, { steps: 30 });
-await pause(1500);
-check('past the bottom: the live screen again, at the latest', !(await page.$('.term-history')) && (await topRow()) === liveTop, `top row ${await topRow()}, was ${liveTop}; ↓ ${await page.$eval('.term-latest', (b) => (b.hidden ? 'hidden' : 'shown'))}`);
-// Again: the copy was kept, so the text moves at the first move; paging on goes past what was kept.
-await touch('touchStart', box.x, box.mid - 200);
-const ys2 = [];
-for (let i = 1; i <= 6; i++) { await touch('touchMove', box.x, box.mid - 200 + i * 7); await pause(16); ys2.push(await at('row-300')); }
-const [ya, yb] = [ys2[4], ys2[5]];
-check('opened again: the kept copy, moving at once', (await page.evaluate(() => Number(document.querySelector('.term-history')?.dataset.lines))) >= 100 && yb - ya === 7, ys2.join(' '));
-for (let i = 7; i <= 140; i++) { await touch('touchMove', box.x, box.mid - 200 + i * 7); await pause(16); }
-await pause(2500);
-for (let i = 141; i <= 160; i++) { await touch('touchMove', box.x, box.mid - 200 + i * 7); await pause(16); }
-await pause(300);
-const seq2 = await page.evaluate(() => [...document.querySelector('.term-history').firstChild.children].map((d) => Number(/row-(\d+)/.exec(d.textContent)?.[1])).filter((n) => !Number.isNaN(n)));
-check('… and pages on past what was kept, in order', seq2[0] < 200 && seq2.every((n, i) => i === 0 || n === seq2[i - 1] + 1), `${seq2[0]}…${seq2.at(-1)} (${seq2.length} rows)`);
-await touch('touchEnd');
+check('a drag scrolls the agent\'s own view up', (await topRow()) < 300, `top row ${await topRow()}`);
 await page.evaluate(() => document.querySelector('.term-latest:not([hidden])')?.click());
 await pause(1500);
-check('↓ from deep in the history: the latest', !(await page.$('.term-history')) && (await topRow()) === 300, `top row ${await topRow()}`);
+check('↓: the latest again', (await topRow()) === 300, `top row ${await topRow()}`);
 await page.focus('.term-keys'); await page.keyboard.type('Z');
 await page.evaluate(() => document.activeElement?.blur());
 await pause(500);

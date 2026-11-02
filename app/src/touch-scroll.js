@@ -40,7 +40,7 @@ function learn(name, more) {
   } catch {}
 }
 
-export function touchScroll(viewport, xterm, { outer = true, onTap = null, key = null, history = null, agent = null } = {}) {
+export function touchScroll(viewport, xterm, { outer = true, onTap = null, key = null } = {}) {
   let start = null;         // { x, y, axis, stopped }
   let lastY = 0, lastT = 0, speed = 0, carry = 0, coast = 0;
 
@@ -57,19 +57,7 @@ export function touchScroll(viewport, xterm, { outer = true, onTap = null, key =
     }
     // 2. Whole lines in the terminal; keep the fraction for the next move. A full-screen
     // program's text follows the finger at once (see `ahead`).
-    if (xterm.buffer.active.type !== 'normal') {
-      // A coding agent: its history on the phone (history.js), once we know how it scrolls.
-      if (history?.active) { if (history.scrollBy(px)) return; }
-      else if (history && px > 0 && agent?.()) {
-        const k = learnedOf(key?.());
-        if (k.s && k.t !== undefined && k.b !== undefined && xterm.rows - k.b - k.t > 4) {
-          history.open({ top: k.t, bottom: xterm.rows - 1 - k.b }, k.s);
-          if (steps.drag) steps.drag.n = 0; // it pages the program itself: this drag measures nothing
-          if (history.scrollBy(px)) return;
-        }
-      }
-      lead(px);
-    }
+    if (xterm.buffer.active.type !== 'normal') lead(px);
     carry += px;
     const lines = Math.trunc(carry / cellHeight());
     if (!lines) return;

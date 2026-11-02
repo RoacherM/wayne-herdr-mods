@@ -10,8 +10,7 @@ import { Terminal } from '@xterm/xterm';
 import { b64, boxKeysFromSecret, decodePairLink, newBoxKeys, unb64 } from '../../shared/e2e.js';
 import { Link } from './link.js';
 import { scanQr } from './scan.js';
-import { touchScroll, wheel as wheelTo } from './touch-scroll.js';
-import { History } from './history.js';
+import { touchScroll } from './touch-scroll.js';
 import { ReflowView } from './reflow.js';
 import { ConversationView } from './conversation.js';
 import { LiveLine, pasteText } from './live-line.js';
@@ -449,14 +448,10 @@ function openTerm(address) {
   const view = new ReflowView(flow, xterm, TERM_THEME);
   // The phone layout scrolls natively; a tap (not one that ends a scroll, not a text selection) brings up the keyboard.
   flow.addEventListener('click', () => { if (window.getSelection()?.isCollapsed !== false) keys.focus(); });
-  // Full-screen programs: xterm itself, at the Mac's size; drags reach the program as the wheel.
-  // A coding agent's history, scrolled on the phone (history.js).
-  const history = new History({
-    xterm, theme: TERM_THEME, wheel: (n) => wheelTo(xterm, n), latest: () => toLatest(),
-    cellHeight: () => xterm._core?._renderService?.dimensions?.css?.cell?.height || xterm.options.fontSize * 1.2,
-  });
+  // Full-screen programs: xterm itself; drags reach the program as the wheel. (A coding agent's
+  // history reads best in the conversation view: there it scrolls on the phone.)
   const stopTouch = touchScroll(viewport, xterm, {
-    onTap: () => keys.focus(), history, agent: () => reflows(current()),
+    onTap: () => keys.focus(),
     key: () => { const t = current(); return t?.app || t?.program; },
   });
   viewport.addEventListener('pointerup', (e) => { if (e.pointerType === 'mouse' && !xterm.hasSelection()) keys.focus(); });
@@ -560,7 +555,6 @@ function openTerm(address) {
   function setBack(n) { back = n; latestBtn.hidden = back === 0 || convMode; }
   /** Scroll the agent's own view back down to the latest (a few steps more: extra ones do nothing). */
   function toLatest(now = false) {
-    history.close(false); // the live screen again, once the program has redrawn
     if (!back) return;
     const d = wheelReport(false).repeat(back + 2);
     setBack(0);
@@ -930,7 +924,6 @@ function openTerm(address) {
       checks.forEach(clearTimeout);
       screen.style.height = screen.style.transform = '';
       stopTouch();
-      history.dispose();
       conv?.close();
       page.stopTalk?.();
       clearTimeout(page.ackTimer);
