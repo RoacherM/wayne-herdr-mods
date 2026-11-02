@@ -11,6 +11,7 @@ import { b64, boxKeysFromSecret, decodePairLink, newBoxKeys, unb64 } from '../..
 import { Link } from './link.js';
 import { scanQr } from './scan.js';
 import { touchScroll } from './touch-scroll.js';
+import { commandText, keystrokes } from './live-command.js';
 import { MAX_MS, shrinkImage, startRecording, transcribe, upload, voiceSupported } from './voice.js';
 
 // ------------------------------------------------------------------ utilities --
@@ -352,7 +353,7 @@ function openTerm(address) {
   const t0 = app.list.terminals.find((t) => t.address === address);
   const fitKey = `fit:${address}`;
   const page = {
-    address, s: null, xterm: null, fit: load()[fitKey] === true, closed: false, cols: t0?.cols ?? 80, rows: t0?.rows ?? 24, unacked: 0, opening: false, early: [],
+    address, s: null, xterm: null, fit: load()[fitKey] === true, closed: false, cols: t0?.cols ?? 80, rows: t0?.rows ?? 24, unacked: 0, opening: false, early: [], typed: '',
   };
   app.term = page;
 
@@ -369,6 +370,7 @@ function openTerm(address) {
   const picker = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true });
   const attachBtn = h('button', { class: 'round ghost', 'aria-label': '添加图片', onClick: () => picker.click() }, icon('plus'));
   const attachRow = h('div', { class: 'attachments', hidden: true });
+  const cmdHint = h('div', { class: 'cmd-hint', hidden: true }, '命令模式：边打边进终端 · ↑↓ / Tab 选择 · 发送 = 回车');
   const keybar = h('div', { class: 'keybar' },
     h('button', { class: 'key', 'aria-label': '直接打字', onClick: () => { vibrate(); page.xterm?.focus(); } }, icon('kbd')),
     KEYBAR.map(([label, keys]) => h('button', { class: 'key', onClick: () => pressKeys(keys) }, label)));
@@ -380,7 +382,7 @@ function openTerm(address) {
       h('div', { class: 'bar-title' }, title, sub),
       fitBtn),
     viewport, notice,
-    h('footer', { class: 'term-foot' }, voiceHud, keybar, attachRow,
+    h('footer', { class: 'term-foot' }, voiceHud, keybar, attachRow, cmdHint,
       h('div', { class: 'composer' }, attachBtn, picker, h('div', { class: 'field-wrap' }, input), micBtn, sendBtn))));
 
   /** iMessage style: the mic while the box is empty, send once there is something to send. */
@@ -404,6 +406,7 @@ function openTerm(address) {
     }
     renderAttachments();
     updateAction();
+    mirror();
   });
 
   const xterm = new Terminal({
@@ -470,6 +473,7 @@ function openTerm(address) {
       const r = await app.link.rpc('term.open', { address, fit: page.fit ? phoneSize() : undefined });
       if (page.closed) { app.link.rpc('term.close', { s: r.s }).catch(() => {}); return; }
       page.s = r.s;
+      page.typed = ''; // a new stream: whatever we typed before is the agent's business now
       xterm.reset();
       resizeTo(r.cols, r.rows);
       notice.hidden = true;
@@ -504,8 +508,29 @@ function openTerm(address) {
     }
   }
 
+  /** Mirror a "/command" into the terminal as it is typed (see live-command.js). */
+  function mirror() {
+    const want = page.images.length ? '' : commandText(input.value);
+    cmdHint.hidden = !want;
+    input.closest('.composer')?.classList.toggle('cmd', Boolean(want));
+    if (!page.s || want === page.typed) return;
+    app.link.notify('term.input', { s: page.s, d: keystrokes(page.typed, want) });
+    page.typed = want;
+  }
+
   async function submit(force) {
     const text = input.value;
+    if (page.s && page.typed && page.typed === commandText(text)) {
+      // Already in the terminal, menu and all: Enter runs it (or picks the highlighted entry).
+      app.link.notify('term.input', { s: page.s, d: '\r' });
+      page.typed = '';
+      input.value = '';
+      autosize();
+      mirror();
+      updateAction();
+      vibrate();
+      return;
+    }
     if (!text.trim() && !page.images.length) return;
     sendBtn.disabled = true;
     try {
@@ -555,7 +580,7 @@ function openTerm(address) {
   }
 
   function autosize() { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight, 120)}px`; }
-  input.addEventListener('input', () => { autosize(); updateAction(); });
+  input.addEventListener('input', () => { autosize(); updateAction(); mirror(); });
   updateAction();
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(e.metaKey || e.ctrlKey); }

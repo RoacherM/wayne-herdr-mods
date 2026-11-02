@@ -110,6 +110,8 @@ button { font: inherit; color: inherit; }
 .key:active { background: var(--fg3); color: var(--bg); }
 .composer { display: flex; align-items: flex-end; gap: 6px; }
 .field-wrap { flex: 1; min-width: 0; display: flex; }
+.cmd-hint { font-size: 12px; color: var(--code); padding: 0 4px; }
+.composer.cmd .term-input { box-shadow: 0 0 0 1.5px var(--code); font-family: ui-monospace, Menlo, monospace; }
 .term-input { flex: 1; min-height: 38px; max-height: 120px; resize: none; padding: 8px 14px; border-radius: 19px; font-size: 16px; line-height: 1.35; }
 .round { flex: none; width: 38px; height: 38px; border: none; border-radius: 50%; display: grid; place-items: center; background: var(--l2); color: var(--fg); position: relative; }
 .round.ghost { background: transparent; color: var(--fg2); }
