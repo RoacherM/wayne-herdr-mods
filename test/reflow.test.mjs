@@ -50,3 +50,52 @@ test('a redrawn screen shows the latest state (Claude Code redraws its input box
   const { lines } = await screen('answer\r\n> old\r\x1b[2K> new');
   assert.deepEqual(lines.map((l) => text(l.html)).filter((s) => s.trim()), ['answer', '> new ']);
 });
+
+// epi (and zsh two-line prompts) draw a tree line on the left and frame their input box. The line
+// is a gutter, not a table: the text beside it wraps at the phone width and joins as usual.
+const box = (l, fill, r, w = 40) => l + fill.repeat(w - l.length - r.length) + r;
+const EPI = [
+  '   │ ● The first answer runs long and',
+  '   │   wraps at the edge of the Mac.',
+  '   │',
+  '   ├─$ ls -la · +3 lines',
+  box('  ╭', '─', '╮'),
+  box('  │ ❯ hi', ' ', '│'),
+  box('  ╰', '─', ' model ─────╯'),
+  '  Shift+Tab:effort  │  /:commands',
+].join('\r\n');
+
+test('a tree line on the left is a gutter; the text beside it joins and wraps', async () => {
+  const { lines } = await screen(EPI, 40, 10);
+  const [a, blank, cmd] = lines;
+  assert.equal(a.kind, 'text');
+  assert.equal(text(a.gut.html), '   │ ');
+  assert.equal(text(a.html), '● The first answer runs long and wraps at the edge of the Mac.');
+  assert.equal(a.gut.v, true, 'the line goes on below the glyph');
+  assert.equal(text(blank.gut.html), '   │');
+  assert.equal(text(blank.html), '');
+  assert.equal(text(cmd.gut.html), '   ├─');
+  assert.equal(text(cmd.html), '$ ls -la · +3 lines', 'a branch starts a new line');
+});
+
+test('a framed box fits the phone: its edges stretch, its sides are a gutter', async () => {
+  const { lines } = await screen(EPI, 40, 10);
+  const [, , , top, input, bottom, hint] = lines;
+  assert.deepEqual([top.kind, input.kind, bottom.kind, hint.kind], ['rule', 'text', 'rule', 'tbl']);
+  assert.equal(text(input.gut.html), '  │ ');
+  assert.equal(text(input.html), '❯ hi');
+  assert.equal(text(input.tail.html), '│');
+  const html = blocks(lines);
+  assert.match(html[3], /^<div class="rule">  ╭<i class="ln"><\/i>╮<\/div>$/);
+  assert.match(html[5], /^<div class="rule">  ╰<i class="ln"><\/i> model <i class="ln"><\/i>╯<\/div>$/, 'the caption stays');
+  assert.match(html[4], /^<div class="gut"><span class="g v"[^>]*>  │ <\/span><span class="c">❯ hi<\/span><span class="g t v"[^>]*>│<\/span><\/div>$/);
+  assert.match(html[6], /^<div class="text">  Shift\+Tab:effort  │  \/:commands(<span class="cur"> <\/span>)?<\/div>$/, 'one table row alone wraps as text');
+});
+
+test('a framed row joins on its own edge, not the screen edge', async () => {
+  const { lines } = await screen([
+    box('│ short', ' ', '│'),
+    box('│ next', ' ', '│'),
+  ].join('\r\n'), 40, 4);
+  assert.deepEqual(lines.slice(0, 2).map((l) => text(l.html)), ['short', 'next']);
+});

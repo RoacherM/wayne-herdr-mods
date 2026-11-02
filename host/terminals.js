@@ -160,6 +160,20 @@ export function createTerminals({ coreOptions = {}, log = () => {}, onChange = (
   };
 }
 
+const INTERPRETERS = /^(node|nodejs|python[0-9.]*|bun|deno|ruby|perl|php)$/;
+
+/**
+ * The program's name as a person would say it: a script run by an interpreter (`node …/bin/epi`)
+ * is named after the script. Only the name goes to the phone, never argv.
+ */
+export function programOf(fg) {
+  if (!fg?.name) return null;
+  if (!INTERPRETERS.test(fg.name)) return fg.name;
+  const script = (fg.argv ?? []).slice(1).find((a) => !a.startsWith('-'));
+  if (!script || !/[/.]/.test(script)) return fg.name; // `bun run dev`: no script file
+  return script.split('/').pop().replace(/\.(m?js|cjs|ts|py|rb|pl|php)$/, '') || fg.name;
+}
+
 /** What a phone sees of one terminal. Never argv or env: only display facts. */
 export function project(t) {
   const status = t.status ?? null;
@@ -171,7 +185,7 @@ export function project(t) {
     space: t.labels?.['herdr.space'] ?? null,
     tab: t.labels?.['herdr.tab'] ?? null,
     cwd: t.foreground?.cwd ?? t.cwd ?? null,
-    program: t.foreground?.name ?? null,
+    program: programOf(t.foreground),
     app: status?.app || null,
     state: status?.state ?? null, // idle | working | done | blocked | error | null (never reported)
     kind: status?.kind ?? null, // permission | question | auth (blocked only)

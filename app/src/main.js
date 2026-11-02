@@ -57,6 +57,8 @@ const ICONS = {
   scan: '<path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 12h10"/>',
   kbd: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  mac: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+  phone: '<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/>',
 };
 const icon = (name) => { const s = h('span', { class: 'ico' }); s.innerHTML = `<svg viewBox="0 0 24 24">${ICONS[name]}</svg>`; return s; };
 
@@ -348,6 +350,19 @@ const KEYBAR = [
   ['Esc', '\x1b'], ['Tab', '\t'], ['^C', '\x03'], ['↑', '\x1b[A'], ['↓', '\x1b[B'], ['←', '\x1b[D'], ['→', '\x1b[C'], ['⏎', '\r'],
   ['1', '1'], ['2', '2'], ['3', '3'], ['y', 'y'], ['n', 'n'], ['⇧Tab', '\x1b[Z'], ['^D', '\x04'],
 ];
+// Coding agents: their full screen is text, input box and rules, and reads well in the phone's layout.
+const AGENT = /^(claude|codex|epi|gemini|opencode|aider|amp|droid|goose|crush|qwen|kimi|cursor-agent|copilot)\b/i;
+const VIEWS = 'herdr-relay.views'; // program → 'phone' | 'mac', the person's choice
+const programKey = (t) => t?.app || t?.program || '';
+function views() { try { return JSON.parse(localStorage.getItem(VIEWS) || '{}'); } catch { return {}; } }
+function setView(t, v) { const all = views(); all[programKey(t) || '?'] = v; localStorage.setItem(VIEWS, JSON.stringify(all)); }
+/** Lay a full screen out for the phone? The person's choice for this program, else: is it an agent. */
+function reflows(t) {
+  const v = views()[programKey(t) || '?'];
+  if (v) return v === 'phone';
+  return Boolean(t?.app) || AGENT.test(programKey(t)) || AGENT.test(t?.title ?? '');
+}
+const MOUSE_REPORT = /^(\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[M[\s\S]{3})+$/; // SGR, or the default encoding
 const ANSWERS = new Set(['Esc', '⏎', '1', '2', '3', 'y', 'n']); // blue while the program asks
 // Hardware keys that go to the program as keys, not into the line.
 const HW_KEYS = { Escape: '\x1b', Tab: '\t', ArrowUp: '\x1b[A', ArrowDown: '\x1b[B', ArrowRight: '\x1b[C', ArrowLeft: '\x1b[D' };
@@ -377,12 +392,16 @@ function openTerm(address) {
   const pickBtn = h('button', { class: 'round', 'aria-label': '插入图片', onClick: () => pick() }, icon('plus'));
   const talkBtn = h('button', { class: `talk ${voiceOk ? '' : 'off'}`, 'aria-label': '按住说话' }, '按住 说话');
   const kbdBtn = h('button', { class: 'round', 'aria-label': '键盘', onClick: () => (document.activeElement === keys ? keys.blur() : keys.focus()) }, icon('kbd'));
+  // Full-screen programs only: the phone's layout or the Mac's screen as it is (kept per program).
+  // It shows where a tap goes: the Mac's screen (a monitor) or back to the phone's layout (a phone).
+  const viewBtn = h('button', { class: 'icon-btn view-btn', onClick: () => toggleView() });
   const keyBtns = KEYBAR.map(([label, seq]) => h('button', { class: 'key', 'data-label': label, onClick: () => key(seq) }, label));
 
   const screen = h('main', { class: 'screen term' },
     h('header', { class: 'bar' },
       h('button', { class: 'icon-btn', 'aria-label': '返回', onClick: () => { app.view = { name: 'home' }; render(); } }, icon('back')),
-      h('div', { class: 'bar-title' }, title, sub)),
+      h('div', { class: 'bar-title' }, title, sub),
+      viewBtn),
     h('div', { class: 'term-stage' }, flow, viewport, bubble),
     h('footer', { class: 'term-foot' },
       h('div', { class: 'keybar' }, keyBtns),
@@ -403,14 +422,29 @@ function openTerm(address) {
   // Full-screen programs: xterm itself, at the Mac's size; drags reach the program as the wheel.
   const stopTouch = touchScroll(viewport, xterm, { onTap: () => keys.focus() });
   viewport.addEventListener('pointerup', (e) => { if (e.pointerType === 'mouse' && !xterm.hasSelection()) keys.focus(); });
-  // Coding agents draw text on their full screen too: the phone layout works for them.
-  const AGENT = /^(claude|codex)/i;
+  // Coding agents draw text on their full screen too: the phone layout works for them. Other
+  // full-screen programs (vim, htop) need the Mac's grid. The header button overrides either way.
+  const current = () => app.list.terminals.find((x) => x.address === address);
   const showMode = () => {
-    const t = app.list.terminals.find((x) => x.address === address);
-    const full = xterm.buffer.active.type === 'alternate' && !AGENT.test(t?.app ?? t?.program ?? '');
+    const t = current();
+    const alt = xterm.buffer.active.type === 'alternate';
+    const full = alt && !reflows(t);
     flow.hidden = full;
     viewport.hidden = !full;
+    viewBtn.classList.toggle('shown', alt);
+    if (viewBtn.dataset.to !== (full ? 'phone' : 'mac')) {
+      viewBtn.dataset.to = full ? 'phone' : 'mac';
+      viewBtn.setAttribute('aria-label', full ? '按手机排版' : '按 Mac 原样显示');
+      fill(viewBtn, icon(full ? 'phone' : 'mac'));
+    }
     if (full) layout(); else view.schedule();
+  };
+  const toggleView = () => {
+    const t = current();
+    const to = xterm.buffer.active.type === 'alternate' && !reflows(t) ? 'phone' : 'mac';
+    setView(t, to);
+    showMode();
+    toast(to === 'phone' ? '按手机排版' : 'Mac 原样');
   };
   xterm.buffer.onBufferChange(showMode);
   // An agent's full screen has no history of its own here: past the top (or the bottom) of the
@@ -447,8 +481,10 @@ function openTerm(address) {
   // take the focus from the keyboard field (or, after a tap that only stopped a scroll, bring the
   // keyboard up). It never takes the focus.
   if (xterm.textarea) xterm.textarea.focus = () => {};
-  // What xterm itself sends: mouse-wheel reports for full-screen programs (vim, less, htop).
-  xterm.onData((d) => { if (page.s) app.link.notify('term.input', { s: page.s, d }); });
+  // What xterm itself sends: only mouse reports (the wheel, for full-screen programs). Keys come from
+  // the phone's own field. Never focus reports: a blur of xterm's hidden input sent ESC [ O, which
+  // a program that does not read it shows as "^[[O" in its input line; focus is Herdr's to report.
+  xterm.onData((d) => { if (page.s && MOUSE_REPORT.test(d)) app.link.notify('term.input', { s: page.s, d }); });
 
   function write(b64data) {
     const bytes = unb64(b64data);
