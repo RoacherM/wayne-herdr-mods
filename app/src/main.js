@@ -10,6 +10,7 @@ import { Terminal } from '@xterm/xterm';
 import { b64, boxKeysFromSecret, decodePairLink, newBoxKeys, unb64 } from '../../shared/e2e.js';
 import { Link } from './link.js';
 import { scanQr } from './scan.js';
+import { touchScroll } from './touch-scroll.js';
 import { MAX_MS, shrinkImage, startRecording, transcribe, upload, voiceSupported } from './voice.js';
 
 // ------------------------------------------------------------------ utilities --
@@ -412,6 +413,7 @@ function openTerm(address) {
   });
   page.xterm = xterm;
   xterm.open(host);
+  const stopTouch = touchScroll(viewport, xterm); // xterm 6 ignores finger drags
   // Keystrokes typed straight into the terminal (hardware keyboard, or the 直接打字 button).
   xterm.onData((d) => { if (page.s) app.link.notify('term.input', { s: page.s, d }); });
 
@@ -644,6 +646,7 @@ function openTerm(address) {
     dispose() {
       page.closed = true;
       ro.disconnect();
+      stopTouch();
       clearTimeout(page.ackTimer);
       if (page.s && app.link?.status === 'ready') app.link.rpc('term.close', { s: page.s }).catch(() => {});
       xterm.dispose();
