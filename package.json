@@ -1,6 +1,6 @@
 {
   "name": "herdr-relay",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "description": "Control Herdr.app terminals from a phone browser through an end-to-end encrypted Cloudflare relay",
