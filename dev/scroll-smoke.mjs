@@ -1,9 +1,8 @@
 // Scrolling on the PWA terminal page, as an iPhone, against dev/fake-desktop.mjs.
 //   npm run build; npm run relay:dev; node dev/fake-desktop.mjs > /tmp/fake.log &; node dev/scroll-smoke.mjs "<pairing link>"
-// Normal output: the phone layout scrolls natively and a tap brings up the keyboard. A full-screen
-// program (vim, htop) shows xterm itself and a drag reaches it as the wheel. A coding agent's full
-// screen is laid out for the phone too; a pull past its top reaches the agent as the wheel. All that at
-// the Mac's size; then at the phone's size: xterm itself, and the agent's ↓ works the same.
+// The terminal is the Mac's grid, wider than the phone. Normal output: a drag up or down scrolls the
+// history, a sideways drag pans, a tap brings up the keyboard. A full-screen program (vim, htop, a
+// coding agent) gets a drag as the wheel; ↓ and typing take an agent back to its latest.
 import { readFileSync, writeFileSync } from 'node:fs';
 import puppeteer from 'puppeteer-core';
 
@@ -24,28 +23,34 @@ async function drag(x0, y0, x1, y1, { steps = 12, ms = 16 } = {}) {
   await touch('touchEnd');
 }
 async function send(text) { await page.focus('.term-keys'); await page.keyboard.type(text); await page.keyboard.press('Enter'); await page.evaluate(() => document.activeElement.blur()); }
-const flowTop = () => page.evaluate(() => document.querySelector('.term-flow').scrollTop);
-const shown = () => page.evaluate(() => (document.querySelector('.term-flow').hidden ? 'xterm' : 'flow'));
+const viewY = () => page.evaluate(() => { const b = globalThis.__herdrTerm.buffer.active; return { y: b.viewportY, base: b.baseY }; });
+const shown = () => page.evaluate(() => (document.querySelector('.term-viewport').hidden ? 'none' : 'xterm'));
 const keyboardUp = () => page.evaluate(() => document.activeElement?.classList.contains('term-keys'));
-const flowText = () => page.evaluate(() => document.querySelector('.term-flow').innerText);
+const rowsText = () => page.evaluate(() => document.querySelector('.xterm-rows').textContent);
 const readFile = (p) => { try { return readFileSync(p, 'latin1'); } catch { return ''; } };
 
-await page.evaluateOnNewDocument(() => { if (!localStorage.getItem('herdr-relay.size')) localStorage.setItem('herdr-relay.size', 'keep'); });
 await page.goto(link, { waitUntil: 'networkidle0' });
 await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => b.innerText.includes('开始配对')).click());
 await page.waitForFunction(() => document.querySelectorAll('.trow').length >= 4, { timeout: 25_000 });
 await page.evaluate(() => [...document.querySelectorAll('.trow')].find((r) => /^zsh/.test(r.querySelector('b')?.textContent ?? '')).click());
-await page.waitForSelector('.term-flow');
+await page.waitForSelector('.term-viewport:not([hidden])');
 await pause(800);
 
 await send('for i in $(seq 1 300); do echo line-$i; done');
-await page.waitForFunction(() => document.querySelector('.term-flow').innerText.includes('line-300'), { timeout: 15_000 });
+await page.waitForFunction(() => document.querySelector('.xterm-rows').innerText.includes('line-300'), { timeout: 15_000 });
 await pause(400);
-const box = await page.evaluate(() => { const r = document.querySelector('.term-flow').getBoundingClientRect(); return { x: r.left + r.width / 2, mid: r.top + r.height / 2 }; });
-const t0 = await flowTop();
-await cdp.send('Input.synthesizeScrollGesture', { x: box.x, y: box.mid, yDistance: 400, gestureSourceType: 'touch', speed: 1200 });
-await pause(300);
-check('a drag scrolls the history natively', (await flowTop()) < t0 - 100, `${t0} → ${await flowTop()}`);
+const box = await page.evaluate(() => { const r = document.querySelector('.term-viewport').getBoundingClientRect(); return { x: r.left + r.width / 2, mid: r.top + r.height / 2 }; });
+const v0 = await viewY();
+await page.evaluate(() => { const l = globalThis.__herdrLink; const n = l.notify.bind(l); globalThis.__sent = []; l.notify = (m, p) => { globalThis.__sent.push(m); n(m, p); }; });
+await drag(box.x, box.mid - 150, box.x, box.mid + 150, { steps: 20 });
+await pause(600);
+const v1 = await viewY();
+const sentNow = await page.evaluate(() => globalThis.__sent.filter((m) => m === 'term.input').length);
+check('a drag down scrolls the history, on the phone only', v1.y < v0.y - 5 && sentNow === 0, `line ${v0.y} → ${v1.y} (of ${v0.base}); ${sentNow} sent`);
+await drag(box.x + 100, box.mid, box.x - 100, box.mid, { steps: 16 });
+await pause(400);
+const left = await page.$eval('.term-viewport', (v) => v.scrollLeft);
+check('a sideways drag pans, and leaves the history where it was', left > 80 && (await viewY()).y === v1.y, `scrollLeft ${left}, line ${(await viewY()).y}`);
 await touch('touchStart', box.x, box.mid); await touch('touchEnd');
 await pause(300);
 check('a tap brings up the keyboard', await keyboardUp());
@@ -57,45 +62,16 @@ await page.waitForFunction(() => document.querySelector('.xterm-rows').textConte
 await pause(300);
 check('a full-screen program shows xterm itself', (await shown()) === 'xterm');
 for (let i = 0; i < 3; i++) await drag(box.x, box.mid - 150, box.x, box.mid + 150, { steps: 20 });
-await page.waitForFunction(() => document.querySelector('.term-flow').innerText.includes('WHEEL_DONE'), { timeout: 8_000 }).catch(() => {});
+await page.waitForFunction(() => document.querySelector('.xterm-rows').innerText.includes('WHEEL_DONE'), { timeout: 8_000 }).catch(() => {});
 check('… and a drag reaches it as the wheel', /\x1b\[<64;/.test(readFile('/tmp/relay-wheel.txt')), JSON.stringify(readFile('/tmp/relay-wheel.txt').slice(0, 30)));
 
-// A coding agent's full screen: laid out for the phone; a pull past the top scrolls the agent.
-await send("rm -f /tmp/relay-wheel2.txt; printf '\\033]7501;state=idle:app=claude\\033\\\\\\033[?1049h\\033[?1000h\\033[?1006h\\033[HAGENT_SCREEN top line'; stty raw -echo; head -c 20 > /tmp/relay-wheel2.txt; stty sane; printf '\\033[?1000l\\033[?1006l\\033[?1049l'; echo AGENT_DONE");
-await page.waitForFunction(() => document.querySelector('.term-flow').innerText.includes('AGENT_SCREEN'), { timeout: 10_000 }).catch(() => {});
-await pause(600);
-check("an agent's full screen is laid out for the phone", (await shown()) === 'flow' && (await flowText()).includes('AGENT_SCREEN top line'));
-for (let i = 0; i < 3; i++) await drag(box.x, box.mid - 100, box.x, box.mid + 200, { steps: 20 });
-await page.waitForFunction(() => document.querySelector('.term-flow').innerText.includes('AGENT_DONE'), { timeout: 8_000 }).catch(() => {});
-check('… and a pull past its top reaches the agent as the wheel', /\x1b\[<64;/.test(readFile('/tmp/relay-wheel2.txt')), JSON.stringify(readFile('/tmp/relay-wheel2.txt').slice(0, 30)));
-
-// Scrolled up, then typing: the agent's view goes back to the latest first, so what you send and
-// its answer are in view (the agent gets the wheel-downs, then the key).
+// A coding agent's full screen: a drag scrolls its own view; typing takes it back to the latest
+// first, so what you send and its answer are in view (the agent gets the wheel-downs, then the key).
 writeFileSync('/tmp/relay-readz.py', "import os\nb=b''\nwhile not b.endswith(b'Z'): b+=os.read(0,1)\nopen('/tmp/relay-wheel3.txt','wb').write(b)\n");
-await send("rm -f /tmp/relay-wheel3.txt; printf '\\033]7501;state=idle:app=claude\\033\\\\\\033[?1049h\\033[?1000h\\033[?1006h\\033[HAGENT_TWO top line'; stty raw -echo; python3 /tmp/relay-readz.py; stty sane; printf '\\033[?1000l\\033[?1006l\\033[?1049l'; echo AGENT2_DONE");
-await page.waitForFunction(() => document.querySelector('.term-flow').innerText.includes('AGENT_TWO'), { timeout: 10_000 }).catch(() => {});
-await pause(600);
-for (let i = 0; i < 2; i++) await drag(box.x, box.mid - 100, box.x, box.mid + 200, { steps: 20 });
-await pause(300);
-check('scrolled up: a ↓ button offers the latest', await page.$eval('.term-latest', (b) => !b.hidden));
-await page.focus('.term-keys');
-await page.keyboard.type('Z');
-await page.waitForFunction(() => document.querySelector('.term-flow').innerText.includes('AGENT2_DONE'), { timeout: 8_000 }).catch(() => {});
-const got = readFile('/tmp/relay-wheel3.txt');
-const ups = (got.match(/\x1b\[<64;/g) ?? []).length, downs = (got.match(/\x1b\[<65;/g) ?? []).length;
-check('typing takes the agent back to the latest first', ups > 0 && downs >= ups && /(\x1b\[<65;2;2M)+Z$/.test(got), `${ups} up, ${downs} down, ends ${JSON.stringify(got.slice(-14))}`);
-check('… and the ↓ button goes', await page.$eval('.term-latest', (b) => b.hidden));
-await page.evaluate(() => document.activeElement?.blur());
-
-// The phone's size: xterm itself, also for an agent; a drag on it scrolls the agent, ↓ and typing as above.
-await page.evaluate(() => document.querySelector('.view-btn').click());
-await pause(800);
-const rowsText = () => page.evaluate(() => document.querySelector('.xterm-rows').textContent);
-check("the phone's size shows xterm itself", (await shown()) === 'xterm');
 await send("rm -f /tmp/relay-wheel3.txt; printf '\\033]7501;state=idle:app=claude\\033\\\\\\033[?1049h\\033[?1000h\\033[?1006h\\033[HAGENT_FIT top line'; stty raw -echo; python3 /tmp/relay-readz.py; stty sane; printf '\\033[?1000l\\033[?1006l\\033[?1049l'; echo AGENT3_DONE");
 await page.waitForFunction(() => document.querySelector('.xterm-rows').textContent.includes('AGENT_FIT'), { timeout: 10_000 }).catch(() => {});
 await pause(600);
-check("… also for an agent's full screen", (await shown()) === 'xterm' && (await rowsText()).includes('AGENT_FIT'));
+check("an agent's full screen shows as on the Mac", (await shown()) === 'xterm' && (await rowsText()).includes('AGENT_FIT'));
 for (let i = 0; i < 2; i++) await drag(box.x, box.mid - 100, box.x, box.mid + 200, { steps: 20 });
 await pause(300);
 check('a drag scrolls it up: ↓ shows', await page.$eval('.term-latest', (b) => !b.hidden));

@@ -97,38 +97,18 @@ button { font: inherit; color: inherit; }
   --bg: #1c1c1e; --l1: #2c2c2e; --l2: #2c2c2e; --fg: #f2f2f7; --fg2: #aeaeb2; --fg3: #8d8d93; --line: rgba(255,255,255,.08); --blue: #0a84ff; }
 .screen.term .bar { position: relative; flex: none; margin: 0; padding: calc(var(--safe-t) + 4px) 6px 4px; gap: 2px; background: var(--bg); border-bottom: none; color: var(--fg); }
 .screen.term .bar-title { align-items: center; text-align: center; }
-/* Right of the title, mirrors the back button so the title stays centred; only on full screens. */
-.view-btn { flex: none; color: var(--fg2); visibility: hidden; }
-.view-btn.shown { visibility: visible; }
-.view-btn .ico svg { stroke-width: 1.8; }
 .screen.term .bar-title b { font-size: 15px; }
 .screen.term .bar-title .status { font-size: 11.5px; color: var(--fg3); }
 .term-stage { position: relative; flex: 1 1 auto; min-height: 0; background: #0b0b0c; }
-.term-viewport { position: absolute; inset: 0; overflow: hidden; padding: 4px 6px; cursor: text; }
-.term-viewport[hidden], .term-flow[hidden] { display: none; }
-/* the phone's own layout of the terminal (reflow.js): wraps at the phone's width, scrolls natively */
-.term-flow { position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
-  padding: 6px 10px 44px; color: #e6e6e1; font: 12.5px/1.45 ui-monospace, Menlo, "SF Mono", monospace; white-space: pre-wrap; overflow-wrap: anywhere;
-  -webkit-text-size-adjust: 100%; cursor: text; }
-.term-flow > div { min-height: 1.45em; }
-.term-flow .rule { display: flex; align-items: center; white-space: pre; overflow: hidden; color: #48484a; }
-/* A rule's runs of ─ stretch to the phone's width (reflow.js); corners and captions stay as text. */
-.term-flow .rule span { display: contents; }
-.term-flow .rule .ln { flex: 1 1 0; min-width: 1ch; height: 0; border-top: 1px solid currentColor; }
-.term-flow .rule .ln.h { border-top-width: 2px; }
-.term-flow .rule .ln.d { border-top: 3px double currentColor; }
-/* A tree line or a box's sides beside the text: the text wraps, the line goes on down beside it. */
-.term-flow .gut { display: flex; }
-.term-flow .gut .g { flex: none; white-space: pre; color: #48484a; }
-.term-flow .gut .g.v { background: linear-gradient(currentColor, currentColor) no-repeat calc(var(--i, 0) * 1ch + .5ch - .5px) 0 / 1px 100%; }
-.term-flow .gut .c { flex: 1 1 auto; min-width: 0; }
-.term-flow .tbl { white-space: pre; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
-.term-flow .tbl::-webkit-scrollbar { display: none; }
+/* The Mac's grid at the phone's font: wider than the phone. Sideways the browser pans it; up and
+   down is touch-scroll.js (history, or the wheel to the program). */
+.term-viewport { position: absolute; inset: 0; overflow-x: auto; overflow-y: hidden; touch-action: pan-x; overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch; padding: 4px 6px; cursor: text; }
+.term-viewport[hidden] { display: none; }
 .term-latest { position: absolute; right: 12px; bottom: 12px; width: 38px; height: 38px; display: grid; place-items: center; border: none; border-radius: 19px;
   background: #2c2c2e; color: var(--fg); box-shadow: 0 2px 10px rgba(0,0,0,.45); }
 .term-latest[hidden] { display: none; }
 .term-latest .ico { width: 20px; height: 20px; }
-.term-flow .cur { background: #e6e6e1; color: #0b0b0c; }
 .xterm-host { width: max-content; }
 .term-bubble { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); max-width: calc(100% - 32px); display: flex; align-items: center; gap: 10px;
   padding: 7px 14px; border-radius: 999px; background: rgba(44,44,46,.92); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
@@ -445,6 +425,7 @@ button { font: inherit; color: inherit; }
 /* ---- the conversation view (conversation.js): the agent's transcript, scrolled natively */
 .mode-btn { flex: none; color: var(--fg2); }
 .mode-btn .ico svg { stroke-width: 1.8; }
+.mode-btn.none { visibility: hidden; pointer-events: none; } /* keeps the title in the middle */
 .conv { position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
   padding: 10px 14px 24px; display: flex; flex-direction: column; gap: 10px; color: #e6e6e1; font-size: 15.5px; line-height: 1.6; word-break: break-word; }
 .conv[hidden] { display: none; }

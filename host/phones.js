@@ -119,11 +119,10 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
    * One phone viewer of one terminal. It attaches as a non-observe viewer with `resumed: true`
    * at the terminal's current size: herdr-core then never lets it lead the size until it types.
    * Before each burst of input it re-states the terminal's *current* size, so typing on the phone
-   * never shrinks the Mac windows (DESIGN.md「多个窗口怎么同步」). `fit` opts into the phone's size:
-   * the program lays itself out for the phone; the Mac windows show that size until someone types
-   * there (herdr-core: the last active viewer sets the size). `before` is the size to give back.
+   * never shrinks the Mac windows (DESIGN.md「多个窗口怎么同步」). The phone shows the Mac's size
+   * and pans across it.
    */
-  async function openStream(peer, address, { fit } = {}) {
+  async function openStream(peer, address) {
     if (peer.streams.size >= MAX_STREAMS) {
       const oldest = peer.streams.values().next().value;
       oldest.stop('replaced');
@@ -133,7 +132,7 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
     const t = terminals.get(address);
     if (!t || t.state !== 'live') throw new Error(`没有正在运行的终端 ${address}`);
     const id = nextStream++;
-    const stream = { id, address, core, channel: null, fit: null, stopped: false };
+    const stream = { id, address, core, channel: null, stopped: false };
     stream.stop = (reason = 'closed') => {
       if (stream.stopped) return;
       stream.stopped = true;
@@ -142,19 +141,15 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
       event(peer, 'closed', { s: id, reason });
     };
     peer.streams.set(id, stream);
-    const cols = fit?.cols ?? t.cols;
-    const rows = fit?.rows ?? t.rows;
-    const before = { cols: t.cols, rows: t.rows }; // now: `t` follows the core's size events
     let reply;
     try {
-      reply = await core.call('terminal.attach', { terminal: address, cols, rows, history: HISTORY_LINES, resumed: !fit });
+      reply = await core.call('terminal.attach', { terminal: address, cols: t.cols, rows: t.rows, history: HISTORY_LINES, resumed: true });
     } catch (error) {
       peer.streams.delete(id);
       throw error;
     }
     if (stream.stopped) { core.release(reply.channel); return { s: id }; }
     stream.channel = reply.channel;
-    if (fit) { stream.fit = { cols, rows }; stream.before = before; }
     core.on(reply.channel, {
       onData: (bytes) => event(peer, 'out', { s: id, d: bytes.toString('base64') }),
       onClose: (reason) => {
@@ -177,9 +172,8 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
   function input(stream, text) {
     if (typeof text !== 'string' || !text || text.length > 64 * 1024) return;
     const t = terminals.get(stream.address);
-    // Follow the size the Mac windows set, unless this phone asked to fit the terminal to itself.
-    const want = stream.fit ?? (t ? { cols: t.cols, rows: t.rows } : null);
-    if (want) stream.core.send(stream.channel, RESIZE, size(want.cols, want.rows));
+    // Follow the size the Mac windows set.
+    if (t) stream.core.send(stream.channel, RESIZE, size(t.cols, t.rows));
     stream.core.send(stream.channel, DATA, Buffer.from(text, 'utf8'));
   }
 
@@ -226,7 +220,7 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
 
   const methods = {
     'terminals.list': () => ({ core: terminals.state(), terminals: terminals.list(), layout: terminals.layout() }),
-    'term.open': (peer, p) => openStream(peer, addressOf(p), { fit: p.fit && validSize(p.fit) }),
+    'term.open': (peer, p) => openStream(peer, addressOf(p)),
     'term.close': (peer, p) => { peer.streams.get(Number(p.s))?.stop(); return {}; },
     // A coding agent's conversation from its transcript (transcripts.js): the phone names the terminal only.
     // Direct link (rtc-link.js): the phone's WebRTC offer → our answer. The channel then gets its
@@ -241,20 +235,6 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
     'conv.open': (peer, p) => peer.convs.open(addressOf(p)),
     'conv.older': (peer, p) => peer.convs.older(p.c, p.before),
     'conv.close': (peer, p) => { peer.convs.close(p.c); return {}; },
-    // The phone's size (fit), or back to the size from before the phone took it (fit: null).
-    'term.fit': (peer, p) => {
-      const stream = streamOf(peer, p.s);
-      const fit = p.fit ? validSize(p.fit) : null;
-      const t = terminals.get(stream.address);
-      if (fit && !stream.fit && t) stream.before = { cols: t.cols, rows: t.rows };
-      // Give the size back only while the phone still leads it (the Mac may have taken it since).
-      const leads = stream.fit && t && t.cols === stream.fit.cols && t.rows === stream.fit.rows;
-      const want = fit ?? (leads ? stream.before : null);
-      if (!fit) stream.before = null;
-      stream.fit = fit;
-      if (want) stream.core.send(stream.channel, RESIZE, size(want.cols, want.rows));
-      return { fit: Boolean(fit) };
-    },
     'term.send': async (peer, p) => {
       const text = String(p.text ?? '').trim();
       if (!text) throw new Error('消息不能为空');
@@ -364,10 +344,4 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
   };
 }
 
-function validSize(fit) {
-  const cols = Math.round(Number(fit.cols));
-  const rows = Math.round(Number(fit.rows));
-  if (!(cols >= 20 && cols <= 500 && rows >= 5 && rows <= 300)) throw new Error('无效的终端尺寸');
-  return { cols, rows };
-}
 

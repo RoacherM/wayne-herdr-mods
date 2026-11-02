@@ -30,7 +30,7 @@ async function until(what, fn, ms = 10_000) {
   for (;;) { const v = await fn(); if (v) return v; if (Date.now() > end) throw new Error(`timed out: ${what}`); await sleep(80); }
 }
 
-test('pair, list, stream, type, send, keys, fit — through the relay', { timeout: 120_000 }, async (t) => {
+test('pair, list, stream, type, send, keys — through the relay', { timeout: 120_000 }, async (t) => {
   const mac = await openCore({ session: SESSION }); // stands in for Herdr.app
   t.after(async () => { await mac.call('server.stop').catch(() => {}); mac.close(); });
   const run = await mac.call('terminal.run', { argv: ['/bin/sh'], cwd: '/tmp', labels: { where: 'test · sh' }, rm: true });
@@ -148,13 +148,8 @@ test('pair, list, stream, type, send, keys, fit — through the relay', { timeou
   // --- methods outside the whitelist never reach herdr-core
   await assert.rejects(rpc('machine.exec', { argv: ['id'] }), /未知方法/);
 
-  // --- fit: the phone opts into its own size, then gives it back
-  await rpc('term.fit', { s, fit: { cols: 44, rows: 20 } });
-  notify('term.input', { s, d: '\r' });
-  await until('size 44x20', async () => { const g = await mac.call('terminal.get', { terminal: address }); return g.cols === 44 && g.rows === 20; });
-  await rpc('term.fit', { s, fit: null });
-  mac.send(macView.channel, 3, Buffer.from(Uint16Array.of(120, 40).buffer)); // the Mac window resizes back
-  await until('size back to 120x40', async () => { const g = await mac.call('terminal.get', { terminal: address }); return g.cols === 120 && g.rows === 40; });
+  // --- the phone never sets the size: there is no method for it
+  await assert.rejects(rpc('term.fit', { s, fit: { cols: 44, rows: 20 } }), /未知方法/);
 
   // --- close
   await rpc('term.close', { s });

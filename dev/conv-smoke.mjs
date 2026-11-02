@@ -26,7 +26,7 @@ await page.evaluate(() => [...document.querySelectorAll('.trow')].find((r) => r.
 // 1. A Claude Code terminal opens in the conversation view, on the newest turn.
 await page.waitForFunction(() => document.querySelector('.conv:not([hidden]) .msg'), { timeout: 10_000 });
 await pause(300);
-check(await page.$eval('.term-flow', (el) => el.hidden) && await page.$eval('.term-viewport', (el) => el.hidden), 'the terminal is hidden: the conversation shows');
+check(await page.$eval('.term-viewport', (el) => el.hidden), 'the terminal is hidden: the conversation shows');
 check((await convText()).includes('第 150 处改好了'), 'the newest turn is there');
 let s = await scroll();
 check(s.height - s.top - s.client <= 2, 'it opens at the bottom');
@@ -102,7 +102,7 @@ await page.waitForFunction(() => document.querySelector('.conv .msg.user.pending
 check(await page.$eval('.conv', (el) => el.innerText.includes('hello from the conversation')), 'what was sent shows at once');
 check(await page.$eval('.conv-input', (el) => el.value === ''), 'the box is empty after sending');
 await page.click('.mode-btn');
-await page.waitForFunction(() => (document.querySelector('.xterm-rows')?.innerText ?? '').includes('hello from the conversation') || (document.querySelector('.term-flow')?.innerText ?? '').includes('hello from the conversation'), { timeout: 8000 }).then(() => check(true, 'the terminal got it'), () => check(false, 'the terminal got it'));
+await page.waitForFunction(() => (document.querySelector('.xterm-rows')?.innerText ?? '').includes('hello from the conversation'), { timeout: 8000 }).then(() => check(true, 'the terminal got it'), () => check(false, 'the terminal got it'));
 await page.click('.mode-btn');
 await page.screenshot({ path: 'dev/shots/conv.png' });
 

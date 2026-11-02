@@ -1,5 +1,5 @@
-// The PWA terminal page, end to end: the phone's size (the default) and back to the Mac's; then, at the
-// Mac's size, one input box, the phone's own layout (the Mac size never changes), the ＋ | 按住 说话 | ⌨ bar.
+// The PWA terminal page, end to end: the Mac's size and layout (the phone never changes it), panned
+// sideways on the phone; one input box; the ＋ | 按住 说话 | ⌨ bar.
 //   npm run build; npm run relay:dev (another shell); node dev/fake-desktop.mjs > /tmp/fake.log &
 //   node dev/term-smoke.mjs "<pairing link>"        → screenshots in dev/shots/term-*.png
 import { execFileSync } from 'node:child_process';
@@ -18,7 +18,8 @@ await page.emulate({ viewport: { width: 430, height: 932, deviceScaleFactor: 2, 
 page.on('pageerror', (e) => { console.log('[pageerror]', e.message); process.exitCode = 1; });
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 const shot = async (name) => { await pause(600); await page.screenshot({ path: `dev/shots/term-${name}.png` }); };
-const screen = () => page.evaluate(() => document.querySelector('.term-flow')?.innerText ?? '');
+const screen = () => page.evaluate(() => document.querySelector('.xterm-rows')?.innerText ?? '');
+const lines = async () => (await screen()).split('\n').map((l) => l.trimEnd());
 const bubble = () => page.evaluate(() => { const b = document.querySelector('.term-bubble'); return b && !b.hidden ? b.innerText : ''; });
 const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) process.exitCode = 1; };
 const until = async (what, fn, ms = 10_000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return check(true, what); await pause(150); } check(false, what); };
@@ -34,30 +35,29 @@ const openRow = (w) => page.evaluate((a) => [...document.querySelectorAll('.trow
 const rows = () => page.evaluate(() => document.querySelector('.xterm-rows')?.innerText ?? '');
 const before = size('herdr-relay · shell');
 
-// --- the phone's size (the default): the terminal takes the phone's grid; back to the Mac's on the toggle
+// --- the Mac's grid at the phone's font, wider than the phone; a swipe pans it
 await openRow('herdr-relay · shell');
+await until('the shell shows', async () => (await screen()).includes('%'));
 const grid = await page.evaluate(() => {
   const v = document.querySelector('.term-viewport'), c = document.querySelector('.xterm-rows > div');
-  return { visible: !v.hidden, w: v.clientWidth, h: v.clientHeight, font: getComputedStyle(c).fontSize };
+  return { visible: !v.hidden, scroll: v.scrollWidth, client: v.clientWidth, font: getComputedStyle(c).fontSize, cols: globalThis.__herdrTerm?.cols };
 });
-check(grid.visible, `the phone's size shows xterm itself (${JSON.stringify(grid)})`);
-await until(`the terminal takes the phone's size (was ${before})`, () => { const [c] = size('herdr-relay · shell').split('x').map(Number); return c >= 40 && c <= 70; });
-const phoneSize = size('herdr-relay · shell');
-await page.focus('.term-keys');
-await page.keyboard.type('echo fit-$((6*7))'); await page.keyboard.press('Enter');
-await until('typing works at the phone size', async () => (await rows()).includes('fit-42'));
-await shot('0-fit');
-const fits = await page.evaluate(() => { const x = document.querySelector('.xterm-screen'), v = document.querySelector('.term-viewport'); return x.getBoundingClientRect().width <= v.clientWidth; });
-check(fits, 'the grid fits the phone width');
-check(size('herdr-relay · shell') === phoneSize, `the size holds after typing (${phoneSize})`);
-await page.evaluate(() => document.activeElement?.blur());
-await page.evaluate(() => document.querySelector('.icon-btn[aria-label="返回"]')?.click());
-await until(`leaving gives the Mac its size back (${before})`, () => size('herdr-relay · shell') === before);
-await openRow('herdr-relay · shell');
-await until('opening again takes the phone size again', () => size('herdr-relay · shell') === phoneSize);
-await page.evaluate(() => document.querySelector('.view-btn').click());
-await until(`the toggle gives the Mac its size back (${before})`, () => size('herdr-relay · shell') === before);
-check(await page.evaluate(() => localStorage.getItem('herdr-relay.size')) === 'keep', 'the choice is kept');
+check(grid.visible && grid.font === '12px', `xterm itself at 12 px (${JSON.stringify(grid)})`);
+check(grid.cols === Number(before.split('x')[0]), `the Mac's columns (${grid.cols}, the Mac has ${before})`);
+check(grid.scroll > grid.client * 1.3, `wider than the phone: the left part shows (${grid.client} of ${grid.scroll} px)`);
+const swipe = async (dx, dy) => {
+  const r = await page.$eval('.term-viewport', (v) => { const b = v.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; });
+  const c = await page.target().createCDPSession();
+  await c.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: r.x, y: r.y }] });
+  for (let i = 1; i <= 10; i++) { await c.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: r.x + (dx * i) / 10, y: r.y + (dy * i) / 10 }] }); await pause(16); }
+  await c.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await pause(400);
+  return page.$eval('.term-viewport', (v) => v.scrollLeft);
+};
+const panned = await swipe(-200, 0);
+check(panned > 100, `a swipe to the left shows the right part (scrollLeft ${panned})`);
+await shot('0-panned');
+check(await swipe(200, 0) < panned, 'and back');
 await page.evaluate(() => document.querySelector('.icon-btn[aria-label="返回"]')?.click());
 await pause(300);
 
@@ -72,16 +72,19 @@ await until('typed text is in the shell line before Enter', async () => (await s
 await page.keyboard.press('Backspace'); await page.keyboard.press('Backspace'); await page.keyboard.press('Backspace');
 await page.keyboard.type('BOX');
 await page.keyboard.press('Enter');
-await until('Enter runs it (edits went in as backspaces)', async () => (await screen()).includes('hello-one-BOX\n'));
+await until('Enter runs it (edits went in as backspaces)', async () => (await lines()).includes('hello-one-BOX'));
 await until('the field is empty again', () => page.evaluate(() => document.querySelector('.term-keys').value === ''));
-await page.keyboard.type("printf '%s ' $(seq 1 60); echo; printf '─%.0s' $(seq 1 110); echo; seq 1 40"); await page.keyboard.press('Enter');
-await until('output shows', async () => (await screen()).includes('\n40'));
+await page.keyboard.type("seq 1 40; printf '%s ' $(seq 1 30); echo"); await page.keyboard.press('Enter');
+await until('output shows', async () => (await lines()).includes('40'));
 await pause(500);
 await shot('1-shell');
-const fitW = await page.evaluate(() => { const f = document.querySelector('.term-flow'); return { scroll: f.scrollWidth, client: f.clientWidth, bottom: f.scrollHeight - f.scrollTop - f.clientHeight }; });
-check(fitW.scroll <= fitW.client, `nothing runs off the right edge (${fitW.scroll} ≤ ${fitW.client})`);
-check(fitW.bottom < 4, 'it stays at the bottom while output comes');
-check((await screen()).includes('1 2 3 4 5 6 7 8 9 10 11'), 'a long line wraps at the phone width');
+const view = await page.evaluate(() => {
+  const v = document.querySelector('.term-viewport'), t = globalThis.__herdrTerm, cell = t._core._renderService.dimensions.css.cell;
+  const cy = (t.buffer.active.cursorY + 1) * cell.height;
+  return { left: v.scrollLeft, cursorShown: cy > v.scrollTop && cy <= v.scrollTop + v.clientHeight + 1 };
+});
+check(view.left === 0 && view.cursorShown, `while typing, the cursor is in view (${JSON.stringify(view)})`);
+check((await lines()).some((l) => /^1 2 3 .* 30$/.test(l.trim())), 'a long line stays one line, as on the Mac');
 // The keyboard goes away but iOS sends no last viewport change: the stale half height must go on blur.
 await page.evaluate(() => { const s = document.querySelector('.screen.term'); s.style.height = '400px'; s.style.transform = 'translateY(70px)'; });
 await page.evaluate(() => document.activeElement?.blur());

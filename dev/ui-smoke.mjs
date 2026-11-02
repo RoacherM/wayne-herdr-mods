@@ -44,11 +44,6 @@ await clickText('⏎');
 await page.waitForFunction(() => (document.querySelector('.xterm-rows')?.innerText ?? '').includes('你选了'), { timeout: 10_000 });
 await shot('4-term-answered');
 
-// The size toggle (the Mac's size, then back to the phone's).
-await page.click('.bar .view-btn');
-await pause(1200);
-await shot('5-term-fit');
-await page.click('.bar .view-btn');
 
 // Back home, open the zsh shell, type through the composer.
 await page.click('.bar .icon-btn[aria-label="返回"]');

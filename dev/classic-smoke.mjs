@@ -14,7 +14,7 @@ page.on('pageerror', (e) => { console.log('[pageerror]', e.message); process.exi
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) process.exitCode = 1; };
 
-await page.evaluateOnNewDocument(() => { localStorage.setItem('herdr-relay.mode', 'term'); localStorage.setItem('herdr-relay.size', 'keep'); });
+await page.evaluateOnNewDocument(() => { localStorage.setItem('herdr-relay.mode', 'term'); });
 await page.goto(link, { waitUntil: 'networkidle0' });
 await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => b.innerText.includes('开始配对')).click());
 await page.waitForFunction(() => document.querySelectorAll('.trow').length >= 2, { timeout: 25_000 });
@@ -29,8 +29,7 @@ async function look(where) {
   await pause(2500);
   return page.evaluate(() => {
     const b = globalThis.__herdrTerm.buffer.active;
-    const flow = document.querySelector('.term-flow');
-    return { type: b.type, above: b.length - globalThis.__herdrTerm.rows, flow: !flow.hidden, flowHeight: flow.scrollHeight, flowClient: flow.clientHeight };
+    return { type: b.type, above: b.length - globalThis.__herdrTerm.rows };
   });
 }
 
@@ -38,16 +37,19 @@ const classic = await look('cc / classic');
 console.log('     classic:', JSON.stringify(classic));
 check(classic.type === 'normal', 'classic mode: the normal screen, not the alternate one');
 check(classic.above > 100, `its output is in the history the phone has (${classic.above} lines above the screen)`);
-check(classic.flow && classic.flowHeight > classic.flowClient * 3, 'the phone shows it as a page that scrolls natively');
-// A drag up moves the page here; it sends nothing to the Mac (no wheel).
-const sent = [];
+// A drag down shows older lines here; it sends nothing to the Mac (no wheel).
 await page.evaluate(() => { const l = globalThis.__herdrLink; const n = l.notify.bind(l); globalThis.__sent = []; l.notify = (m, p) => { globalThis.__sent.push(m); n(m, p); }; });
-const before = await page.$eval('.term-flow', (el) => el.scrollTop);
-await page.$eval('.term-flow', (el) => { el.scrollTop -= 2000; });
-await pause(300);
-const after = await page.$eval('.term-flow', (el) => el.scrollTop);
-sent.push(...await page.evaluate(() => globalThis.__sent));
-check(before - after > 1000 && !sent.includes('term.input'), `scrolling up is local: ${before - after} px, nothing sent`);
+const cdp = await page.createCDPSession();
+const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
+const box = await page.evaluate(() => { const r = document.querySelector('.term-viewport').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+const before = await page.evaluate(() => globalThis.__herdrTerm.buffer.active.viewportY);
+await touch('touchStart', box.x, box.y - 150);
+for (let i = 1; i <= 20; i++) { await touch('touchMove', box.x, box.y - 150 + i * 15); await pause(16); }
+await touch('touchEnd');
+await pause(600);
+const after = await page.evaluate(() => globalThis.__herdrTerm.buffer.active.viewportY);
+const sent = await page.evaluate(() => globalThis.__sent);
+check(before - after > 10 && !sent.includes('term.input'), `scrolling up is local: ${before - after} lines, nothing sent`);
 
 await page.reload({ waitUntil: 'networkidle0' });
 await page.waitForFunction(() => globalThis.__herdrLink?.status === 'ready' && document.querySelectorAll('.trow').length >= 2, { timeout: 25_000 });
