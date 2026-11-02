@@ -6,6 +6,10 @@
  * Every step that waits on the desktop or the network has its own deadline, and a socket that
  * misses one is dropped at once: iOS may never fire onclose for a socket that died while the app
  * was suspended, so nothing waits for it.
+ *
+ * `socket` (optional) gives a ready-made connection instead of the relay WebSocket: a direct
+ * WebRTC data channel (direct.js). Then there are no relay frames, the handshake starts at once,
+ * and a dropped connection is not retried here: direct.js decides.
  */
 import { phoneHandshake, unb64 } from '../../shared/e2e.js';
 
@@ -18,11 +22,12 @@ export const TIMEOUTS = {
 };
 
 export class Link extends EventTarget {
-  constructor({ relay, desktopId, desktopKey, deviceKeys, pair, timeouts }) {
+  constructor({ relay, desktopId, desktopKey, deviceKeys, pair, timeouts, socket }) {
     super();
     this.t = { ...TIMEOUTS, ...timeouts };
-    this.url = `${relay.replace(/^http/, 'ws').replace(/\/$/, '')}/v1/client/${desktopId}`;
-    this.desktopKey = unb64(desktopKey);
+    this.socket = socket;
+    this.url = relay ? `${relay.replace(/^http/, 'ws').replace(/\/$/, '')}/v1/client/${desktopId}` : null;
+    this.desktopKey = typeof desktopKey === 'string' ? unb64(desktopKey) : desktopKey;
     this.deviceKeys = deviceKeys;
     this.pair = pair; // { token, name } while pairing
     this.status = 'connecting';
@@ -44,7 +49,7 @@ export class Link extends EventTarget {
     if (this.closed) return;
     clearTimeout(this.retryTimer);
     this.setStatus('connecting');
-    const ws = new WebSocket(this.url);
+    const ws = this.socket ? this.socket() : new WebSocket(this.url);
     this.ws = ws;
     this.cipher = null;
     this.hs = null;
@@ -59,6 +64,7 @@ export class Link extends EventTarget {
         if (Date.now() - this.lastHeard > this.t.silent) { this.drop(ws); return; }
         try { ws.send('ping'); } catch {}
       }, this.t.ping);
+      if (this.socket) this.hello(ws); // straight to the desktop: no relay to say it is online
     };
     ws.onmessage = (m) => this.receive(ws, m.data);
     ws.onclose = () => this.drop(ws);
@@ -81,6 +87,7 @@ export class Link extends EventTarget {
     this.hs = null;
     this.failAll('连接已断开');
     if (this.closed) return;
+    if (this.socket) { this.close(); this.setStatus('offline', { reason: 'network' }); return; } // one use only
     if (this.status !== 'error') this.setStatus('offline', { reason: 'network' });
     clearTimeout(this.retryTimer);
     if (now) { this.attempt = 0; this.connect(); return; }
@@ -106,15 +113,8 @@ export class Link extends EventTarget {
     if (data === 'pong') return;
     if (data[0] === '\u0000') {
       const state = data.slice(1);
-      if (state === 'online') {
-        // (Re)start the handshake: the desktop may have restarted and lost our session.
-        this.failAll('电脑已重新连接');
-        this.cipher = null;
-        this.hs = phoneHandshake(this.deviceKeys, this.desktopKey);
-        ws.send(this.hs.hello);
-        this.stepTimer(this.t.handshake, ws);
-        this.setStatus('connecting');
-      } else if (state === 'offline') {
+      if (state === 'online') this.hello(ws);
+      else if (state === 'offline') {
         clearTimeout(this.deadline); // nothing to wait for until the relay says online
         this.cipher = null;
         this.failAll('电脑离线');
@@ -158,6 +158,16 @@ export class Link extends EventTarget {
       clearTimeout(p.timer);
       msg.ok ? p.resolve(msg.r) : p.reject(Object.assign(new Error(msg.e), { kind: msg.k }));
     }
+  }
+
+  /** (Re)start the handshake: the desktop may have restarted and lost our session. */
+  hello(ws) {
+    this.failAll('电脑已重新连接');
+    this.cipher = null;
+    this.hs = phoneHandshake(this.deviceKeys, this.desktopKey);
+    ws.send(this.hs.hello);
+    this.stepTimer(this.t.handshake, ws);
+    this.setStatus('connecting');
   }
 
   fatal(code, message) {

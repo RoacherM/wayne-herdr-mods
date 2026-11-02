@@ -9,6 +9,7 @@
 import { Terminal } from '@xterm/xterm';
 import { b64, boxKeysFromSecret, decodePairLink, newBoxKeys, unb64 } from '../../shared/e2e.js';
 import { Link } from './link.js';
+import { Duo } from './direct.js';
 import { scanQr } from './scan.js';
 import { touchScroll } from './touch-scroll.js';
 import { ReflowView } from './reflow.js';
@@ -71,6 +72,7 @@ const icon = (name) => { const s = h('span', { class: 'ico' }); s.innerHTML = `<
 // The device keypair lives in localStorage on this origin (the relay we paired with, which also
 // serves this script). The pairing link and the E2E handshake protect the channel itself.
 const STORE_KEY = 'herdr-relay';
+const DIRECT = 'herdr-relay.direct'; // 'off': relay only (for comparing)
 const load = () => { try { return JSON.parse(localStorage.getItem(STORE_KEY)) ?? {}; } catch { return {}; } };
 const save = (value) => localStorage.setItem(STORE_KEY, JSON.stringify(value));
 function deviceKeys() {
@@ -99,8 +101,11 @@ const root = () => $('#app');
 
 function connect(desktop, pair) {
   app.link?.close();
-  const link = new Link({ relay: desktop.relay, desktopId: desktop.id, desktopKey: desktop.k, deviceKeys: deviceKeys(), pair });
+  // Through the relay first; then direct (WebRTC) when the network lets it (direct.js).
+  const relay = new Link({ relay: desktop.relay, desktopId: desktop.id, desktopKey: desktop.k, deviceKeys: deviceKeys(), pair });
+  const link = new Duo(relay, localStorage.getItem(DIRECT) === 'off' ? { direct: false } : {});
   app.link = link;
+  if (['localhost', '127.0.0.1'].includes(location.hostname)) globalThis.__herdrLink = link; // tests (dev/rtc-smoke.mjs)
   link.addEventListener('status', () => { renderStatus(); if (link.status !== 'ready') app.term?.lost(); });
   link.addEventListener('ready', async (e) => {
     app.info = e.detail;
@@ -174,7 +179,7 @@ function statusLine() {
   const s = app.link?.status ?? 'offline';
   const core = app.list?.core;
   const [cls, text] = s === 'ready'
-    ? (core === 'online' ? ['ok', '已连接'] : ['err', 'herdr 未运行'])
+    ? (core === 'online' ? ['ok', app.link.via === 'direct' ? '已直连' : '已连接'] : ['err', 'herdr 未运行'])
     : s === 'connecting' ? ['busy', '连接中…'] : s === 'error' ? ['err', '连接出错'] : ['', '电脑离线'];
   return h('span', { class: 'status', id: 'status' }, h('span', { class: `dot ${cls}` }), text);
 }

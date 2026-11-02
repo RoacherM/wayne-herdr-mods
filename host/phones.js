@@ -24,7 +24,7 @@ const MAX_STREAMS = 4; // per phone
 const HISTORY_LINES = 400; // scrollback sent with the first paint
 const KEY_RE = /^(?:(?:ctrl|alt|shift|cmd|super|meta)\+)*(?:[a-z0-9]|enter|esc|escape|tab|backspace|space|delete|del|insert|home|end|pageup|pgup|pagedown|pgdn|up|down|left|right|f(?:[1-9]|1[0-2])|[-=[\]\\;',./`])$/i;
 
-export function createPhones({ state, pairing, push, terminals, voice, link: getLink, log = () => {}, onChange = () => {}, home }) {
+export function createPhones({ state, pairing, push, terminals, voice, link: getLink, rtc, log = () => {}, onChange = () => {}, home }) {
   const peers = new Map(); // cid → peer
   let nextStream = 1;
 
@@ -221,6 +221,15 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
     'term.open': (peer, p) => openStream(peer, addressOf(p), { fit: p.fit && validSize(p.fit) }),
     'term.close': (peer, p) => { peer.streams.get(Number(p.s))?.stop(); return {}; },
     // A coding agent's conversation from its transcript (transcripts.js): the phone names the terminal only.
+    // Direct link (rtc-link.js): the phone's WebRTC offer → our answer. The channel then gets its
+    // own handshake and auth like any connection; this only introduces the two sides.
+    'rtc.offer': (peer, p) => { if (!rtc) throw new Error('不支持直连'); return rtc.answer(p.sdp); },
+    // The phone moved to its other connection: this one stays as the spare, with nothing open.
+    'link.idle': (peer) => {
+      for (const stream of [...peer.streams.values()]) stream.stop('moved');
+      peer.convs.closeAll();
+      return {};
+    },
     'conv.open': (peer, p) => peer.convs.open(addressOf(p)),
     'conv.older': (peer, p) => peer.convs.older(p.c, p.before),
     'conv.close': (peer, p) => { peer.convs.close(p.c); return {}; },

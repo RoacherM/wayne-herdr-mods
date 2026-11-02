@@ -15,6 +15,7 @@ import { createPairing } from './pairing.js';
 import { createPhones } from './phones.js';
 import { createPush } from './push.js';
 import { createRelayLink } from './relay-link.js';
+import { createRtcLink } from './rtc-link.js';
 import { createState } from './state.js';
 import { createTerminals } from './terminals.js';
 import { readKey, recognize, toWav } from './voice.js';
@@ -45,7 +46,16 @@ export async function startService({ relayUrl = process.env.HERDR_RELAY_URL ?? D
     onCore: () => { phones?.coreChanged(); changed(); },
   });
   const voice = createVoice({ dir: state.dir, log });
-  phones = createPhones({ state, pairing, push, terminals, voice, link: () => link, log, onChange: changed, home }); // home: where agents keep transcripts (tests use a made-up one)
+  // Two kinds of connection carry phones: through the relay, and direct (WebRTC, `rtc:<n>`).
+  const via = (cid) => (String(cid).startsWith('rtc:') ? rtc : link);
+  const links = { send: (cid, data) => via(cid).send(cid, data), close: (cid, reason) => via(cid).close(cid, reason) };
+  const rtc = createRtcLink({
+    log,
+    onOpen: (cid) => phones.open(cid),
+    onData: (cid, data) => { phones.data(cid, data).catch((error) => log(`herdr-relay: ${error.stack ?? error.message}`)); },
+    onClose: (cid) => phones.close(cid),
+  });
+  phones = createPhones({ state, pairing, push, terminals, voice, link: () => links, rtc, log, onChange: changed, home }); // home: where agents keep transcripts (tests use a made-up one)
   link = createRelayLink({
     relayUrl, desktopId, signKeys: state.signKeys, log,
     onOpen: (cid) => phones.open(cid),
@@ -59,6 +69,7 @@ export async function startService({ relayUrl = process.env.HERDR_RELAY_URL ?? D
     desktopId,
     relayUrl,
     relay: link.status(),
+    direct: rtc.count(),
     core: terminals.state(),
     terminals: terminals.list().length,
     pairing: pairing.view(),
@@ -125,6 +136,7 @@ export async function startService({ relayUrl = process.env.HERDR_RELAY_URL ?? D
     async stop() {
       clearInterval(wakeTimer);
       link.dispose();
+      rtc.dispose();
       terminals.dispose();
       server.close();
       await rm(sockPath, { force: true });

@@ -101,6 +101,31 @@ herdr-relay devices  # 列出、移除设备
 
 换地址的代价：手机网页、配对链接、Web Push 订阅和手机密钥都绑在地址上，所以每台手机要重新扫码配对一次，并重新添加到主屏幕。
 
+## 直连（WebRTC，已实现）
+
+中继在 Cloudflare，手机到 Mac 一次往返约 230 ms（本机实测：经中继 p50 229 ms）。直连时数据点对点走，本机实测 p50 0.4 ms。
+
+```
+1. 手机 ──中继（已加密、已认证）──▶ Mac   rtc.offer {sdp}  →  {sdp}（answer）
+2. 手机 ◀──────── WebRTC 数据通道 ────────▶ Mac
+3. 在数据通道上重新做一次握手和设备认证（跟中继连接完全一样），Mac 把它当作连接 rtc:<n>
+```
+
+- **谁能发 offer**：只有已经认证的手机（`rtc.offer` 在白名单里，只在 ready 之后能调）。数据通道上不认证就什么都做不了。
+- **两层加密**：WebRTC 自己的 DTLS，加上我们自己的端到端加密。
+- **地址**：不逐个交换地址（不 trickle），offer 和 answer 里一次带全。手机的局域网地址被浏览器藏成 `xxx.local`（mDNS），Mac 端的 werift 会去解析；解析不了，也能从手机发来的连通检查里学到地址。STUN 用 `stun.cloudflare.com:3478`。
+- **分片**：数据通道上一条消息最多 16 KB（`shared/pieces.js`），长消息分片发。
+- **切换**（`app/src/direct.js` 的 `Duo`）：
+  - 中继连上后 0.5 秒试直连。成功后所有调用都走直连，正在看的终端在直连上重新打开；中继那条连接收到 `link.idle`，关掉它的流，留着备用。
+  - 直连每 5 秒 ping 一次，15 秒没回音就算断。断了马上回到中继，终端在中继上重新打开；之后 3 秒、15 秒、1 分钟、5 分钟再试。
+  - 打不通（比如手机在蜂窝网络、Mac 在 NAT 后面）就一直用中继，跟以前一样。
+- **看得到**：首页状态写「已直连」或「已连接」（中继）。`localStorage['herdr-relay.direct'] = 'off'` 只用中继，用来对比。
+- **主机端**：`host/rtc-link.js`，用纯 JS 的 werift（不用原生模块），打包进 `dist/herdr-relay.mjs`（打包后 1.5 MB）。最多 6 条直连，多了关最旧的。
+
+测试：`test/rtc-link.test.mjs`（主机端，werift 扮手机），`dev/rtc-smoke.mjs`（无头 Chrome，11 项：自动直连、终端、83 KB 回复分片、断开退回、再直连、关掉直连）。
+
+没在真 iPhone 上验证：Safari 的 mDNS 地址、同一 Wi-Fi 下能不能打通、Mac 上的代理软件（TUN 模式）会不会挡住局域网 UDP。
+
 ## 安全
 
 - 配对过的手机能往终端打字，权限等于这台 Mac 的 shell。所以必须配对确认，设备可以单独移除，状态文件权限 0600（`~/.config/herdr-relay/state.json`）。
@@ -112,6 +137,7 @@ herdr-relay devices  # 列出、移除设备
 
 ```
 shared/e2e.js        从 dsh-pair 复制
+shared/pieces.js     直连数据通道上的分片
 relay/               从 dsh-pair 复制：Worker + DO + 静态网页
 host/                新写：中继连接、配对、hc 适配、推送、命令行
 app/                 新写：手机网页（终端列表 + xterm.js 终端页），build 到 relay/public

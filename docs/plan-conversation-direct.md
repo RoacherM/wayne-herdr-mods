@@ -85,11 +85,13 @@
 
 ### TODO
 
-- [ ] B1 调研并验证：werift 能不能打包进主机，Safari 的 mDNS 地址能不能连上
-- [ ] B1 `host/rtc-link.js`：answer、ICE、数据通道接到 phones（新 cid）
-- [ ] B1 `app/src/link.js`：在就绪后尝试直连，切换，退回
-- [ ] B1 无头 Chrome 测试：本机直连，测往返时间，和中继比
-- [ ] B1 部署，重装主机，提交
+- [x] B1 调研并验证：werift 能打包进主机（打包后 1.5 MB，打包版也跑过单元测试）。Chrome 也把地址藏成 mDNS 名字，能连上；Safari 没在真机验证
+- [x] B1 `host/rtc-link.js`：answer、ICE、数据通道接到 phones（新 cid）；`shared/pieces.js` 分片
+- [x] B1 `app/src/direct.js`（`Duo`）+ `app/src/link.js`：在就绪后尝试直连，切换，退回
+- [x] B1 无头 Chrome 测试 `dev/rtc-smoke.mjs` 11/11：本机直连 p50 0.4 ms，经 Cloudflare 中继 p50 229 ms
+- [x] B1 部署，重装主机，提交
+
+做法细节见 DESIGN.md「直连（WebRTC，已实现）」。
 
 ## C. Claude Code 普通模式
 
