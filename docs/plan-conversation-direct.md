@@ -62,16 +62,16 @@
 
 ### TODO
 
-- [ ] A1 `host/transcripts.js`：定位，解析 Claude Code 和 pi/epi 的格式，按页读取，增量读取
-- [ ] A1 `host/phones.js`：`conv.open / conv.older / conv.close`，推送 `conv` 事件，断开时清理
-- [ ] A1 单元测试：两种格式的样本（自己造的，不用真实对话）
-- [ ] A1 `dev/fake-desktop.mjs`：一个假的 Claude Code 会话记录，带进程信息
-- [ ] A2 `app/src/conversation.js`：列表、Markdown 子集、工具卡片、跟随底部、加载更早
-- [ ] A2 `app/src/main.js`：切换按钮、输入框、等待确认的提示
-- [ ] A2 `dev/conv-smoke.mjs`：打开、滚动、加载更早、新条目、发送
-- [ ] A2 部署中继，重装主机，提交
-- [ ] A3 删掉 `app/src/history.js` 和 touch-scroll 里的 History 接线；终端视图里的滚动保留"先移动文字、再等重画"
-- [ ] A3 跑全部测试，部署，提交
+- [x] A1 `host/transcripts.js`：定位，解析 Claude Code 和 pi/epi 的格式，按页读取，增量读取
+- [x] A1 `host/phones.js`：`conv.open / conv.older / conv.close`，推送 `conv` 事件，断开时清理
+- [x] A1 单元测试：两种格式的样本（自己造的，不用真实对话）
+- [x] A1 `dev/fake-desktop.mjs`：一个假的 Claude Code 会话记录，带进程信息
+- [x] A2 `app/src/conversation.js`：列表、Markdown 子集、工具卡片、跟随底部、加载更早
+- [x] A2 `app/src/main.js`：切换按钮、输入框、等待确认的提示
+- [x] A2 `dev/conv-smoke.mjs`：打开、滚动、加载更早、新条目、发送
+- [x] A2 部署中继，重装主机，提交
+- [x] A3 删掉 `app/src/history.js` 和 touch-scroll 里的 History 接线；终端视图里的滚动保留"先移动文字、再等重画"
+- [x] A3 跑全部测试，部署，提交
 
 ## B. WebRTC 直连
 
@@ -107,4 +107,7 @@
 
 ## 进度
 
-（每完成一项就更新这里。）
+| 时间 | 完成 | 提交 | 部署 |
+|---|---|---|---|
+| 11-03 | A1 + A2 对话视图（单元测试 42/42，conv-smoke 17/17，term-smoke 28/28，voice-smoke 6/6） | daf5d9f | 页面 dd6aa37f，主机已重装 |
+| 11-03 | A3 删掉 History（scroll-smoke 19/19） | 364ff35 | 页面 6e1f7705 |
