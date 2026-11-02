@@ -50,16 +50,3 @@ test('hotwords come back in their own spelling', () => {
   assert.equal(fixWords('看一下 Phones.JS 和 readme，提个 Pull  Request 给 claude', words), '看一下 phones.js 和 README，提个 pull request 给 Claude');
   assert.equal(fixWords('testing npmjs contest', words), 'testing npmjs contest', 'whole words only');
 });
-
-test('slash commands: keystrokes that mirror the box into the terminal', async () => {
-  const { keystrokes, commandText } = await import('../app/src/live-command.js');
-  assert.equal(keystrokes('', '/co'), '/co');
-  assert.equal(keystrokes('/co', '/com'), 'm');
-  assert.equal(keystrokes('/com', '/co'), '\x7f');
-  assert.equal(keystrokes('/compact', '/cl'), '\x7f'.repeat(6) + 'l');
-  assert.equal(keystrokes('/co', ''), '\x7f\x7f\x7f');
-  assert.equal(keystrokes('/表', '/表格'), '格'); // code points, not UTF-16 units
-  assert.equal(commandText('/model'), '/model');
-  assert.equal(commandText('fix /tmp'), '');
-  assert.equal(commandText('/a\nb'), '');
-});

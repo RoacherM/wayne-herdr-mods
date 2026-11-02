@@ -14,7 +14,7 @@
     "relay:dev": "wrangler dev -c relay/wrangler.jsonc --port 8799",
     "relay:deploy": "node app/build.mjs && wrangler deploy -c relay/wrangler.jsonc",
     "ios:term": "node ios/build-term.mjs",
-    "ios:dev": "node ios/build-term.mjs && cd ios && nsh run --target catalyst"
+    "ios:dev": "node ios/build-term.mjs && cd ios && nsh run --target ios"
   },
   "dependencies": {
     "@xterm/xterm": "^6.0.0",

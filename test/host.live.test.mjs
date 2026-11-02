@@ -127,6 +127,9 @@ test('pair, list, stream, type, send, keys, fit — through the relay', { timeou
   assert.match(put.path, /\.png$/);
   assert.deepEqual(await readFile(put.path), png);
   await assert.rejects(rpc('image.put', { id: up.id, address, name: 'again.png' }), /过期/);
+  // The phone puts the path into the program's line itself (live-line.js); here it is a shell word.
+  notify('term.input', { s, d: `echo "${put.path}" IMG_IN_SHELL\r` });
+  await until('path typed in a shell', () => { pump(); return strip(phoneOut).includes(`${put.path} IMG_IN_SHELL`); }, 15_000);
 
   // --- new tab: a login shell in the space, labelled for Herdr.app, opened right away
   const doc = await mac.call('doc.get', { name: 'herdr-app' });

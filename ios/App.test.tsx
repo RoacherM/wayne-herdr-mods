@@ -4,6 +4,8 @@
 import { expect, open, test } from "nsh/test";
 import cfg from "./probe/link.json";
 
+const PNG = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="), (c) => c.charCodeAt(0));
+
 test("pair, list, open a terminal, send, forget", async () => {
   const app = await open("./App.tsx", { network: "live" });
   await app.waitFor("text:herdr 远程");
@@ -26,6 +28,12 @@ test("pair, list, open a terminal, send, forget", async () => {
   await app.waitUntil(() => app.value("id:composer") === "", { timeout: 10000 });
   await app.wait(1500);
   await app.screenshot("shots/3-sent.png").catch(() => {}); // headless draws nothing
+  // An image: picked → uploaded in chunks → a file beside the terminal → its path pasted into the line.
+  app.onPick(() => [{ name: "截图 1.png", type: "image/png", data: PNG }]);
+  await app.press("id:pick");
+  await app.waitUntil(() => app.picks().length === 1 && !app.texts().some((t) => t.startsWith("上传图片")), { timeout: 15000 });
+  expect(app.picks()[0].maxDimension).toBe(2048);
+  expect(app.texts().join(" ")).not.toContain("图片没发出去");
   await app.back();
   await app.wait(1000); // let the pop animation finish
   await app.waitFor("id:settings");

@@ -209,13 +209,13 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
       return { fit: Boolean(fit) };
     },
     'term.send': async (peer, p) => {
-      const text = String(p.text ?? '');
-      if (!text.trim()) throw new Error('消息不能为空');
+      const text = String(p.text ?? '').trim();
+      if (!text) throw new Error('消息不能为空');
       if (text.length > 32 * 1024) throw new Error('消息太长');
       try {
         return await call('terminal.send', { terminal: addressOf(p), text, force: Boolean(p.force) });
       } catch (error) {
-        if (error.kind === 'blocked') throw new Error('程序正在等你确认（blocked）。先用快捷键回答，或长按发送强制输入。');
+        if (error.kind === 'blocked') throw new Error('程序正在等你确认（blocked）。先用快捷键回答。');
         throw error;
       }
     },
@@ -263,7 +263,8 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
       } finally { peer.recognizing = false; }
     },
     // Images: herdr-core's terminal.put drops the file in a folder beside the terminal and returns
-    // its path. The phone puts the path in the message; Claude Code / Codex read image paths.
+    // its path. The phone pastes the path into the program's line (term.input), as a paste of its
+    // own: Claude Code / Codex then show [Image #N].
     'image.put': async (peer, p) => {
       const upload = peer.uploads.take(p.id);
       if (!/^image\//.test(upload.mime)) throw new Error('只能发图片');

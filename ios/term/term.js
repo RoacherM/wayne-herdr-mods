@@ -2,17 +2,19 @@
  * The terminal inside the native app's WebView: xterm.js only. The connection lives in the app
  * (QuickJS); bytes come in and keystrokes go out as JSON strings over the WebView bridge.
  *
- *   app → page  {t:'size', cols, rows}   {t:'out', d:<base64>}   {t:'reset'}   {t:'focus'}
- *   page → app  {t:'ready'}   {t:'ack', n}   {t:'input', d}   {t:'log', m}
+ *   app → page  {t:'size', cols, rows}   {t:'out', d:<base64>}   {t:'reset'}   {t:'typing'}
+ *   page → app  {t:'ready'}   {t:'ack', n}   {t:'tap'}   {t:'log', m}
+ *
+ * The page takes no typing of its own: the app's keyboard is the only way in (one input box: the
+ * program's own line). A tap asks the app to show its keyboard; while the user types, the view
+ * follows the cursor, so the line being typed stays in sight on a terminal wider than the phone.
  */
 import { Terminal } from '@xterm/xterm';
 import { touchScroll } from '../../app/src/touch-scroll.js';
 
 const post = (v) => window.nsh?.postMessage(JSON.stringify(v));
-const dark = matchMedia('(prefers-color-scheme: dark)').matches;
-const theme = dark
-  ? { background: '#111110', foreground: '#e6e6e1', cursor: '#e6e6e1', selectionBackground: '#3a3a36' }
-  : { background: '#fbfbf9', foreground: '#1a1a18', cursor: '#1a1a18', selectionBackground: '#d9d8d2' };
+// Always dark, as terminal apps are: the native page around it is dark too.
+const theme = { background: '#0b0b0c', foreground: '#e6e6e1', cursor: '#e6e6e1', selectionBackground: '#3a3a36' };
 document.documentElement.style.background = theme.background;
 
 const viewport = document.getElementById('vp');
@@ -22,16 +24,46 @@ const xterm = new Terminal({ cols, rows, scrollback: 3000, fontSize: 13, lineHei
   fontFamily: 'ui-monospace, Menlo, "SF Mono", monospace', cursorBlink: false, macOptionIsMeta: true });
 xterm.open(host);
 touchScroll(viewport, xterm);
-xterm.onData((d) => post({ t: 'input', d }));
+// No keyboard from the page: xterm's hidden textarea must not take focus.
+xterm.textarea?.setAttribute('inputmode', 'none');
+xterm.textarea?.setAttribute('readonly', '');
+xterm.textarea?.addEventListener('focus', () => xterm.textarea.blur());
 
-/** Font size that fits the Mac's columns in the phone's width (8–14 px; past 8 it scrolls sideways). */
-function layout() {
-  const w = viewport.clientWidth - 8;
-  if (!w) return;
+// A tap (no drag) asks the app for its keyboard.
+let tapAt = null;
+viewport.addEventListener('touchstart', (e) => { const t = e.touches[0]; tapAt = e.touches.length === 1 ? { x: t.clientX, y: t.clientY } : null; }, { passive: true });
+viewport.addEventListener('touchmove', (e) => { const t = e.touches[0]; if (tapAt && Math.hypot(t.clientX - tapAt.x, t.clientY - tapAt.y) > 8) tapAt = null; }, { passive: true });
+viewport.addEventListener('touchend', () => { if (tapAt) post({ t: 'tap' }); tapAt = null; });
+
+/** Keep the cursor in sight: bottom of the history, and inside the viewport both ways. */
+let typingUntil = 0;
+function follow() {
   const cell = xterm._core?._renderService?.dimensions?.css?.cell;
-  const ratio = cell?.width ? cell.width / xterm.options.fontSize : 0.6;
-  const want = Math.max(8, Math.min(14, Math.floor((w / cols / ratio) * 2) / 2));
-  if (want !== xterm.options.fontSize) xterm.options.fontSize = want;
+  if (!cell?.width) return;
+  const b = xterm.buffer.active;
+  if (b.viewportY !== b.baseY) xterm.scrollToBottom();
+  const x = 6 + b.cursorX * cell.width, y = 4 + b.cursorY * cell.height;
+  if (x < viewport.scrollLeft + 24 || x > viewport.scrollLeft + viewport.clientWidth - 32) viewport.scrollLeft = Math.max(0, x - viewport.clientWidth * 0.6);
+  if (y < viewport.scrollTop || y + cell.height > viewport.scrollTop + viewport.clientHeight) viewport.scrollTop = Math.max(0, y + cell.height * 2 - viewport.clientHeight);
+}
+
+const FONT = 12; // px: the phone's own text size when the terminal fits it
+const PAD_X = 12, PAD_Y = 8; // #vp padding, both sides (build-term.mjs)
+const cellAt = (px) => {
+  const cell = xterm._core?._renderService?.dimensions?.css?.cell;
+  if (!cell?.width) return null;
+  const k = px / xterm.options.fontSize;
+  return { width: cell.width * k, height: cell.height * k };
+};
+
+/** Font size for the terminal's columns: FONT when it fits the phone, smaller (to 8 px) for a wide Mac size. */
+function layout() {
+  const w = viewport.clientWidth - PAD_X, h = viewport.clientHeight - PAD_Y;
+  const cell = cellAt(FONT);
+  if (!w || !h || !cell) { setTimeout(layout, 100); return; } // the renderer has not measured yet
+  const want = Math.max(8, Math.min(FONT, Math.floor((w / cols / (cell.width / FONT)) * 2) / 2));
+  // Cells are measured at the current size: measure again at the new one.
+  if (want !== xterm.options.fontSize) { xterm.options.fontSize = want; setTimeout(layout, 50); }
 }
 new ResizeObserver(layout).observe(viewport);
 
@@ -44,6 +76,7 @@ function write(b64) {
   xterm.write(bytes, () => {
     // Credit only what is drawn: a slow phone slows the stream.
     unacked += bytes.length;
+    if (Date.now() < typingUntil) follow();
     if (unacked >= 32 * 1024) flush();
   });
   clearTimeout(ackTimer);
@@ -55,7 +88,7 @@ window.addEventListener('message', (e) => {
   if (m.t === 'out') write(m.d);
   else if (m.t === 'size') { if (m.cols !== cols || m.rows !== rows) { cols = m.cols; rows = m.rows; xterm.resize(cols, rows); } layout(); }
   else if (m.t === 'reset') xterm.reset();
-  else if (m.t === 'focus') xterm.focus();
+  else if (m.t === 'typing') { typingUntil = Date.now() + 1500; follow(); }
 });
 window.addEventListener('error', (e) => post({ t: 'log', m: String(e.message) }));
 requestAnimationFrame(layout);

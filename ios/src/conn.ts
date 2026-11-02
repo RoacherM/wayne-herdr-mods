@@ -30,6 +30,22 @@ let link: any = null;
 export const rpc = (m: string, p: object = {}, ms?: number) => (link ? link.rpc(m, p, ms) : Promise.reject(new Error("尚未连接")));
 export const notify = (m: string, p: object = {}) => link?.notify(m, p);
 
+const CHUNK = 48 * 1024;
+/**
+ * A picked image → a file beside the terminal on the Mac (upload.put in chunks, then image.put).
+ * Returns the path on the Mac; term.send's `images` pastes it as an attachment.
+ */
+export async function sendImage(file: Blob & { name?: string }, address: string) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let id: string | null = null;
+  for (let offset = 0; offset < bytes.length; offset += CHUNK) {
+    const r = await rpc("upload.put", { id, offset, total: bytes.length, mime: file.type, data: b64(bytes.subarray(offset, offset + CHUNK)) });
+    id = r.id;
+  }
+  const { path } = await rpc("image.put", { id, address, name: file.name || "image" }, 30_000);
+  return path as string;
+}
+
 async function save(v: Saved | null) {
   if (v) await Storage.setItem(KEY, JSON.stringify(v)); else await Storage.removeItem(KEY);
   paired.set(v);

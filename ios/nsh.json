@@ -2,5 +2,7 @@
   "name": "herdr 远程",
   "id": "com.example.herdr",
   "version": "1.0.0",
-  "build": 1
+  "build": 1,
+  "theme": "theme.json",
+  "appearance": "system"
 }

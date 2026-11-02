@@ -1,0 +1,41 @@
+{
+  "cssVars": {
+    "theme": { "radius": "0.75rem" },
+    "light": {
+      "background": "#f2f2f7",
+      "foreground": "#000000",
+      "card": "#ffffff",
+      "card-foreground": "#000000",
+      "primary": "#007aff",
+      "primary-foreground": "#ffffff",
+      "secondary": "#e9e9ee",
+      "secondary-foreground": "#000000",
+      "muted-foreground": "#8a8a8e",
+      "border": "#d8d8dc",
+      "destructive": "#ff3b30",
+      "separator": "#e3e3e8",
+      "ok": "#34c759",
+      "warn": "#ff9500",
+      "bad": "#ff3b30",
+      "idle": "#aeaeb2"
+    },
+    "dark": {
+      "background": "#000000",
+      "foreground": "#ffffff",
+      "card": "#1c1c1e",
+      "card-foreground": "#ffffff",
+      "primary": "#0a84ff",
+      "primary-foreground": "#ffffff",
+      "secondary": "#2c2c2e",
+      "secondary-foreground": "#ffffff",
+      "muted-foreground": "#8d8d93",
+      "border": "#38383a",
+      "destructive": "#ff453a",
+      "separator": "#38383a",
+      "ok": "#30d158",
+      "warn": "#ff9f0a",
+      "bad": "#ff453a",
+      "idle": "#636366"
+    }
+  }
+}

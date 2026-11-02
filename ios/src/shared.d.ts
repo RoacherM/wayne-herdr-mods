@@ -17,3 +17,18 @@ declare module "*/app/src/link.js" {
     close(): void;
   }
 }
+declare module "*/app/src/live-line.js" {
+  export const pasteText: (text: string) => string;
+  export class LiveLine {
+    constructor(write: (data: string) => void);
+    value: string;
+    typed: string;
+    readonly pending: string;
+    set(value: string): void;
+    compose(on: boolean): void;
+    hold(on: boolean): void;
+    commit(): void;
+    submit(): boolean;
+    backspace(): boolean;
+  }
+}

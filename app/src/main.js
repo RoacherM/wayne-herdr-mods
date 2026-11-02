@@ -11,7 +11,8 @@ import { b64, boxKeysFromSecret, decodePairLink, newBoxKeys, unb64 } from '../..
 import { Link } from './link.js';
 import { scanQr } from './scan.js';
 import { touchScroll } from './touch-scroll.js';
-import { commandText, keystrokes } from './live-command.js';
+import { ReflowView } from './reflow.js';
+import { LiveLine, pasteText } from './live-line.js';
 import { MAX_MS, shrinkImage, startRecording, transcribe, upload, voiceSupported } from './voice.js';
 
 // ------------------------------------------------------------------ utilities --
@@ -54,11 +55,8 @@ const ICONS = {
   back: '<path d="M15 18l-6-6 6-6"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   scan: '<path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 12h10"/>',
-  send: '<path d="M5 12h14M13 6l6 6-6 6"/>',
   kbd: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
-  mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4"/>',
-  fit: '<path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>',
 };
 const icon = (name) => { const s = h('span', { class: 'ico' }); s.innerHTML = `<svg viewBox="0 0 24 24">${ICONS[name]}</svg>`; return s; };
 
@@ -334,95 +332,128 @@ function renderSettings() {
 }
 
 // ------------------------------------------------------------------ terminal ---
+/*
+ * One input box: the program's own line (live-line.js). The phone keyboard types straight into
+ * Claude Code / Codex / the shell. The terminal keeps the Mac's size (the Mac windows never
+ * change); the phone lays its text out again for its own width (reflow.js).
+ *
+ *   ┌ header ───────────────────────┐
+ *   │ terminal, phone layout        │  tap → keyboard; native scrolling
+ *   │          ( status bubble )    │  only when there is something to say
+ *   ├ Esc Tab ^C ↑ ↓ ← → ⏎ 1 2 3 … ┤
+ *   │  ＋  │   按住 说话   │  ⌨     │
+ *   └───────────────────────────────┘
+ */
 const KEYBAR = [
-  ['Esc', ['esc']], ['Tab', ['tab']], ['^C', ['ctrl+c']], ['↑', ['up']], ['↓', ['down']], ['←', ['left']], ['→', ['right']],
-  ['⏎', ['enter']], ['1', ['1']], ['2', ['2']], ['3', ['3']], ['y', ['y']], ['n', ['n']], ['^D', ['ctrl+d']], ['⇧Tab', ['shift+tab']],
+  ['Esc', '\x1b'], ['Tab', '\t'], ['^C', '\x03'], ['↑', '\x1b[A'], ['↓', '\x1b[B'], ['←', '\x1b[D'], ['→', '\x1b[C'], ['⏎', '\r'],
+  ['1', '1'], ['2', '2'], ['3', '3'], ['y', 'y'], ['n', 'n'], ['⇧Tab', '\x1b[Z'], ['^D', '\x04'],
 ];
-const SEQ = { esc: '\x1b', tab: '\t', 'ctrl+c': '\x03', up: '\x1b[A', down: '\x1b[B', left: '\x1b[D', right: '\x1b[C', enter: '\r', 'ctrl+d': '\x04', 'shift+tab': '\x1b[Z', 1: '1', 2: '2', 3: '3', y: 'y', n: 'n' };
-
-function termTheme() {
-  const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-  return dark
-    ? { background: '#111110', foreground: '#e6e6e1', cursor: '#e6e6e1', selectionBackground: '#3a3a36' }
-    : { background: '#fbfbf9', foreground: '#1a1a18', cursor: '#1a1a18', selectionBackground: '#d9d8d2' };
-}
+const ANSWERS = new Set(['Esc', '⏎', '1', '2', '3', 'y', 'n']); // blue while the program asks
+// Hardware keys that go to the program as keys, not into the line.
+const HW_KEYS = { Escape: '\x1b', Tab: '\t', ArrowUp: '\x1b[A', ArrowDown: '\x1b[B', ArrowRight: '\x1b[C', ArrowLeft: '\x1b[D' };
+const TERM_THEME = { background: '#0b0b0c', foreground: '#e6e6e1', cursor: '#e6e6e1', selectionBackground: '#3a3a36' };
+const PAD = [12, 8];   // .term-viewport padding, both sides (full-screen programs)
+const IMAGE_GAP_MS = 400; // Claude Code / Codex read the file before the next paste lands
+const quotePath = (p) => (/\s/.test(p) ? `"${p}"` : p);
 
 function openTerm(address) {
   app.term?.dispose();
   app.view = { name: 'term', address };
   const t0 = app.list.terminals.find((t) => t.address === address);
-  const fitKey = `fit:${address}`;
-  const page = {
-    address, s: null, xterm: null, fit: load()[fitKey] === true, closed: false, cols: t0?.cols ?? 80, rows: t0?.rows ?? 24, unacked: 0, opening: false, early: [], typed: '',
-  };
+  const page = { address, s: null, closed: false, cols: t0?.cols ?? 80, rows: t0?.rows ?? 24, unacked: 0, opening: false, early: [] };
   app.term = page;
+  const status = { notice: '', uploading: '', composing: '', voice: null }; // what the bubble may say
 
   const title = h('b', {}, t0?.app || t0?.program || address);
   const sub = h('span', { class: 'status' }, t0?.where ?? address);
-  const fitBtn = h('button', { class: `icon-btn ${page.fit ? 'on' : ''}`, 'aria-label': '适配手机', onClick: toggleFit }, icon('fit'));
   const host = h('div', { class: 'xterm-host' });
-  const viewport = h('div', { class: 'term-viewport' }, host);
-  const notice = h('div', { class: 'term-notice', hidden: true });
-  const input = h('textarea', { class: 'term-input', rows: 1, placeholder: '发消息', enterkeyhint: 'send', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false' });
-  const sendBtn = h('button', { class: 'round send', 'aria-label': '发送', onClick: () => submit(false) }, icon('send'));
-  const micBtn = app.info?.voice && voiceSupported() ? h('button', { class: 'round mic', 'aria-label': '按住说话' }, icon('mic')) : null;
-  const voiceHud = h('div', { class: 'voice-hud', hidden: true }, h('span', { class: 'voice-level' }), h('span', { class: 'voice-text' }, '松开识别 · 上滑取消'));
+  const viewport = h('div', { class: 'term-viewport', hidden: true }, host); // full-screen programs only
+  const flow = h('div', { class: 'term-flow' }); // everything else, in the phone's layout
+  const bubble = h('div', { class: 'term-bubble', hidden: true });
+  // The keyboard: an invisible textarea that holds the burst (what was typed since the last commit).
+  const keys = h('textarea', { class: 'term-keys', rows: 1, enterkeyhint: 'send', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', 'aria-label': '输入到终端' });
   const picker = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true });
-  const attachBtn = h('button', { class: 'round ghost', 'aria-label': '添加图片', onClick: () => picker.click() }, icon('plus'));
-  const attachRow = h('div', { class: 'attachments', hidden: true });
-  const cmdHint = h('div', { class: 'cmd-hint', hidden: true }, '命令模式：边打边进终端 · ↑↓ / Tab 选择 · 发送 = 回车');
-  const keybar = h('div', { class: 'keybar' },
-    h('button', { class: 'key', 'aria-label': '直接打字', onClick: () => { vibrate(); page.xterm?.focus(); } }, icon('kbd')),
-    KEYBAR.map(([label, keys]) => h('button', { class: 'key', onClick: () => pressKeys(keys) }, label)));
-  page.images = [];
+  const voiceOk = Boolean(app.info?.voice) && voiceSupported();
+  const pickBtn = h('button', { class: 'round', 'aria-label': '插入图片', onClick: () => pick() }, icon('plus'));
+  const talkBtn = h('button', { class: `talk ${voiceOk ? '' : 'off'}`, 'aria-label': '按住说话' }, '按住 说话');
+  const kbdBtn = h('button', { class: 'round', 'aria-label': '键盘', onClick: () => (document.activeElement === keys ? keys.blur() : keys.focus()) }, icon('kbd'));
+  const keyBtns = KEYBAR.map(([label, seq]) => h('button', { class: 'key', 'data-label': label, onClick: () => key(seq) }, label));
 
-  fill(root(), h('main', { class: 'screen term' },
+  const screen = h('main', { class: 'screen term' },
     h('header', { class: 'bar' },
       h('button', { class: 'icon-btn', 'aria-label': '返回', onClick: () => { app.view = { name: 'home' }; render(); } }, icon('back')),
-      h('div', { class: 'bar-title' }, title, sub),
-      fitBtn),
-    viewport, notice,
-    h('footer', { class: 'term-foot' }, voiceHud, keybar, attachRow, cmdHint,
-      h('div', { class: 'composer' }, attachBtn, picker, h('div', { class: 'field-wrap' }, input), micBtn, sendBtn))));
+      h('div', { class: 'bar-title' }, title, sub)),
+    h('div', { class: 'term-stage' }, flow, viewport, bubble),
+    h('footer', { class: 'term-foot' },
+      h('div', { class: 'keybar' }, keyBtns),
+      h('div', { class: 'term-actions' }, pickBtn, talkBtn, kbdBtn, keys, picker)));
+  fill(root(), screen);
+  // Buttons must not take the focus: the keyboard stays up while you press Esc or ⏎.
+  for (const b of [pickBtn, kbdBtn, ...keyBtns]) b.addEventListener('pointerdown', (e) => e.preventDefault());
 
-  /** iMessage style: the mic while the box is empty, send once there is something to send. */
-  function updateAction() {
-    const has = input.value.trim() !== '' || page.images.length > 0;
-    sendBtn.hidden = Boolean(micBtn) && !has;
-    if (micBtn) micBtn.hidden = has;
-  }
-  function renderAttachments() {
-    attachRow.hidden = page.images.length === 0;
-    fill(attachRow, page.images.map((img) => h('div', { class: 'thumb' },
-      h('img', { src: img.url, alt: '' }),
-      h('button', { class: 'thumb-x', 'aria-label': '移除', onClick: () => { URL.revokeObjectURL(img.url); page.images.splice(page.images.indexOf(img), 1); renderAttachments(); updateAction(); } }, '×'))));
-  }
-  picker.addEventListener('change', async () => {
-    const files = [...picker.files].slice(0, Math.max(0, 6 - page.images.length));
-    picker.value = '';
-    for (const file of files) {
-      const blob = await shrinkImage(file);
-      page.images.push({ blob, name: file.name || 'image', url: URL.createObjectURL(blob) });
-    }
-    renderAttachments();
-    updateAction();
-    mirror();
-  });
-
+  // ---- the terminal
   const xterm = new Terminal({
-    cols: page.cols, rows: page.rows, scrollback: 3000, fontSize: 13, lineHeight: 1.0,
-    fontFamily: 'ui-monospace, Menlo, "SF Mono", monospace', theme: termTheme(), cursorBlink: false,
-    allowProposedApi: false, convertEol: false, macOptionIsMeta: true,
+    cols: page.cols, rows: page.rows, scrollback: 3000, fontSize: 10, lineHeight: 1.0,
+    fontFamily: 'ui-monospace, Menlo, "SF Mono", monospace', theme: TERM_THEME, cursorBlink: false, macOptionIsMeta: true,
   });
-  page.xterm = xterm;
   xterm.open(host);
-  const stopTouch = touchScroll(viewport, xterm); // xterm 6 ignores finger drags
-  // Keystrokes typed straight into the terminal (hardware keyboard, or the 直接打字 button).
+  const view = new ReflowView(flow, xterm, TERM_THEME);
+  // The phone layout scrolls natively; a tap (not one that ends a scroll, not a text selection) brings up the keyboard.
+  flow.addEventListener('click', () => { if (window.getSelection()?.isCollapsed !== false) keys.focus(); });
+  // Full-screen programs: xterm itself, at the Mac's size; drags reach the program as the wheel.
+  const stopTouch = touchScroll(viewport, xterm, { onTap: () => keys.focus() });
+  viewport.addEventListener('pointerup', (e) => { if (e.pointerType === 'mouse' && !xterm.hasSelection()) keys.focus(); });
+  // Coding agents draw text on their full screen too: the phone layout works for them.
+  const AGENT = /^(claude|codex)/i;
+  const showMode = () => {
+    const t = app.list.terminals.find((x) => x.address === address);
+    const full = xterm.buffer.active.type === 'alternate' && !AGENT.test(t?.app ?? t?.program ?? '');
+    flow.hidden = full;
+    viewport.hidden = !full;
+    if (full) layout(); else view.schedule();
+  };
+  xterm.buffer.onBufferChange(showMode);
+  // An agent's full screen has no history of its own here: past the top (or the bottom) of the
+  // laid-out screen, a pull scrolls the agent's own view, as the Mac's wheel would.
+  function wheel(up) {
+    if (!page.s || xterm.modes.mouseTrackingMode === 'none') return false;
+    const b = up ? 64 : 65;
+    const sgr = String(xterm._core?.coreMouseService?.activeEncoding ?? '').startsWith('SGR');
+    out(sgr ? `\x1b[<${b};2;2M` : `\x1b[M${String.fromCharCode(32 + b, 34, 34)}`, 0, false);
+    return true;
+  }
+  const atTop = () => flow.scrollTop <= 0;
+  const atEnd = () => flow.scrollHeight - flow.scrollTop - flow.clientHeight <= 1;
+  let pullY = null, pulled = 0;
+  flow.addEventListener('touchstart', (e) => { pullY = e.touches.length === 1 ? e.touches[0].clientY : null; pulled = 0; }, { passive: true });
+  flow.addEventListener('touchmove', (e) => {
+    if (pullY === null || xterm.buffer.active.type !== 'alternate') return;
+    const y = e.touches[0].clientY, dy = y - pullY;
+    pullY = y;
+    if ((dy > 0 && !atTop()) || (dy < 0 && !atEnd())) { pulled = 0; return; }
+    pulled += dy;
+    while (Math.abs(pulled) >= 18) { if (!wheel(pulled > 0)) return; pulled -= Math.sign(pulled) * 18; }
+  }, { passive: true });
+  flow.addEventListener('wheel', (e) => {
+    if (xterm.buffer.active.type !== 'alternate') return;
+    if ((e.deltaY < 0 && atTop()) || (e.deltaY > 0 && atEnd())) wheel(e.deltaY < 0);
+  }, { passive: true });
+  // Nothing else on this page pans: with the keyboard up, iOS would slide the whole page.
+  screen.addEventListener('touchmove', (e) => { if (!e.target.closest('.keybar, .term-flow')) e.preventDefault(); }, { passive: false });
+  // No typing into xterm itself: the textarea below is the only way in.
+  xterm.textarea?.setAttribute('inputmode', 'none');
+  xterm.textarea?.setAttribute('readonly', '');
+  // xterm focuses it on every mousedown, also the one a browser makes up after a tap: that would
+  // take the focus from the keyboard field (or, after a tap that only stopped a scroll, bring the
+  // keyboard up). It never takes the focus.
+  if (xterm.textarea) xterm.textarea.focus = () => {};
+  // What xterm itself sends: mouse-wheel reports for full-screen programs (vim, less, htop).
   xterm.onData((d) => { if (page.s) app.link.notify('term.input', { s: page.s, d }); });
 
   function write(b64data) {
     const bytes = unb64(b64data);
     xterm.write(bytes, () => {
+      view.schedule();
       // Credit only what xterm has actually drawn: a slow phone slows the stream down.
       page.unacked += bytes.length;
       if (page.unacked >= 32 * 1024) { app.link.notify('term.ack', { s: page.s, n: page.unacked }); page.unacked = 0; }
@@ -431,33 +462,16 @@ function openTerm(address) {
     page.ackTimer = setTimeout(() => { if (page.unacked && page.s) { app.link.notify('term.ack', { s: page.s, n: page.unacked }); page.unacked = 0; } }, 100);
   }
 
-  /**
-   * Pick a font size so the Mac's columns fit the phone's width, but never below MIN_FONT (an
-   * unreadable screen helps nobody): past that the terminal scrolls sideways. No CSS transform:
-   * xterm measures its cells from the DOM, and a scaled parent breaks the measurement.
-   */
-  const MIN_FONT = 8, MAX_FONT = 14;
+  // ---- size: always the Mac's (the phone never resizes the terminal). Full-screen programs get a
+  // font that fits the Mac's columns in the phone's width (down to 6 px).
   function layout() {
-    const w = viewport.clientWidth - 8;
-    if (!w) return;
+    if (viewport.hidden) return;
+    const w = viewport.clientWidth - PAD[0];
     const cell = xterm._core?._renderService?.dimensions?.css?.cell;
-    const ratio = cell?.width ? cell.width / xterm.options.fontSize : 0.6;
-    const want = Math.max(MIN_FONT, Math.min(MAX_FONT, Math.floor((w / page.cols / ratio) * 2) / 2));
+    if (!w || !cell?.width) { setTimeout(layout, 100); return; }
+    const want = Math.max(6, Math.min(13, Math.floor(((w * xterm.options.fontSize) / page.cols / cell.width) * 2) / 2));
     if (want !== xterm.options.fontSize) xterm.options.fontSize = want;
   }
-
-  /** Cells that fit the phone at the base font size (used only for 适配手机). */
-  function phoneSize() {
-    // Measured at a comfortable 13px, whatever the current font is.
-    const cell = xterm._core?._renderService?.dimensions?.css?.cell;
-    const k = cell?.width ? 13 / xterm.options.fontSize : 1;
-    const cw = (cell?.width || 7.8) * k;
-    const ch = (cell?.height || 15) * k;
-    const w = viewport.parentElement.clientWidth - 8;
-    const free = window.innerHeight - viewport.getBoundingClientRect().top - $('.term-foot').offsetHeight - 8;
-    return { cols: Math.max(20, Math.floor(w / cw)), rows: Math.max(8, Math.floor(free / ch)) };
-  }
-
   function resizeTo(cols, rows) {
     if (cols === page.cols && rows === page.rows) return;
     page.cols = cols; page.rows = rows;
@@ -465,33 +479,36 @@ function openTerm(address) {
     layout();
   }
 
+  // ---- the stream
   async function open() {
     if (page.opening || page.closed || app.link?.status !== 'ready') return;
     page.opening = true;
     page.early = [];
     try {
-      const r = await app.link.rpc('term.open', { address, fit: page.fit ? phoneSize() : undefined });
+      const r = await app.link.rpc('term.open', { address });
       if (page.closed) { app.link.rpc('term.close', { s: r.s }).catch(() => {}); return; }
       page.s = r.s;
-      page.typed = ''; // a new stream: whatever we typed before is the agent's business now
       xterm.reset();
       resizeTo(r.cols, r.rows);
-      notice.hidden = true;
-      const early = page.early.splice(0);
-      for (const msg of early) onEvent(msg);
+      setStatus('notice', '');
+      for (const msg of page.early.splice(0)) onEvent(msg);
     } catch (e) {
-      notice.hidden = false;
-      notice.textContent = `打不开：${e.message}`;
+      setStatus('notice', `打不开：${e.message}`);
     } finally { page.opening = false; }
   }
 
   function onList() {
     const t = app.list.terminals.find((x) => x.address === address);
-    if (!t) { notice.hidden = false; notice.textContent = '这个终端已经结束。'; return; }
+    if (!t) { setStatus('notice', '这个终端已经结束。'); return; }
     title.textContent = t.app || t.program || address;
     sub.textContent = [t.where, t.state === 'blocked' ? (KIND_TEXT[t.kind] ?? '等你处理') : STATE_TEXT[t.state]].filter(Boolean).join(' · ');
-    // Follow the Mac windows' size (the host restates it before every keystroke).
-    if (!page.fit) resizeTo(t.cols, t.rows);
+    resizeTo(t.cols, t.rows); // follow the Mac windows' size
+    showMode();
+    const blocked = t.state === 'blocked';
+    keyBtns.forEach((b) => b.classList.toggle('answer', blocked && ANSWERS.has(b.dataset.label)));
+    // While the program asks, typing waits: a letter could answer its question.
+    line.hold(blocked);
+    sync();
   }
 
   function onEvent(msg) {
@@ -502,128 +519,121 @@ function openTerm(address) {
     else if (msg.ev === 'closed') {
       page.s = null;
       if (msg.reason === 'replaced' || page.closed) return;
-      notice.hidden = false;
-      notice.textContent = msg.reason === 'exited' ? `程序已退出${msg.exitCode !== null && msg.exitCode !== undefined ? `（${msg.exitCode}）` : ''}` : '连接断开，正在重连…';
+      setStatus('notice', msg.reason === 'exited' ? `程序已退出${msg.exitCode !== null && msg.exitCode !== undefined ? `（${msg.exitCode}）` : ''}` : '连接断开，正在重连…');
       if (msg.reason !== 'exited') setTimeout(open, 800);
     }
   }
 
-  /** Mirror a "/command" into the terminal as it is typed (see live-command.js). */
-  function mirror() {
-    const want = page.images.length ? '' : commandText(input.value);
-    cmdHint.hidden = !want;
-    input.closest('.composer')?.classList.toggle('cmd', Boolean(want));
-    if (!page.s || want === page.typed) return;
-    app.link.notify('term.input', { s: page.s, d: keystrokes(page.typed, want) });
-    page.typed = want;
+  // ---- typing: everything goes out in order; an image path waits for the program to read the file.
+  let chain = Promise.resolve();
+  function out(d, after = 0, follow = true) {
+    chain = chain.then(async () => {
+      if (page.s) { app.link.notify('term.input', { s: page.s, d }); if (follow) view.bottom(); }
+      if (after) await new Promise((r) => setTimeout(r, after));
+    });
   }
-
-  async function submit(force) {
-    const text = input.value;
-    if (page.s && page.typed && page.typed === commandText(text)) {
-      // Already in the terminal, menu and all: Enter runs it (or picks the highlighted entry).
-      app.link.notify('term.input', { s: page.s, d: '\r' });
-      page.typed = '';
-      input.value = '';
-      autosize();
-      mirror();
-      updateAction();
-      vibrate();
-      return;
-    }
-    if (!text.trim() && !page.images.length) return;
-    sendBtn.disabled = true;
-    try {
-      // Images first: each lands as a file beside the terminal (terminal.put); the message carries
-      // their paths, which Claude Code and Codex pick up as image attachments.
-      const paths = [];
-      for (const [i, img] of page.images.entries()) {
-        sendBtn.dataset.progress = `${i + 1}/${page.images.length}`;
-        const id = await upload(app.link, img.blob);
-        const r = await app.link.rpc('image.put', { id, address, name: img.name }, 30_000);
-        paths.push(/\s/.test(r.path) ? `"${r.path}"` : r.path);
-      }
-      delete sendBtn.dataset.progress;
-      await app.link.rpc('term.send', { address, text: [...paths, text.trim()].filter(Boolean).join(' '), force }, 20_000);
-      input.value = '';
-      for (const img of page.images) URL.revokeObjectURL(img.url);
-      page.images = [];
-      renderAttachments();
-      autosize();
-      updateAction();
-      vibrate();
-    } catch (e) {
-      toast(e.message, 'err');
-    } finally { sendBtn.disabled = false; delete sendBtn.dataset.progress; }
+  const line = new LiveLine((d) => out(d));
+  /** The textarea shows the burst; the bubble says what the line cannot. */
+  function sync() {
+    if (keys.value !== line.value) keys.value = line.value;
+    const blocked = line.held;
+    const say = status.voice ? status.voice
+      : status.uploading ? { text: `上传图片 ${status.uploading}…` }
+      : status.composing ? { text: status.composing }
+      : line.pending ? { text: `等你回答后输入：${line.pending}`, kind: 'warn' }
+      : blocked ? { text: '终端在问你：用蓝色键回答', kind: 'warn' }
+      : status.notice ? { text: status.notice, kind: 'warn' }
+      : null;
+    bubble.hidden = !say;
+    if (!say) return;
+    bubble.className = `term-bubble ${say.kind ?? ''}`;
+    fill(bubble, say.level !== undefined ? h('span', { class: 'voice-level', style: `transform:scaleX(${0.08 + say.level * 0.92})` }) : null, h('span', {}, say.text));
   }
+  function setStatus(k, v) { status[k] = v; sync(); }
 
-  function pressKeys(keys) {
-    vibrate(6);
-    // Through the stream when open (instant, same path as typing), else through terminal.keys.
-    if (page.s && keys.every((k) => SEQ[k] !== undefined)) app.link.notify('term.input', { s: page.s, d: keys.map((k) => SEQ[k]).join('') });
-    else app.link.rpc('term.keys', { address, keys }).catch((e) => toast(e.message, 'err'));
-  }
-
-  async function toggleFit() {
-    page.fit = !page.fit;
-    const store = load(); store[fitKey] = page.fit; save(store);
-    fitBtn.classList.toggle('on', page.fit);
-    if (page.fit) toast('已适配手机：Mac 上这个窗格也会变窄。再点一次还原。');
-    if (!page.s) return;
-    const want = page.fit ? phoneSize() : null;
-    try {
-      await app.link.rpc('term.fit', { s: page.s, fit: want });
-      if (want) resizeTo(want.cols, want.rows);
-      else onList();
-      layout();
-    } catch (e) { toast(e.message, 'err'); }
-  }
-
-  function autosize() { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight, 120)}px`; }
-  input.addEventListener('input', () => { autosize(); updateAction(); mirror(); });
-  updateAction();
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(e.metaKey || e.ctrlKey); }
+  keys.addEventListener('compositionstart', () => { line.compose(true); });
+  keys.addEventListener('compositionupdate', (e) => setStatus('composing', e.data ?? ''));
+  keys.addEventListener('compositionend', () => { status.composing = ''; line.compose(false); line.set(keys.value); sync(); });
+  keys.addEventListener('input', (e) => { if (e.isComposing) { line.value = keys.value; return; } line.set(keys.value); sync(); });
+  keys.addEventListener('keydown', (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); return; }
+    if (e.key === 'Backspace' && !keys.value) { e.preventDefault(); line.backspace(); return; }
+    const seq = HW_KEYS[e.key] ?? (e.ctrlKey && !e.metaKey && /^[a-z]$/i.test(e.key) ? String.fromCharCode(e.key.toUpperCase().charCodeAt(0) - 64) : null);
+    if (seq) { e.preventDefault(); key(seq); }
   });
-  sendBtn.addEventListener('contextmenu', (e) => { e.preventDefault(); submit(true); });
+  keys.addEventListener('focus', () => kbdBtn.classList.add('on'));
+  keys.addEventListener('blur', () => kbdBtn.classList.remove('on'));
 
-  // ---- hold-to-talk: press the mic, speak, release → text lands in the message box (not sent).
-  if (micBtn) {
-    let rec = null;
-    let startY = 0;
-    let cancelled = false;
-    let raf = 0;
-    let limit = 0;
-    const hud = (text, cls = '') => { voiceHud.hidden = !text; voiceHud.className = `voice-hud ${cls}`; $('.voice-text', voiceHud).textContent = text ?? ''; };
+  /** A key: the program owns what went in (Tab may complete it), then the key. */
+  function key(seq) {
+    vibrate(6);
+    line.commit(); sync();
+    out(seq);
+  }
+  function submit() {
+    if (!line.submit()) { toast('先回答终端里的问题（1 / 2 / 3、⏎ 或 Esc），刚打的字随后会进去'); return; }
+    vibrate();
+    sync();
+  }
+  function insert(text) {
+    const sep = line.value && !/\s$/.test(line.value) ? ' ' : '';
+    line.set(line.value + sep + text);
+    sync();
+  }
+
+  // ---- images go into the program's line as their own pastes: Claude Code / Codex show [Image #N].
+  function pick() {
+    if (line.held) { toast('先回答终端里的问题，再插图片'); return; }
+    picker.click();
+  }
+  picker.addEventListener('change', async () => {
+    const files = [...picker.files].slice(0, 6);
+    picker.value = '';
+    try {
+      for (const [i, file] of files.entries()) {
+        setStatus('uploading', `${i + 1}/${files.length}`);
+        const blob = await shrinkImage(file);
+        const id = await upload(app.link, blob);
+        const { path } = await app.link.rpc('image.put', { id, address, name: file.name || 'image' }, 30_000);
+        line.commit(); sync();
+        out(pasteText(quotePath(path)), IMAGE_GAP_MS);
+        out(' ');
+      }
+    } catch (e) { toast(`图片没发出去：${e.message}`, 'err'); } finally { setStatus('uploading', ''); }
+  });
+
+  // ---- hold to talk: speak, release → the words go into the program's line (Enter still yours).
+  {
+    let rec = null, startY = 0, cancelled = false, raf = 0, limit = 0;
+    const show = (text, kind = 'rec') => { status.voice = text ? { text, kind, level: rec ? rec.level() : undefined } : null; sync(); };
     const meter = () => {
       if (!rec) return;
-      $('.voice-level', voiceHud).style.transform = `scaleX(${0.08 + rec.level() * 0.92})`;
       const left = Math.ceil((MAX_MS - (Date.now() - rec.started)) / 1000);
-      if (left <= 10) $('.voice-text', voiceHud).textContent = `还剩 ${left} 秒 · 松开识别`;
+      show(cancelled ? '松开 取消' : left <= 10 ? `还剩 ${left} 秒 · 松开 输入` : '松开 输入 · 上滑 取消', cancelled ? 'rec cancel' : 'rec');
       raf = requestAnimationFrame(meter);
     };
     const begin = async (e) => {
       e.preventDefault();
-      if (rec || micBtn.disabled) return;
+      if (!voiceOk) { toast(app.info?.voice ? '这个浏览器不能录音' : '这台 Mac 没开语音识别：在 Mac 上运行 herdr-relay voice 设置'); return; }
+      if (rec || talkBtn.disabled) return;
       startY = e.clientY;
       cancelled = false;
-      micBtn.setPointerCapture?.(e.pointerId);
-      try {
-        rec = await startRecording();
-      } catch (error) {
+      talkBtn.setPointerCapture?.(e.pointerId);
+      try { rec = await startRecording(); } catch (error) {
         toast(error.name === 'NotAllowedError' ? '没有麦克风权限：在 设置 → Safari → 麦克风 里允许' : `录音失败：${error.message}`, 'err');
         return;
       }
       vibrate(15);
-      micBtn.classList.add('on');
-      hud('松开识别 · 上滑取消', 'rec');
+      talkBtn.classList.add('on');
+      talkBtn.textContent = '松开 输入';
       meter();
       limit = setTimeout(() => finish(), MAX_MS);
     };
     const move = (e) => {
       if (!rec) return;
-      const out = startY - e.clientY > 60;
-      if (out !== cancelled) { cancelled = out; hud(out ? '松开取消' : '松开识别 · 上滑取消', out ? 'rec cancel' : 'rec'); vibrate(5); }
+      const away = startY - e.clientY > 60;
+      if (away !== cancelled) { cancelled = away; vibrate(5); }
     };
     const finish = async () => {
       if (!rec) return;
@@ -631,48 +641,73 @@ function openTerm(address) {
       rec = null;
       clearTimeout(limit);
       cancelAnimationFrame(raf);
-      micBtn.classList.remove('on');
-      if (cancelled || Date.now() - r.started < 400) { r.cancel(); hud(null); if (!cancelled) toast('按住麦克风说话，松开识别'); return; }
+      talkBtn.classList.remove('on');
+      talkBtn.textContent = '按住 说话';
+      if (cancelled || Date.now() - r.started < 400) { r.cancel(); show(null); if (!cancelled) toast('按住说话，松开输入'); return; }
       const blob = await r.stop();
-      micBtn.disabled = true;
-      hud('识别中…', 'busy');
+      talkBtn.disabled = true;
+      show('识别中…', 'busy');
       try {
         const { text } = await transcribe(app.link, blob, { address });
-        if (!text) { toast('没听清，请再说一次'); return; }
-        const at = input.selectionStart ?? input.value.length;
-        const before = input.value.slice(0, at);
-        const sep = before && !/\s$/.test(before) ? ' ' : '';
-        input.value = before + sep + text + input.value.slice(at);
-        autosize();
-        updateAction();
-        vibrate(10);
+        if (text) { insert(text); vibrate(10); } else toast('没听清，请再说一次');
       } catch (error) {
         toast(error.message, 'err');
-      } finally {
-        micBtn.disabled = false;
-        hud(null);
-      }
+      } finally { talkBtn.disabled = false; show(null); }
     };
-    micBtn.addEventListener('pointerdown', begin);
-    micBtn.addEventListener('pointermove', move);
-    micBtn.addEventListener('pointerup', finish);
-    micBtn.addEventListener('pointercancel', () => { cancelled = true; finish(); });
-    micBtn.addEventListener('contextmenu', (e) => e.preventDefault());
+    talkBtn.addEventListener('pointerdown', begin);
+    talkBtn.addEventListener('pointermove', move);
+    talkBtn.addEventListener('pointerup', finish);
+    talkBtn.addEventListener('pointercancel', () => { cancelled = true; finish(); });
+    talkBtn.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
+  // ---- with the keyboard up, the page follows the visible viewport: on iOS the keyboard covers the
+  // page instead of resizing it. Otherwise CSS holds it (inset 0): the toolbars of iOS browsers
+  // grow and shrink as you touch the page, and following them made the layout jump.
+  // "Keyboard up" needs our field focused: iOS does not always report the last viewport change
+  // when the keyboard goes away, and a stale height left the page at half the screen. On blur the
+  // page goes back to full height at once, and is checked again while the keyboard slides away.
+  const vv = window.visualViewport;
+  let checks = [];
+  const followViewport = () => {
+    if (!vv) return;
+    const keyboard = document.activeElement === keys && window.innerHeight - vv.height > 120;
+    screen.style.height = keyboard ? `${vv.height}px` : '';
+    screen.style.transform = keyboard && vv.offsetTop ? `translateY(${vv.offsetTop}px)` : '';
+    if (!keyboard && (window.scrollX || window.scrollY)) window.scrollTo(0, 0); // iOS scrolled the page for the field
+  };
+  const recheck = () => {
+    followViewport();
+    checks.forEach(clearTimeout);
+    checks = [100, 300, 600, 1000].map((ms) => setTimeout(followViewport, ms));
+  };
+  vv?.addEventListener('resize', followViewport);
+  vv?.addEventListener('scroll', followViewport);
+  window.addEventListener('resize', recheck);
+  window.addEventListener('orientationchange', recheck);
+  keys.addEventListener('focus', recheck);
+  keys.addEventListener('blur', recheck);
+  followViewport();
   const ro = new ResizeObserver(() => layout());
-  ro.observe(viewport.parentElement);
+  ro.observe(viewport);
   requestAnimationFrame(layout);
 
   Object.assign(page, {
     onEvent, onList,
     reopen() { page.s = null; open(); },
-    lost() { if (page.s) { page.s = null; notice.hidden = false; notice.textContent = '连接断开，正在重连…'; } },
+    lost() { if (page.s) { page.s = null; setStatus('notice', '连接断开，正在重连…'); } },
     dispose() {
       page.closed = true;
       ro.disconnect();
+      vv?.removeEventListener('resize', followViewport);
+      vv?.removeEventListener('scroll', followViewport);
+      window.removeEventListener('resize', recheck);
+      window.removeEventListener('orientationchange', recheck);
+      checks.forEach(clearTimeout);
+      screen.style.height = screen.style.transform = '';
       stopTouch();
       clearTimeout(page.ackTimer);
+      view.dispose();
       if (page.s && app.link?.status === 'ready') app.link.rpc('term.close', { s: page.s }).catch(() => {});
       xterm.dispose();
     },
