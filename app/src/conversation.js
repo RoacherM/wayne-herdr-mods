@@ -7,6 +7,9 @@
  *     text you read does not move);
  *   - a tool's output comes as its own item later on: it fills that tool's card.
  *
+ *   - while the agent works or asks, the bottom of its screen shows under the list (`live`): the
+ *     transcript only has what is finished, the screen has the reply being written and the spinner.
+ *
  * Items: { k: 'user' | 'assistant' | 'tool' | 'result' | 'note', seq, … } (see transcripts.js).
  */
 import { Marked } from 'marked';
@@ -53,7 +56,11 @@ export class ConversationView {
     this.top = el('div', 'conv-top');
     this.list = el('div', 'conv-list');
     this.tail = el('div', 'conv-tail');
-    this.root.append(this.top, this.list, this.tail);
+    this.liveEl = el('pre', 'conv-live');
+    this.liveEl.hidden = true;
+    this.live = '';
+    this.busy = false;
+    this.root.append(this.top, this.list, this.liveEl, this.tail);
     this.onScroll = () => { if (this.root.scrollTop < OLDER_PX) this.older(); };
     this.root.addEventListener('scroll', this.onScroll, { passive: true });
   }
@@ -86,6 +93,7 @@ export class ConversationView {
     if (msg.reset) { this.reset(msg); return; }
     const stick = this.atBottom();
     this.add(msg.items, 'end');
+    if (msg.live !== undefined) { this.live = msg.live; this.showLive(); }
     if (stick) this.bottom();
   }
 
@@ -123,8 +131,18 @@ export class ConversationView {
   state(t) {
     const blocked = t?.state === 'blocked';
     const working = t?.state === 'working';
+    const stick = this.atBottom();
+    this.busy = blocked || working;
+    this.showLive();
     this.tail.className = `conv-tail ${blocked ? 'ask' : working ? 'busy' : ''}`;
     this.tail.textContent = blocked ? (t.msg || '终端在问你') : working ? (t.msg || '工作中…') : '';
+    if (stick) this.bottom();
+  }
+
+  /** The screen's bottom, only while the agent works or asks (idle, it repeats the last reply). */
+  showLive() {
+    this.liveEl.hidden = !(this.busy && this.live);
+    if (this.liveEl.textContent !== this.live) this.liveEl.textContent = this.live;
   }
 
   close() {

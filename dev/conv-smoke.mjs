@@ -83,7 +83,11 @@ await page.click('.mode-btn');
 await pause(300);
 check(!(await page.$eval('.conv', (el) => el.hidden)), 'and the conversation again');
 
-// 6. Send from the conversation view: answer the question first (keys), then a message.
+// 6. While the agent asks, its screen shows under the list: the question is there without the terminal.
+await page.waitForFunction(() => { const l = document.querySelector('.conv-live'); return l && !l.hidden && l.innerText.includes('要运行 npm test 吗'); }, { timeout: 8000 })
+  .then(() => check(true, 'the live part shows the question on the screen'), () => check(false, 'the live part shows the question on the screen'));
+
+// 7. Send from the conversation view: answer the question first (keys), then a message.
 await page.evaluate(() => [...document.querySelectorAll('.key')].find((b) => b.innerText === '1').click());
 await page.evaluate(() => [...document.querySelectorAll('.key')].find((b) => b.innerText === '⏎').click());
 await pause(1500);

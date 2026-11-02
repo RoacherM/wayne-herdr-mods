@@ -9,6 +9,10 @@
  * these folders only. What goes out: user text, replies, tool names with a short summary, tool
  * output cut short. Not: thinking, system-injected text, sidechains (sub-agents), argv.
  *
+ * A transcript only has what is finished: a reply is written when its block ends, a tool's output
+ * when the tool ends, thinking never shows. So while the agent works, the phone also gets the
+ * bottom of its screen (`live`, see livePart): the reply being written, the spinner, the question.
+ *
  * An item's `seq` is the byte offset of the line it came from (plus its place in the line), so a
  * page of older items is "lines before this offset", read backwards from there: a 40 MB
  * transcript costs only the tail it shows.
@@ -26,6 +30,8 @@ const MAX_SUM = 300;
 const POLL_MS = 300;
 const LOCATE_MS = 2_000;
 const MAX_OPEN = 4; // per phone
+const PEEK_MS = 700;  // how often the agent's screen is read for the live part
+const LIVE_LINES = 14;
 
 const cut = (s, n) => (s.length > n ? `${s.slice(0, n)}…` : s);
 
@@ -263,11 +269,35 @@ export async function readForward(kind, file, from) {
 
 // ------------------------------------------------------------------ live --------
 
+const BOX = /^[\s─━═╭╮╰╯┌┐└┘│┃]+$/;
+const RULE = /[─━═]{8}/;
+
+/**
+ * What the agent is doing now, from its screen: the last lines above its input box (Claude Code:
+ * a rule, "❯", a rule; epi / pi: a rounded box around "❯"). No box (a question, a menu): the
+ * bottom of the screen.
+ */
+export function livePart(screen, n = LIVE_LINES) {
+  const lines = String(screen ?? '').split('\n').map((l) => l.replace(/\s+$/, ''));
+  let end = lines.length;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!(BOX.test(lines[i]) && RULE.test(lines[i]))) continue;
+    if (lines.slice(i + 1, i + 3).some((l) => /^[\s│┃]*[❯>›]/.test(l))) { end = i; break; }
+  }
+  const body = lines.slice(0, end);
+  while (body.length && !body.at(-1).trim()) body.pop();
+  const part = body.slice(-n);
+  while (part.length && !part[0].trim()) part.shift();
+  // The common indent goes: the phone is narrow.
+  const indent = Math.min(...part.filter((l) => l.trim()).map((l) => /^ */.exec(l)[0].length));
+  return part.map((l) => l.slice(Number.isFinite(indent) ? indent : 0)).join('\n');
+}
+
 /**
  * Open conversations of one phone. `find(address)` → { fg, program } of a terminal, or null.
  * `emit(c, payload)` sends a `conv` event (new items, or `reset` with a fresh page).
  */
-export function createConversations({ find, emit, home }) {
+export function createConversations({ find, emit, home, peek }) {
   home ??= homedir();
   const open = new Map(); // c → { address, kind, file, end, timer, located }
   let next = 1;
@@ -303,6 +333,11 @@ export function createConversations({ find, emit, home }) {
       if (r.end < 0) { emit(c, { reset: true, ...(await first(conv)) }); return; } // the file got shorter
       conv.end = r.end;
       if (r.items.length) emit(c, { items: r.items });
+      if (peek && Date.now() - conv.peeked >= PEEK_MS) {
+        conv.peeked = Date.now();
+        const live = livePart(await peek(conv.address).catch(() => ''));
+        if (live !== conv.live) { conv.live = live; emit(c, { items: [], live }); }
+      }
     } catch {} finally {
       if (open.has(c)) { conv.busy = false; conv.timer = setTimeout(() => tick(c), POLL_MS); }
     }
@@ -314,7 +349,7 @@ export function createConversations({ find, emit, home }) {
       const found = await where(address);
       if (!found) throw new Error('找不到这个 agent 的会话记录');
       const c = next++;
-      const conv = { address, ...found, end: 0, located: Date.now(), busy: false, timer: 0 };
+      const conv = { address, ...found, end: 0, located: Date.now(), busy: false, timer: 0, peeked: 0, live: '' };
       const page = await first(conv);
       open.set(c, conv);
       conv.timer = setTimeout(() => tick(c), POLL_MS);

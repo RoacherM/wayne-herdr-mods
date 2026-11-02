@@ -473,6 +473,11 @@ button { font: inherit; color: inherit; }
 .conv .tool-sum { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
 .conv .tool-out { margin: 4px 0; padding: 8px 10px; border-radius: 8px; background: #1c1c1e; font: 12px/1.45 ui-monospace, Menlo, monospace; color: var(--fg2);
   white-space: pre-wrap; word-break: break-all; max-height: 220px; overflow: auto; }
+.conv-live {
+  margin: 4px 12px 0; padding: 8px 10px; border-left: 2px solid var(--send);
+  font: 12px/1.35 ui-monospace, Menlo, "SF Mono", monospace; color: var(--fg2);
+  white-space: pre-wrap; word-break: break-all; background: var(--l2); border-radius: 6px;
+}
 .conv-tail { min-height: 0; font-size: 13px; color: var(--fg3); display: flex; align-items: center; gap: 8px; }
 .conv-tail:empty { display: none; }
 .conv-tail.ask { color: #ffd60a; }

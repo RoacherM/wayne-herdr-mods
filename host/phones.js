@@ -7,7 +7,8 @@
  *   {m, p}       a notification, no answer (term.input, term.ack: these are hot paths)
  * Host → phone:
  *   {ev, ...}    terminals (list changed), out (terminal bytes), closed (stream over), size,
- *                conv (a conversation's new items, or a fresh page after `reset`)
+ *                conv (a conversation's new items, a fresh page after `reset`, or `live`: the
+ *                bottom of the agent's screen while it works)
  *
  * Only the methods below reach herdr-core. Nothing here forwards a raw RPC: herdr-core's socket
  * has no password, so `machine.exec`, `file.*`, `terminal.run`, `server.*` stay unreachable.
@@ -38,7 +39,7 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
 
   function open(cid) {
     const peer = { cid, stage: 'hello', cipher: null, device: null, streams: new Map(), uploads: createUploads(), recognizing: false };
-    peer.convs = createConversations({ home, find: findAgent, emit: (c, payload) => event(peer, 'conv', { c, ...payload }) });
+    peer.convs = createConversations({ home, find: findAgent, peek, emit: (c, payload) => event(peer, 'conv', { c, ...payload }) });
     peers.set(cid, peer);
   }
 
@@ -190,6 +191,13 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
         stream.core.send(stream.channel, CREDIT, u32(Math.max(0, Math.min(Number(p.n) || 0, 16 << 20))));
       }
     } catch {}
+  }
+
+  /** The agent's screen now (no history), for the live part of its conversation. */
+  async function peek(address) {
+    const core = terminals.core();
+    if (!core) return '';
+    return (await core.call('terminal.read', { terminal: address, lines: 0 })).text ?? '';
   }
 
   /** A terminal's foreground program, for its transcript (transcripts.js); argv stays on the Mac. */

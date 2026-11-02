@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { appendFile, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { claudeItems, createConversations, lineEnd, locate, piItems, readBack, readForward } from '../host/transcripts.js';
+import { claudeItems, createConversations, lineEnd, livePart, locate, piItems, readBack, readForward } from '../host/transcripts.js';
 
 const claudeLine = (type, content, extra = {}) => JSON.stringify({ parentUuid: null, isSidechain: false, type, message: { role: type, content }, timestamp: '2026-11-03T00:00:00Z', ...extra });
 const piLine = (role, content, extra = {}) => JSON.stringify({ type: 'message', id: 'x', parentId: null, timestamp: '2026-11-03T00:00:00Z', message: { role, content, ...extra } });
@@ -115,4 +115,17 @@ test('a live conversation: first page, new items, a new session starts over', as
   for (let i = 0; i < 30 && !events.length; i++) await new Promise((r) => setTimeout(r, 100));
   assert.deepEqual(events[0].items.map((i) => i.text), ['second']);
   convs.closeAll();
+});
+
+test('the live part: what is above the input box, or the bottom when there is no box', () => {
+  const rule = '─'.repeat(40);
+  // Claude Code: a rule, "❯", a rule, then the footer.
+  assert.equal(livePart(['  old', '', '  ⏺ writing the reply', '  · Thinking… (3s)', '', rule, '❯ ', rule, '  ⏵⏵ footer'].join('\n')), 'old\n\n⏺ writing the reply\n· Thinking… (3s)');
+  // epi / pi: a rounded box.
+  assert.equal(livePart(['  step 1', '  step 2', `  ╭${rule}╮`, '  │ ❯ typed │', `  ╰${rule}╯`, '  model · ctx'].join('\n')), 'step 1\nstep 2');
+  // A question takes the box's place: the bottom of the screen, menu and all.
+  assert.equal(livePart(['要运行 npm test 吗？', ' ❯ 1. 是', '   2. 否', '', ''].join('\n')), '要运行 npm test 吗？\n ❯ 1. 是\n   2. 否');
+  // Only the last lines.
+  assert.equal(livePart(Array.from({ length: 40 }, (_, i) => `l${i}`).join('\n'), 3), 'l37\nl38\nl39');
+  assert.equal(livePart(''), '');
 });
