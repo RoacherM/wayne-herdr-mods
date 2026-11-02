@@ -13,6 +13,7 @@ import { scanQr } from './scan.js';
 import { touchScroll, wheel as wheelTo } from './touch-scroll.js';
 import { History } from './history.js';
 import { ReflowView } from './reflow.js';
+import { ConversationView } from './conversation.js';
 import { LiveLine, pasteText } from './live-line.js';
 import { MAX_MS, shrinkImage, startRecording, transcribe, upload, voiceSupported } from './voice.js';
 
@@ -61,6 +62,9 @@ const ICONS = {
   mac: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
   phone: '<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/>',
   down: '<path d="M12 5v14M6 13l6 6 6-6"/>',
+  chat: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.6A8 8 0 1 1 21 12z"/>',
+  term: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/>',
+  send: '<path d="M12 19V5M6 11l6-6 6 6"/>',
 };
 const icon = (name) => { const s = h('span', { class: 'ico' }); s.innerHTML = `<svg viewBox="0 0 24 24">${ICONS[name]}</svg>`; return s; };
 
@@ -141,6 +145,8 @@ function onEvent(msg) {
     listTimer = setTimeout(refreshList, 150);
   } else if (msg.ev === 'out' || msg.ev === 'closed') {
     app.term?.onEvent(msg);
+  } else if (msg.ev === 'conv') {
+    app.term?.onConv?.(msg);
   }
 }
 
@@ -373,6 +379,11 @@ function reflows(t) {
 const SIZE = 'herdr-relay.size';
 const FIT_FONT = 12; // px, the phone's own size
 const fitsPhone = () => localStorage.getItem(SIZE) !== 'keep';
+// Agents whose transcript the Mac can read (host/transcripts.js): they open in the conversation
+// view (scrolled on the phone) unless the person chose the terminal.
+const CONV_PROGRAMS = new Set(['claude', 'epi', 'pi']);
+const hasConv = (t) => CONV_PROGRAMS.has(t?.program);
+const MODE = 'herdr-relay.mode';
 const MOUSE_REPORT = /^(\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[M[\s\S]{3})+$/; // SGR, or the default encoding
 const ANSWERS = new Set(['Esc', '⏎', '1', '2', '3', 'y', 'n']); // blue while the program asks
 // Hardware keys that go to the program as keys, not into the line.
@@ -404,23 +415,30 @@ function openTerm(address) {
   const voiceOk = Boolean(app.info?.voice) && voiceSupported();
   const pickBtn = h('button', { class: 'round', 'aria-label': '插入图片', onClick: () => pick() }, icon('plus'));
   const talkBtn = h('button', { class: `talk ${voiceOk ? '' : 'off'}`, 'aria-label': '按住说话' }, '按住 说话');
-  const kbdBtn = h('button', { class: 'round', 'aria-label': '键盘', onClick: () => (document.activeElement === keys ? keys.blur() : keys.focus()) }, icon('kbd'));
+  const kbdBtn = h('button', { class: 'round', 'aria-label': '键盘', onClick: () => { const f = convMode ? convInput : keys; if (document.activeElement === f) f.blur(); else f.focus(); } }, icon('kbd'));
   // The phone's size or the Mac's. It shows where a tap goes: the Mac's (a monitor) or the phone's (a phone).
   const viewBtn = h('button', { class: 'icon-btn view-btn shown', onClick: () => toggleSize() });
+  // The conversation (from the transcript, scrolled on the phone) or the terminal itself.
+  const modeBtn = h('button', { class: 'icon-btn mode-btn', hidden: !hasConv(t0), onClick: () => setMode(!convMode) });
+  const convEl = h('div', { class: 'conv', hidden: true });
+  const convInput = h('textarea', { class: 'conv-input', rows: 1, enterkeyhint: 'send', placeholder: '发消息给 agent', 'aria-label': '发消息给 agent' });
+  const convSend = h('button', { class: 'round conv-send', 'aria-label': '发送', onClick: () => sendConv() }, icon('send'));
+  const convBox = h('div', { class: 'conv-box', hidden: true }, convInput, convSend);
   const keyBtns = KEYBAR.map(([label, seq]) => h('button', { class: 'key', 'data-label': label, onClick: () => key(seq) }, label));
 
   const screen = h('main', { class: 'screen term' },
     h('header', { class: 'bar' },
       h('button', { class: 'icon-btn', 'aria-label': '返回', onClick: () => { app.view = { name: 'home' }; render(); } }, icon('back')),
       h('div', { class: 'bar-title' }, title, sub),
-      viewBtn),
-    h('div', { class: 'term-stage' }, flow, viewport, bubble, latestBtn),
+      modeBtn, viewBtn),
+    h('div', { class: 'term-stage' }, flow, viewport, convEl, bubble, latestBtn),
     h('footer', { class: 'term-foot' },
       h('div', { class: 'keybar' }, keyBtns),
+      convBox,
       h('div', { class: 'term-actions' }, pickBtn, talkBtn, kbdBtn, keys, picker)));
   fill(root(), screen);
   // Buttons must not take the focus: the keyboard stays up while you press Esc or ⏎.
-  for (const b of [pickBtn, kbdBtn, latestBtn, ...keyBtns]) b.addEventListener('pointerdown', (e) => e.preventDefault());
+  for (const b of [pickBtn, kbdBtn, latestBtn, convSend, ...keyBtns]) b.addEventListener('pointerdown', (e) => e.preventDefault());
 
   // ---- the terminal
   const xterm = new Terminal({
@@ -449,6 +467,13 @@ function openTerm(address) {
   let fitMode = fitsPhone();
   const current = () => app.list.terminals.find((x) => x.address === address);
   const showMode = () => {
+    convEl.hidden = !convMode;
+    convBox.hidden = !convMode;
+    viewBtn.classList.toggle('shown', !convMode);
+    const m = convMode ? 'term' : 'chat';
+    if (modeBtn.dataset.to !== m) { modeBtn.dataset.to = m; modeBtn.setAttribute('aria-label', convMode ? '看终端' : '看对话'); fill(modeBtn, icon(m)); }
+    if (convMode) { flow.hidden = true; viewport.hidden = true; latestBtn.hidden = true; return; }
+    latestBtn.hidden = back === 0;
     const full = fitMode || (xterm.buffer.active.type === 'alternate' && !reflows(current()));
     flow.hidden = full;
     viewport.hidden = !full;
@@ -467,6 +492,54 @@ function openTerm(address) {
     showMode();
     toast(fitMode ? '按手机的尺寸' : '保持 Mac 的尺寸');
   };
+  // ---- the conversation view (conversation.js): the agent's transcript, read on the Mac.
+  let convMode = hasConv(t0) && localStorage.getItem(MODE) !== 'term';
+  let conv = null;
+  async function startConv() {
+    if (conv) return;
+    conv = new ConversationView({ el: convEl, rpc: (m, p) => app.link.rpc(m, p), address });
+    conv.state(current());
+    try { await conv.open(); } catch (e) {
+      conv.close(); conv = null;
+      if (convMode && !page.closed) { toast(`没有对话记录，显示终端（${e.message}）`); setMode(false, false); }
+    }
+  }
+  /** Conversation or terminal. The terminal takes the phone's size only while it is shown. */
+  function setMode(on, remember = true) {
+    convMode = on;
+    if (remember) localStorage.setItem(MODE, on ? 'conv' : 'term');
+    if (on) {
+      if (document.activeElement === keys) keys.blur();
+      if (page.fit) unfit(); // the Mac gets its size back while the phone reads the conversation
+      startConv();
+    } else if (document.activeElement === convInput) convInput.blur();
+    showMode();
+    if (!on && fitMode && page.s) {
+      let tries = 0;
+      const fitSoon = () => { if (convMode || page.closed) return; if (fitGrid()) fitNow(); else if (tries++ < 40) setTimeout(fitSoon, 50); };
+      fitSoon();
+    }
+  }
+  function sizeConvInput() { convInput.style.height = ''; convInput.style.height = `${Math.min(120, convInput.scrollHeight)}px`; }
+  async function sendConv() {
+    const text = convInput.value.trim();
+    if (!text) return;
+    convSend.disabled = true;
+    try {
+      await app.link.rpc('term.send', { address, text });
+      convInput.value = '';
+      sizeConvInput();
+      vibrate();
+      conv?.sent(text);
+    } catch (e) { toast(e.message, 'err'); } finally { convSend.disabled = false; }
+  }
+  convInput.addEventListener('input', sizeConvInput);
+  convInput.addEventListener('keydown', (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendConv(); }
+  });
+  convInput.addEventListener('focus', () => kbdBtn.classList.add('on'));
+  convInput.addEventListener('blur', () => kbdBtn.classList.remove('on'));
   xterm.buffer.onBufferChange(() => { if (xterm.buffer.active.type !== 'alternate') setBack(0); showMode(); });
   // An agent's full screen has no history of its own here: past the top (or the bottom) of the
   // laid-out screen, a pull scrolls the agent's own view, as the Mac's wheel would.
@@ -484,7 +557,7 @@ function openTerm(address) {
     setBack(Math.max(0, back + (up ? 1 : -1)));
     return true;
   }
-  function setBack(n) { back = n; latestBtn.hidden = back === 0; }
+  function setBack(n) { back = n; latestBtn.hidden = back === 0 || convMode; }
   /** Scroll the agent's own view back down to the latest (a few steps more: extra ones do nothing). */
   function toLatest(now = false) {
     history.close(false); // the live screen again, once the program has redrawn
@@ -511,7 +584,7 @@ function openTerm(address) {
     if ((e.deltaY < 0 && atTop()) || (e.deltaY > 0 && atEnd())) wheel(e.deltaY < 0);
   }, { passive: true });
   // Nothing else on this page pans: with the keyboard up, iOS would slide the whole page.
-  screen.addEventListener('touchmove', (e) => { if (!e.target.closest('.keybar, .term-flow')) e.preventDefault(); }, { passive: false });
+  screen.addEventListener('touchmove', (e) => { if (!e.target.closest('.keybar, .term-flow, .conv, .conv-input')) e.preventDefault(); }, { passive: false });
   // No typing into xterm itself: the textarea below is the only way in.
   xterm.textarea?.setAttribute('inputmode', 'none');
   xterm.textarea?.setAttribute('readonly', '');
@@ -601,7 +674,7 @@ function openTerm(address) {
     page.early = [];
     try {
       let fit = null;
-      for (let i = 0; fitMode && !fit && i < 20; i++) { fit = fitGrid(); if (!fit) await new Promise((r) => setTimeout(r, 50)); }
+      for (let i = 0; fitMode && !convMode && !fit && i < 20; i++) { fit = fitGrid(); if (!fit) await new Promise((r) => setTimeout(r, 50)); }
       const r = await app.link.rpc('term.open', fit ? { address, fit } : { address });
       if (page.closed) { app.link.rpc('term.close', { s: r.s }).catch(() => {}); return; }
       page.s = r.s;
@@ -625,6 +698,7 @@ function openTerm(address) {
     if (!(fitMode && page.fit && Date.now() - page.fitAt < 1500)) resizeTo(t.cols, t.rows);
     showMode();
     const blocked = t.state === 'blocked';
+    conv?.state(t);
     keyBtns.forEach((b) => b.classList.toggle('answer', blocked && ANSWERS.has(b.dataset.label)));
     // While the program asks, typing waits: a letter could answer its question.
     line.hold(blocked);
@@ -703,6 +777,11 @@ function openTerm(address) {
     sync();
   }
   function insert(text) {
+    if (convMode) {
+      convInput.value += (convInput.value && !/\s$/.test(convInput.value) ? ' ' : '') + text;
+      sizeConvInput();
+      return;
+    }
     const sep = line.value && !/\s$/.test(line.value) ? ' ' : '';
     line.set(line.value + sep + text);
     sync();
@@ -811,7 +890,7 @@ function openTerm(address) {
   let checks = [];
   const followViewport = () => {
     if (!vv) return;
-    const keyboard = document.activeElement === keys && window.innerHeight - vv.height > 120;
+    const keyboard = (document.activeElement === keys || document.activeElement === convInput) && window.innerHeight - vv.height > 120;
     screen.style.height = keyboard ? `${vv.height}px` : '';
     screen.style.transform = keyboard && vv.offsetTop ? `translateY(${vv.offsetTop}px)` : '';
     if (!keyboard && (window.scrollX || window.scrollY)) window.scrollTo(0, 0); // iOS scrolled the page for the field
@@ -825,8 +904,7 @@ function openTerm(address) {
   vv?.addEventListener('scroll', followViewport);
   window.addEventListener('resize', recheck);
   window.addEventListener('orientationchange', recheck);
-  keys.addEventListener('focus', recheck);
-  keys.addEventListener('blur', recheck);
+  for (const f of [keys, convInput]) { f.addEventListener('focus', recheck); f.addEventListener('blur', recheck); }
   followViewport();
   const ro = new ResizeObserver(() => layout());
   ro.observe(viewport);
@@ -834,7 +912,12 @@ function openTerm(address) {
 
   Object.assign(page, {
     onEvent, onList,
-    reopen() { page.s = null; open(); },
+    onConv(msg) { conv?.onEvent(msg); },
+    reopen() {
+      page.s = null; open();
+      // A new connection: the Mac forgot the old conversation; open it again.
+      if (conv) { conv.close(); conv = null; if (convMode) startConv(); }
+    },
     lost() { if (page.s) { page.s = null; setStatus('notice', '连接断开，正在重连…'); } },
     dispose() {
       toLatest(true); // leave the Mac's view at the latest too, before the stream closes
@@ -848,6 +931,7 @@ function openTerm(address) {
       screen.style.height = screen.style.transform = '';
       stopTouch();
       history.dispose();
+      conv?.close();
       page.stopTalk?.();
       clearTimeout(page.ackTimer);
       view.dispose();
@@ -857,6 +941,7 @@ function openTerm(address) {
   });
   onList();
   open();
+  if (convMode) startConv();
 }
 
 // ------------------------------------------------------------------ push -------

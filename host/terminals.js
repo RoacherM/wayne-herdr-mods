@@ -152,6 +152,8 @@ export function createTerminals({ coreOptions = {}, log = () => {}, onChange = (
     core: () => core,
     state: () => state,
     get: (address) => terminals.get(address),
+    /** Live terminals as herdr-core reports them (argv included: for the host only). */
+    raw: () => [...terminals.values()].filter((t) => t.state === 'live'),
     list: () => [...terminals.values()].filter((t) => t.state === 'live').map(project),
     layout: () => layout,
     /** Retry right away (after a wake-up, or when a phone asks). */

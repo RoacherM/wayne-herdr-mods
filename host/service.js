@@ -21,7 +21,7 @@ import { readKey, recognize, toWav } from './voice.js';
 
 export const DEFAULT_RELAY = 'https://herdr-relay.sir-housir.workers.dev';
 
-export async function startService({ relayUrl = process.env.HERDR_RELAY_URL ?? DEFAULT_RELAY, dataDir, coreOptions = {}, log = console.error, notifyAfterSeconds = 20 } = {}) {
+export async function startService({ relayUrl = process.env.HERDR_RELAY_URL ?? DEFAULT_RELAY, dataDir, coreOptions = {}, log = console.error, notifyAfterSeconds = 20, home } = {}) {
   const state = await createState(dataDir ? { dir: dataDir } : {});
   const desktopId = await desktopIdFor(state.signKeys.publicKey);
 
@@ -45,7 +45,7 @@ export async function startService({ relayUrl = process.env.HERDR_RELAY_URL ?? D
     onCore: () => { phones?.coreChanged(); changed(); },
   });
   const voice = createVoice({ dir: state.dir, log });
-  phones = createPhones({ state, pairing, push, terminals, voice, link: () => link, log, onChange: changed });
+  phones = createPhones({ state, pairing, push, terminals, voice, link: () => link, log, onChange: changed, home }); // home: where agents keep transcripts (tests use a made-up one)
   link = createRelayLink({
     relayUrl, desktopId, signKeys: state.signKeys, log,
     onOpen: (cid) => phones.open(cid),

@@ -24,6 +24,8 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 const until = async (what, fn, ms = 10_000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return check(true, what); await pause(150); } check(false, what); };
 const clickText = (sel, t) => page.evaluate((s, x) => [...document.querySelectorAll(s)].find((b) => b.innerText.trim() === x)?.click(), sel, t);
 
+// These checks are about the terminal itself: agents open there, not in the conversation view.
+await page.evaluateOnNewDocument(() => localStorage.setItem('herdr-relay.mode', 'term'));
 await page.goto(link, { waitUntil: 'networkidle0' });
 await clickText('button', '开始配对');
 await page.waitForFunction(() => document.querySelectorAll('.trow').length >= 4, { timeout: 25_000 });

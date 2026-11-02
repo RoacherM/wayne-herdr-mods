@@ -6,7 +6,8 @@
  *   {id, m, p}   a call, answered by {id, ok, r | e}
  *   {m, p}       a notification, no answer (term.input, term.ack: these are hot paths)
  * Host → phone:
- *   {ev, ...}    terminals (list changed), out (terminal bytes), closed (stream over), size
+ *   {ev, ...}    terminals (list changed), out (terminal bytes), closed (stream over), size,
+ *                conv (a conversation's new items, or a fresh page after `reset`)
  *
  * Only the methods below reach herdr-core. Nothing here forwards a raw RPC: herdr-core's socket
  * has no password, so `machine.exec`, `file.*`, `terminal.run`, `server.*` stay unreachable.
@@ -14,6 +15,8 @@
 import { homedir, userInfo } from 'node:os';
 import { desktopAccept } from '../shared/e2e.js';
 import { CREDIT, DATA, RESIZE, size, u32 } from './hc.js';
+import { programOf } from './terminals.js';
+import { createConversations } from './transcripts.js';
 import { createUploads } from './uploads.js';
 import { MAX_BYTES as MAX_VOICE_BYTES } from './voice.js';
 
@@ -21,7 +24,7 @@ const MAX_STREAMS = 4; // per phone
 const HISTORY_LINES = 400; // scrollback sent with the first paint
 const KEY_RE = /^(?:(?:ctrl|alt|shift|cmd|super|meta)\+)*(?:[a-z0-9]|enter|esc|escape|tab|backspace|space|delete|del|insert|home|end|pageup|pgup|pagedown|pgdn|up|down|left|right|f(?:[1-9]|1[0-2])|[-=[\]\\;',./`])$/i;
 
-export function createPhones({ state, pairing, push, terminals, voice, link: getLink, log = () => {}, onChange = () => {} }) {
+export function createPhones({ state, pairing, push, terminals, voice, link: getLink, log = () => {}, onChange = () => {}, home }) {
   const peers = new Map(); // cid → peer
   let nextStream = 1;
 
@@ -34,7 +37,9 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
   const broadcast = (ev, payload) => { for (const peer of peers.values()) event(peer, ev, payload); };
 
   function open(cid) {
-    peers.set(cid, { cid, stage: 'hello', cipher: null, device: null, streams: new Map(), uploads: createUploads(), recognizing: false });
+    const peer = { cid, stage: 'hello', cipher: null, device: null, streams: new Map(), uploads: createUploads(), recognizing: false };
+    peer.convs = createConversations({ home, find: findAgent, emit: (c, payload) => event(peer, 'conv', { c, ...payload }) });
+    peers.set(cid, peer);
   }
 
   function close(cid) {
@@ -42,6 +47,7 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
     if (!peer) return;
     peers.delete(cid);
     for (const stream of peer.streams.values()) stream.stop();
+    peer.convs.closeAll();
     pairing.dropped(cid);
     if (peer.device) onChange();
   }
@@ -186,6 +192,18 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
     } catch {}
   }
 
+  /** A terminal's foreground program, for its transcript (transcripts.js); argv stays on the Mac. */
+  function findAgent(address) {
+    const t = terminals.get(address);
+    const fg = t?.foreground;
+    const program = programOf(fg);
+    if (!program) return null;
+    const others = terminals.raw()
+      .filter((o) => o.address !== address && o.foreground?.cwd === fg.cwd && programOf(o.foreground) === program)
+      .map((o) => o.foreground);
+    return { fg, program, others };
+  }
+
   // ------------------------------------------------------------------ RPC --------
   const call = async (method, params) => {
     const core = terminals.core();
@@ -202,6 +220,10 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
     'terminals.list': () => ({ core: terminals.state(), terminals: terminals.list(), layout: terminals.layout() }),
     'term.open': (peer, p) => openStream(peer, addressOf(p), { fit: p.fit && validSize(p.fit) }),
     'term.close': (peer, p) => { peer.streams.get(Number(p.s))?.stop(); return {}; },
+    // A coding agent's conversation from its transcript (transcripts.js): the phone names the terminal only.
+    'conv.open': (peer, p) => peer.convs.open(addressOf(p)),
+    'conv.older': (peer, p) => peer.convs.older(p.c, p.before),
+    'conv.close': (peer, p) => { peer.convs.close(p.c); return {}; },
     // The phone's size (fit), or back to the size from before the phone took it (fit: null).
     'term.fit': (peer, p) => {
       const stream = streamOf(peer, p.s);
