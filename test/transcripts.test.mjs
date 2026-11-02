@@ -125,6 +125,8 @@ test('the live part: what is above the input box, or the bottom when there is no
   assert.equal(livePart(['  step 1', '  step 2', `  ╭${rule}╮`, '  │ ❯ typed │', `  ╰${rule}╯`, '  model · ctx'].join('\n')), 'step 1\nstep 2');
   // A question takes the box's place: the bottom of the screen, menu and all.
   assert.equal(livePart(['要运行 npm test 吗？', ' ❯ 1. 是', '   2. 否', '', ''].join('\n')), '要运行 npm test 吗？\n ❯ 1. 是\n   2. 否');
+  // A menu inside a box is kept: it is not the input box.
+  assert.equal(livePart(['Bash command', `╭${rule}╮`, '│ ❯ 1. Yes      │', '│   2. No       │', `╰${rule}╯`].join('\n')), `Bash command\n╭${rule}╮\n│ ❯ 1. Yes      │\n│   2. No       │\n╰${rule}╯`);
   // Only the last lines.
   assert.equal(livePart(Array.from({ length: 40 }, (_, i) => `l${i}`).join('\n'), 3), 'l37\nl38\nl39');
   assert.equal(livePart(''), '');

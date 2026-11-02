@@ -498,7 +498,7 @@ function openTerm(address) {
   let conv = null;
   async function startConv() {
     if (conv) return;
-    conv = new ConversationView({ el: convEl, rpc: (m, p) => app.link.rpc(m, p), address });
+    conv = new ConversationView({ el: convEl, rpc: (m, p) => app.link.rpc(m, p), address, keys: key });
     conv.state(current());
     try { await conv.open(); } catch (e) {
       conv.close(); conv = null;

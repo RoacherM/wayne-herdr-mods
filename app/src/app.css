@@ -478,6 +478,12 @@ button { font: inherit; color: inherit; }
   font: 12px/1.35 ui-monospace, Menlo, "SF Mono", monospace; color: var(--fg2);
   white-space: pre-wrap; word-break: break-all; background: var(--l2); border-radius: 6px;
 }
+.conv-live .live-line { min-height: 1.35em; }
+.conv-live.menu { color: var(--fg); }
+.conv-live .opt { margin: 0 -6px; padding: 5px 6px; border-radius: 6px; cursor: pointer; }
+.conv-live .opt + .opt { margin-top: 2px; }
+.conv-live .opt.sel { background: color-mix(in srgb, var(--send) 22%, transparent); font-weight: 600; }
+.conv-live .opt.tapped { outline: 1px solid var(--send); }
 .conv-tail { min-height: 0; font-size: 13px; color: var(--fg3); display: flex; align-items: center; gap: 8px; }
 .conv-tail:empty { display: none; }
 .conv-tail.ask { color: #ffd60a; }

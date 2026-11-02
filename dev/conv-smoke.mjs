@@ -86,6 +86,11 @@ check(!(await page.$eval('.conv', (el) => el.hidden)), 'and the conversation aga
 // 6. While the agent asks, its screen shows under the list: the question is there without the terminal.
 await page.waitForFunction(() => { const l = document.querySelector('.conv-live'); return l && !l.hidden && l.innerText.includes('要运行 npm test 吗'); }, { timeout: 8000 })
   .then(() => check(true, 'the live part shows the question on the screen'), () => check(false, 'the live part shows the question on the screen'));
+const menu = await page.evaluate(() => ({ opts: [...document.querySelectorAll('.conv-live .opt')].map((o) => o.innerText.trim()), sel: document.querySelector('.conv-live .opt.sel')?.innerText.trim() }));
+check(menu.opts.length === 3 && menu.sel?.startsWith('❯ 1.'), `its menu can be tapped: 3 options, the first selected (${JSON.stringify(menu)})`);
+await page.click('.conv-live .opt.sel');
+await page.waitForFunction(() => (document.querySelector('.conv-live')?.innerText ?? '').includes('你选了'), { timeout: 6000 })
+  .then(() => check(true, 'tapping the selected option presses ⏎'), () => check(false, 'tapping the selected option presses ⏎'));
 
 // 7. Send from the conversation view: answer the question first (keys), then a message.
 await page.evaluate(() => [...document.querySelectorAll('.key')].find((b) => b.innerText === '1').click());

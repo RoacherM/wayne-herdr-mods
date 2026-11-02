@@ -9,10 +9,13 @@
  *
  *   - while the agent works or asks, the bottom of its screen shows under the list (`live`): the
  *     transcript only has what is finished, the screen has the reply being written and the spinner.
+ *     A menu there (a question, a picker) can be tapped: an option moves the pointer to it, the
+ *     selected one presses ⏎ (live-menu.js).
  *
  * Items: { k: 'user' | 'assistant' | 'tool' | 'result' | 'note', seq, … } (see transcripts.js).
  */
 import { Marked } from 'marked';
+import { keysTo, menuOf } from './live-menu.js';
 
 const OLDER_PX = 800;  // this close to the top: load the page before
 const STICK_PX = 40;   // this close to the bottom: follow new items
@@ -42,9 +45,10 @@ export class ConversationView {
    * @param {HTMLElement} o.el  the scrolling element
    * @param {(m: string, p: object) => Promise<any>} o.rpc
    * @param {string} o.address
+   * @param {(seq: string) => void} [o.keys]  type into the terminal (for tapping a menu)
    */
-  constructor({ el: root, rpc, address }) {
-    Object.assign(this, { root, rpc, address });
+  constructor({ el: root, rpc, address, keys }) {
+    Object.assign(this, { root, rpc, address, keys });
     this.c = null;
     this.first = 0;        // byte offset of the oldest line loaded (the next page ends there)
     this.hasMore = false;
@@ -58,6 +62,14 @@ export class ConversationView {
     this.tail = el('div', 'conv-tail');
     this.liveEl = el('pre', 'conv-live');
     this.liveEl.hidden = true;
+    this.liveEl.addEventListener('click', (e) => {
+      const line = e.target.closest('.opt');
+      if (!line || !this.menu || !this.keys) return;
+      const seq = keysTo(this.menu, Number(line.dataset.i));
+      if (!seq) return;
+      line.classList.add('tapped');
+      this.keys(seq);
+    });
     this.live = '';
     this.busy = false;
     this.root.append(this.top, this.list, this.liveEl, this.tail);
@@ -142,7 +154,17 @@ export class ConversationView {
   /** The screen's bottom, only while the agent works or asks (idle, it repeats the last reply). */
   showLive() {
     this.liveEl.hidden = !(this.busy && this.live);
-    if (this.liveEl.textContent !== this.live) this.liveEl.textContent = this.live;
+    if (this.shown === this.live) return;
+    this.shown = this.live;
+    const lines = this.live.split('\n');
+    this.menu = menuOf(lines);
+    const opts = new Set(this.menu?.options ?? []);
+    this.liveEl.classList.toggle('menu', Boolean(this.menu));
+    this.liveEl.replaceChildren(...lines.map((text, i) => {
+      const n = el('div', opts.has(i) ? `live-line opt${i === this.menu.sel ? ' sel' : ''}` : 'live-line', text || ' ');
+      n.dataset.i = i;
+      return n;
+    }));
   }
 
   close() {

@@ -280,9 +280,16 @@ const RULE = /[─━═]{8}/;
 export function livePart(screen, n = LIVE_LINES) {
   const lines = String(screen ?? '').split('\n').map((l) => l.replace(/\s+$/, ''));
   let end = lines.length;
+  // The input box: a rule, a "❯" line right under it, and a closing rule soon after. A menu in a
+  // box ("❯ 1. Yes") is not the input box: it is what the phone needs to see.
+  const rule = (l) => BOX.test(l) && RULE.test(l);
   for (let i = lines.length - 1; i >= 0; i--) {
-    if (!(BOX.test(lines[i]) && RULE.test(lines[i]))) continue;
-    if (lines.slice(i + 1, i + 3).some((l) => /^[\s│┃]*[❯>›]/.test(l))) { end = i; break; }
+    if (!rule(lines[i])) continue;
+    const under = lines.slice(i + 1, i + 3);
+    if (!under.some((l) => /^[\s│┃]*[❯>›]/.test(l))) continue;
+    const close = lines.slice(i + 2, i + 10).findIndex(rule);
+    const inside = lines.slice(i + 1, close < 0 ? i + 3 : i + 2 + close);
+    if (close >= 0 && !inside.some((l) => /^[\s│┃]*[❯>›]\s*\d+[.)]/.test(l))) { end = i; break; }
   }
   const body = lines.slice(0, end);
   while (body.length && !body.at(-1).trim()) body.pop();
