@@ -24,10 +24,11 @@ const term = async (script, where, cwd = '/tmp') => (await mac.call('terminal.ru
 const fakeBin = await mkdtemp(join(tmpdir(), 'herdr-relay-bin-'));
 await writeFile(join(fakeBin, 'claude.c'), '#include <stdlib.h>\nint main(int c, char **v) { return c > 1 ? system(v[1]) : 0; }\n');
 execFileSync('cc', ['-O1', '-o', join(fakeBin, 'claude'), join(fakeBin, 'claude.c')]);
+execFileSync('cc', ['-O1', '-o', join(fakeBin, 'codex'), join(fakeBin, 'claude.c')]); // the same, named `codex`
 const asClaude = async (script, where) => (await mac.call('terminal.run', { argv: [join(fakeBin, 'claude'), script], cwd: '/tmp', labels: { where }, rm: true })).address;
 const shell = (await mac.call('terminal.run', { argv: ['/bin/zsh', '-f'], cwd: process.env.HOME, labels: { where: 'herdr-relay · shell' }, rm: true })).address;
 const claude = await asClaude(`${r('state=working:app=claude')}; printf '\\033[1m● 正在修改 host/phones.js\\033[0m\\n'; sleep 1; printf '  ⎿ 已更新 3 处\\n\\n'; ${r(`state=blocked:kind=permission:app=claude:msg=${b64('要运行 npm test 吗？')}`)}; printf '\\033[33m要运行 npm test 吗？\\033[0m\\n ❯ 1. 是\\n   2. 是，以后都允许\\n   3. 否\\n'; stty -echo; while read -r l; do echo "你选了 $l"; ${r('state=working:app=claude')}; sleep 2; ${r('state=done:app=claude')}; done`, 'herdr-relay · claude');
-const codex = await term(`${r('state=working:app=codex')}; for i in $(seq 1 30); do echo "step $i: building…"; sleep 0.2; done; ${r(`state=done:app=codex:msg=${b64('测试全部通过')}`)}; sleep 100000`, 'site / 1');
+const codex = (await mac.call('terminal.run', { argv: [join(fakeBin, 'codex'), `${r('state=working:app=codex')}; for i in $(seq 1 30); do echo "step $i: building…"; sleep 0.2; done; ${r(`state=done:app=codex:msg=${b64('测试全部通过')}`)}; sleep 100000`], cwd: '/tmp', labels: { where: 'site / 1' }, rm: true })).address;
 const logs = await term(`while true; do date '+%H:%M:%S  GET /v1/health 200'; sleep 2; done`, 'site / 2');
 
 const leaf = (t) => ({ content: { terminal: t } });
@@ -58,6 +59,18 @@ for (let i = 1; i <= 150; i++) {
   turns.push(line('assistant', [{ type: 'text', text: `**第 ${i} 处**改好了：\n\n- 去掉了重复的分支\n- 加了 \`return\`\n\n\`\`\`js\ncase ${i}: return y;\n\`\`\`` }]));
 }
 await writeFile(convFile, `${turns.join('\n')}\n`);
+// And a Codex session for the codex terminal (made after it started, in the same folder).
+const day = new Date(), pad = (n) => String(n).padStart(2, '0');
+const codexDir = join(home, '.codex', 'sessions', String(day.getFullYear()), pad(day.getMonth() + 1), pad(day.getDate()));
+await mkdir(codexDir, { recursive: true });
+const done = (item) => JSON.stringify({ timestamp: new Date().toISOString(), type: 'event_msg', payload: { type: 'item_completed', item } });
+await writeFile(join(codexDir, 'rollout-2026-01-01T00-00-00-0f0f0f0f.jsonl'), `${[
+  JSON.stringify({ timestamp: new Date().toISOString(), type: 'session_meta', payload: { cwd: '/tmp', timestamp: new Date().toISOString(), originator: 'codex-tui' } }),
+  JSON.stringify({ timestamp: new Date().toISOString(), type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '# AGENTS.md 注入的说明' }] } }),
+  done({ type: 'UserMessage', id: 'u1', content: [{ type: 'text', text: '跑一下 site 的测试' }] }),
+  done({ type: 'CommandExecution', id: 'c1', command: ['/bin/zsh', '-lc', 'npm test'], parsed_cmd: [{ type: 'unknown', cmd: 'npm test' }], aggregated_output: '30 passing', exit_code: 0, status: 'completed' }),
+  done({ type: 'AgentMessage', id: 'a1', phase: 'final_answer', content: [{ type: 'Text', text: 'Codex：测试全部通过。' }] }),
+].join('\n')}\n`);
 console.log(`CONV ${convFile}`);
 const dataDir = process.env.DATA_DIR ?? await mkdtemp(join(tmpdir(), 'herdr-relay-ui-'));
 const svc = await startService({ relayUrl: RELAY, dataDir, coreOptions: { session: SESSION }, log: (m) => console.error(m), home });

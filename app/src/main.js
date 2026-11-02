@@ -385,7 +385,7 @@ const FIT_FONT = 12; // px, the phone's own size
 const fitsPhone = () => localStorage.getItem(SIZE) !== 'keep';
 // Agents whose transcript the Mac can read (host/transcripts.js): they open in the conversation
 // view (scrolled on the phone) unless the person chose the terminal.
-const CONV_PROGRAMS = new Set(['claude', 'epi', 'pi']);
+const CONV_PROGRAMS = new Set(['claude', 'codex', 'epi', 'pi']);
 const hasConv = (t) => CONV_PROGRAMS.has(t?.program);
 const MODE = 'herdr-relay.mode';
 const MOUSE_REPORT = /^(\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[M[\s\S]{3})+$/; // SGR, or the default encoding

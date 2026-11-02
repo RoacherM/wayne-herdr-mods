@@ -105,4 +105,13 @@ await page.click('.mode-btn');
 await page.waitForFunction(() => (document.querySelector('.xterm-rows')?.innerText ?? '').includes('hello from the conversation') || (document.querySelector('.term-flow')?.innerText ?? '').includes('hello from the conversation'), { timeout: 8000 }).then(() => check(true, 'the terminal got it'), () => check(false, 'the terminal got it'));
 await page.click('.mode-btn');
 await page.screenshot({ path: 'dev/shots/conv.png' });
+
+// 8. A Codex terminal opens in the conversation view too; what Codex injects for the model is not shown.
+await page.click('.bar .icon-btn[aria-label="返回"]');
+await page.waitForFunction(() => document.querySelectorAll('.trow').length >= 4, { timeout: 5000 });
+await page.evaluate(() => [...document.querySelectorAll('.trow')].find((r) => r.innerText.includes('site / 1') || r.innerText.includes('codex')).click());
+await page.waitForFunction(() => (document.querySelector('.conv:not([hidden])')?.innerText ?? '').includes('测试全部通过'), { timeout: 10_000 })
+  .then(() => check(true, 'a Codex terminal shows its conversation'), () => check(false, 'a Codex terminal shows its conversation'));
+const cx = await convText();
+check(cx.includes('跑一下 site 的测试') && cx.includes('npm test') && !cx.includes('AGENTS.md'), 'its message, command and reply; not the injected text');
 await browser.close();

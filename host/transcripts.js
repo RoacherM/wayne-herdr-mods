@@ -4,6 +4,7 @@
  *
  *   Claude Code  ~/.claude/sessions/<pid>.json names the session → ~/.claude/projects/<dir>/<id>.jsonl
  *   epi / pi     the newest .jsonl in <sessions>/--<cwd with / as ->--/
+ *   Codex        ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl whose first line names the same folder
  *
  * The phone only names a terminal; the file is found here from its foreground process, inside
  * these folders only. What goes out: user text, replies, tool names with a short summary, tool
@@ -18,7 +19,7 @@
  * transcript costs only the tail it shows.
  */
 import { execFile } from 'node:child_process';
-import { open as openFile, readdir, readFile, stat } from 'node:fs/promises';
+import { open as openFile, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -58,6 +59,11 @@ export async function locate(fg, program, home = homedir(), others = []) {
     }
     return null;
   }
+  if (program === 'codex') {
+    const files = fg.cwd ? await codexSessions(home, String(fg.cwd)) : [];
+    const pick = await claim(files, fg, others);
+    return pick ? { kind: 'codex', file: pick } : null;
+  }
   const roots = { epi: join(home, '.epi', 'pi', 'sessions'), pi: join(home, '.pi', 'agent', 'sessions') };
   if (!roots[program] || !fg.cwd) return null;
   const dir = join(roots[program], `--${String(fg.cwd).replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`);
@@ -67,9 +73,16 @@ export async function locate(fg, program, home = homedir(), others = []) {
     const s = await stat(join(dir, name)).catch(() => null);
     if (s?.isFile()) files.push({ file: join(dir, name), mtimeMs: s.mtimeMs, created: createdOf(name) ?? s.birthtimeMs });
   }
+  const pick = await claim(files, fg, others);
+  return pick ? { kind: 'pi', file: pick } : null;
+}
+
+/**
+ * Several agents in one folder: each one's session is the newest file it made since it started,
+ * the latest started first. `files`: { file, mtimeMs, created }.
+ */
+async function claim(files, fg, others) {
   if (!files.length) return null;
-  // Several of them in one folder: each one's session is the newest file it made since it started,
-  // the latest started first (pi names a file after the time it made it).
   const procs = [fg, ...others.filter((o) => o?.pid && o.pid !== fg.pid)];
   const starts = await Promise.all(procs.map((p) => startOf(p.pid)));
   const order = procs.map((p, i) => ({ pid: p.pid, start: starts[i] ?? 0 })).sort((a, b) => b.start - a.start);
@@ -79,10 +92,58 @@ export async function locate(fg, program, home = homedir(), others = []) {
     const free = files.filter((f) => !claimed.has(f.file));
     const pick = newest(free.filter((f) => f.created >= p.start - 2000)) ?? newest(free);
     if (!pick) break;
-    if (p.pid === fg.pid) return { kind: 'pi', file: pick.file };
+    if (p.pid === fg.pid) return pick.file;
     claimed.add(pick.file);
   }
-  return { kind: 'pi', file: newest(files).file };
+  return newest(files).file;
+}
+
+const CODEX_DAYS = 14; // look this far back for a session still in use
+
+/** Codex sessions made in `cwd`: the first line of each says where and when. */
+async function codexSessions(home, cwd) {
+  const root = join(home, '.codex', 'sessions');
+  const real = (p) => realpath(p).catch(() => p); // /tmp and /private/tmp are one folder
+  const here = await real(cwd);
+  const out = [];
+  for (let back = 0; back < CODEX_DAYS; back++) {
+    const day = new Date(Date.now() - back * 86_400_000);
+    const dir = join(root, String(day.getFullYear()), String(day.getMonth() + 1).padStart(2, '0'), String(day.getDate()).padStart(2, '0'));
+    for (const name of await readdir(dir).catch(() => [])) {
+      if (!name.startsWith('rollout-') || !name.endsWith('.jsonl')) continue;
+      const file = join(dir, name);
+      const meta = await firstLine(file);
+      const where = meta?.type === 'session_meta' ? meta.payload?.cwd : null;
+      if (!where || (where !== cwd && await real(where) !== here)) continue;
+      const s = await stat(file).catch(() => null);
+      if (s) out.push({ file, mtimeMs: s.mtimeMs, created: Date.parse(meta.payload.timestamp ?? meta.timestamp) || s.birthtimeMs });
+    }
+  }
+  return out;
+}
+
+const metas = new Map(); // file → its first line (it does not change)
+async function firstLine(file) {
+  if (metas.has(file)) return metas.get(file);
+  let d = null;
+  const fh = await openFile(file, 'r').catch(() => null);
+  if (!fh) return null;
+  try {
+    const buf = Buffer.alloc(64 * 1024);
+    const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
+    const text = buf.subarray(0, bytesRead).toString('utf8');
+    const nl = text.indexOf('\n');
+    // session_meta carries the agent's instructions and can be longer than this: take what names the folder.
+    const head = nl >= 0 ? text.slice(0, nl) : text;
+    try { d = JSON.parse(head); } catch {
+      const cwd = /"cwd":"((?:[^"\\]|\\.)*)"/.exec(head)?.[1];
+      const ts = /"timestamp":"([^"]+)"/.exec(head)?.[1];
+      if (/"type":"session_meta"/.test(head) && cwd) d = { type: 'session_meta', timestamp: ts, payload: { cwd: JSON.parse(`"${cwd}"`), timestamp: ts } };
+    }
+  } finally { await fh.close(); }
+  if (d) metas.set(file, d);
+  if (metas.size > 2000) metas.delete(metas.keys().next().value);
+  return d;
 }
 
 /** pi names a session file after the time it made it: 2026-11-02T14-46-59-739Z_<id>.jsonl */
@@ -186,11 +247,58 @@ export function piItems(d) {
   return [];
 }
 
-const PARSERS = { claude: claudeItems, pi: piItems };
+const base = (p) => String(p ?? '').split('/').pop();
+// Codex names a text block 'Text' or 'text', depending on the version.
+const codexText = (blocks) => (Array.isArray(blocks) ? blocks : []).filter((b) => /^text$/i.test(b?.type ?? '')).map((b) => b.text ?? '').join('\n').trim();
+
+/**
+ * One Codex session line → items. Codex writes each thing it shows as `item_completed` (what a
+ * person typed, its replies, a command with its output, a file change); the rest of the file is
+ * what the model saw (with injected instructions), token counts and reasoning: not shown.
+ */
+export function codexItems(d) {
+  if (d?.type !== 'event_msg' || d.payload?.type !== 'item_completed') return [];
+  const it = d.payload.item ?? {};
+  const time = d.timestamp ?? null;
+  const id = String(it.id ?? '');
+  const tool = (name, sum, out, error) => [{ k: 'tool', id, name, sum: cut(String(sum ?? '').split('\n')[0], MAX_SUM) }, { k: 'result', id, out: cut(String(out ?? ''), MAX_OUT), error: Boolean(error) }];
+  switch (it.type) {
+    case 'UserMessage': {
+      const blocks = Array.isArray(it.content) ? it.content : [];
+      const text = codexText(blocks);
+      const images = blocks.filter((b) => /image/.test(b?.type ?? '')).length;
+      return text || images ? [{ k: 'user', text: cut(text, MAX_TEXT), images, time }] : [];
+    }
+    case 'AgentMessage': {
+      const text = codexText(it.content);
+      return text ? [{ k: 'assistant', text: cut(text, MAX_TEXT), time }] : [];
+    }
+    case 'CommandExecution': {
+      const cmd = it.parsed_cmd?.[0]?.cmd ?? (Array.isArray(it.command) ? it.command.at(-1) : it.command);
+      return tool('Shell', cmd, it.aggregated_output, it.status !== 'completed' || (it.exit_code ?? 0) !== 0);
+    }
+    case 'FileChange': {
+      const changes = it.changes && typeof it.changes === 'object' ? it.changes : {};
+      const diff = Object.values(changes).map((c) => c?.unified_diff ?? '').join('\n');
+      return tool('Edit', Object.keys(changes).map(base).join(', '), diff || it.stdout, it.status !== 'completed');
+    }
+    case 'McpToolCall': {
+      const result = typeof it.result === 'string' ? it.result : textOf(it.result?.content) || (it.result ? JSON.stringify(it.result) : '');
+      return tool(`${it.server ?? 'mcp'}.${it.tool ?? it.actionName ?? ''}`, toolSummary(it.tool, it.arguments), result, it.status && it.status !== 'completed');
+    }
+    case 'Extension': return tool(it.kind === 'web.search' ? 'Search' : String(it.kind ?? 'tool'), it.query ?? it.action?.url, (it.results ?? []).map((r) => r?.title).filter(Boolean).join('\n'), false);
+    case 'ImageView': return tool('View', base(it.path), '', false);
+    case 'ContextCompaction': return [{ k: 'note', text: '更早的对话已压缩' }];
+    default: return [];
+  }
+}
+
+const PARSERS = { claude: claudeItems, pi: piItems, codex: codexItems };
 
 /** Items of one line at `offset`; lines that are never messages are not parsed (Claude Code's are large). */
 function lineItems(kind, line, offset) {
   if (!line || (kind === 'claude' && line.startsWith('{"type"'))) return [];
+  if (kind === 'codex' && !line.includes('"item_completed"')) return []; // most of a Codex file: not shown
   let d;
   try { d = JSON.parse(line); } catch { return []; }
   return PARSERS[kind](d).map((item, i) => ({ ...item, seq: offset + i / 100 }));

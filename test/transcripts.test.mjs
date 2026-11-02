@@ -1,10 +1,10 @@
 // A coding agent's conversation from its transcript (host/transcripts.js), with made-up transcripts.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFile, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { claudeItems, createConversations, lineEnd, livePart, locate, piItems, readBack, readForward } from '../host/transcripts.js';
+import { claudeItems, codexItems, createConversations, lineEnd, livePart, locate, piItems, readBack, readForward } from '../host/transcripts.js';
 
 const claudeLine = (type, content, extra = {}) => JSON.stringify({ parentUuid: null, isSidechain: false, type, message: { role: type, content }, timestamp: '2026-11-03T00:00:00Z', ...extra });
 const piLine = (role, content, extra = {}) => JSON.stringify({ type: 'message', id: 'x', parentId: null, timestamp: '2026-11-03T00:00:00Z', message: { role, content, ...extra } });
@@ -99,6 +99,44 @@ test('epi: two in one folder each get the session they made', async () => {
   const me = { pid: process.pid, cwd: '/Users/me/proj' }, boot = { pid: 1, cwd: '/Users/me/proj' };
   assert.ok((await locate(me, 'epi', home, [boot])).file.endsWith(fresh));
   assert.ok((await locate(boot, 'epi', home, [me])).file.endsWith(old));
+});
+
+const codexDone = (item, ts = '2026-01-01T00:00:00Z') => ({ timestamp: ts, type: 'event_msg', payload: { type: 'item_completed', item } });
+
+test('Codex: what a person typed, replies, commands, edits; not what the model saw', () => {
+  assert.deepEqual(codexItems(codexDone({ type: 'UserMessage', id: 'u', content: [{ type: 'text', text: 'fix it' }, { type: 'local_image', path: '/x.png' }] })),
+    [{ k: 'user', text: 'fix it', images: 1, time: '2026-01-01T00:00:00Z' }]);
+  assert.deepEqual(codexItems(codexDone({ type: 'AgentMessage', id: 'a', phase: 'final_answer', content: [{ type: 'Text', text: 'done' }] })),
+    [{ k: 'assistant', text: 'done', time: '2026-01-01T00:00:00Z' }]);
+  const [tool, result] = codexItems(codexDone({ type: 'CommandExecution', id: 'c', command: ['/bin/zsh', '-lc', 'ls -la'], parsed_cmd: [{ type: 'list_files', cmd: 'ls -la' }], aggregated_output: 'a\nb', exit_code: 1, status: 'completed' }));
+  assert.deepEqual(tool, { k: 'tool', id: 'c', name: 'Shell', sum: 'ls -la' });
+  assert.deepEqual(result, { k: 'result', id: 'c', out: 'a\nb', error: true });
+  const edit = codexItems(codexDone({ type: 'FileChange', id: 'f', changes: { '/p/a.js': { type: 'update', unified_diff: '-x\n+y' } }, status: 'completed' }));
+  assert.equal(edit[0].sum, 'a.js');
+  assert.equal(edit[1].out, '-x\n+y');
+  assert.equal(edit[1].error, false);
+  assert.equal(codexItems(codexDone({ type: 'Extension', id: 'w', kind: 'web.search', query: 'herdr' }))[0].sum, 'herdr');
+  assert.equal(codexItems(codexDone({ type: 'ContextCompaction', id: 'z' }))[0].k, 'note');
+  // What the model saw, reasoning, and anything new: nothing.
+  assert.deepEqual(codexItems({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '# AGENTS.md' }] } }), []);
+  assert.deepEqual(codexItems(codexDone({ type: 'Reasoning', id: 'r' })), []);
+  assert.deepEqual(codexItems({ type: 'event_msg', payload: { type: 'token_count' } }), []);
+});
+
+test('Codex: the session made in the same folder, found by its first line', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'home-'));
+  const d = new Date();
+  const dir = join(home, '.codex', 'sessions', String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0'));
+  await mkdir(dir, { recursive: true });
+  const meta = (cwd, ms) => JSON.stringify({ timestamp: new Date(ms).toISOString(), type: 'session_meta', payload: { cwd, timestamp: new Date(ms).toISOString(), base_instructions: { text: 'x'.repeat(100_000) } } });
+  await writeFile(join(dir, 'rollout-a.jsonl'), `${meta('/Users/me/proj', Date.now() + 1000)}\n${JSON.stringify(codexDone({ type: 'UserMessage', content: [{ type: 'text', text: 'hi' }] }))}\n`);
+  await writeFile(join(dir, 'rollout-b.jsonl'), `${meta('/Users/me/other', Date.now() + 2000)}\n`);
+  const found = await locate({ pid: process.pid, cwd: '/Users/me/proj' }, 'codex', home);
+  assert.equal(found.kind, 'codex');
+  assert.ok(found.file.endsWith('rollout-a.jsonl'));
+  assert.equal(await locate({ pid: process.pid, cwd: '/Users/me/none' }, 'codex', home), null);
+  const page = await readBack('codex', found.file, (await stat(found.file)).size);
+  assert.deepEqual(page.items.map((i) => i.text), ['hi']);
 });
 
 test('a live conversation: first page, new items, a new session starts over', async () => {
