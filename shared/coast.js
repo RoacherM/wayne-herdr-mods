@@ -5,10 +5,17 @@
  * so they reach the program evenly, one frame apart, whatever the network does on the way (a proxy
  * on the phone's side delivers the phone's own steps in clumps). Both sides use this one curve.
  *
- * The speed falls at the rate of iOS native scrolling (UIScrollView's normal rate, ×0.998 per ms);
- * one wheel step goes out for each row of travel, as Rex's phone app does.
+ * One wheel step goes out for each row of travel, as Rex's phone app does (and as the finger does
+ * while it is down: the program follows at once). But a program scrolls about 3 lines for each step,
+ * so the content moves 3 times as far as the finger. At iOS's own rate (×0.998 per ms, time constant
+ * τ = 500 ms) a flick at 2.5 px/ms sent 85 steps = 255 lines (5 screens) over 1.4 s: "it slows down
+ * too slowly" (user, 2026-11-03). The coast distance is v·τ, so the wheel coast uses τ/3: the same
+ * content distance as an iOS list (29 steps = 87 lines, 0.45 s), and with a ~250 ms round trip it is
+ * mostly over by the time its first redraw is on the phone, so there is little to catch.
  */
-export const FRICTION_PER_MS = 0.998;
+export const FRICTION_PER_MS = 0.998;           // pixels on the phone (history, outer viewport): iOS normal
+export const LINES_PER_STEP = 3;                // what most programs scroll for one wheel step
+export const WHEEL_FRICTION_PER_MS = FRICTION_PER_MS ** LINES_PER_STEP; // ≈ 0.994, τ ≈ 166 ms
 export const MIN_SPEED = 0.03;   // px per ms: below this, the coast stops
 // The slow end of a coast: one step every few hundred ms, each one a jump of a few lines (a
 // program scrolls 3 lines a step). It felt like a stutter that went on too long (user, 2026-11-03).
@@ -28,7 +35,7 @@ export function coastSteps(v, cell) {
   while (speed > Math.max(MIN_SPEED, cell / MAX_GAP_MS) && times.length < MAX_STEPS) {
     t += FRAME_MS;
     travel += speed * FRAME_MS;
-    speed *= FRICTION_PER_MS ** FRAME_MS;
+    speed *= WHEEL_FRICTION_PER_MS ** FRAME_MS;
     while (times.length < MAX_STEPS && (times.length + 1) * cell <= travel) times.push(Math.round(t));
   }
   return times;

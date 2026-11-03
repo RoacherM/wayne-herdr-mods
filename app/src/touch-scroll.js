@@ -20,7 +20,7 @@
  * `remoteCoast(v, cell)` starts a coast on the Mac (v: px/ms, positive = older) and says whether it
  * did; `remoteCoast(0)` stops it.
  */
-import { FRICTION_PER_MS, MIN_SPEED, coastSteps, stepsGoOn } from '../../shared/coast.js';
+import { FRICTION_PER_MS, MIN_SPEED, WHEEL_FRICTION_PER_MS, coastSteps, stepsGoOn } from '../../shared/coast.js';
 
 const AXIS_PX = 8; // movement before we decide vertical or sideways
 
@@ -90,9 +90,10 @@ export function touchScroll(viewport, xterm, { outer = true, onTap = null, remot
     // where the outer viewport stops (a Mac layout taller than the phone has one to scroll first).
     const outerCanMove = () => outer && (speed > 0 ? viewport.scrollTop > 0 : viewport.scrollTop + viewport.clientHeight < viewport.scrollHeight - 1);
     const toMac = () => {
-      if (xterm.buffer.active.type === 'normal' || outerCanMove() || !stepsGoOn(speed, cellHeight())) return false;
-      if (!remoteCoast?.(speed, cellHeight())) return false;
-      remoteUntil = performance.now() + (coastSteps(speed, cellHeight()).at(-1) ?? 0);
+      if (xterm.buffer.active.type === 'normal' || outerCanMove()) return false;
+      const steps = coastSteps(speed, cellHeight());
+      if (!steps.length || !remoteCoast?.(speed, cellHeight())) return false;
+      remoteUntil = performance.now() + steps.at(-1);
       return true;
     };
     if (toMac()) return;
@@ -100,8 +101,9 @@ export function touchScroll(viewport, xterm, { outer = true, onTap = null, remot
     const step = (now) => {
       const dt = Math.min(50, now - prev); prev = now;
       move(speed * dt);
-      speed *= FRICTION_PER_MS ** dt;
-      const goOn = xterm.buffer.active.type === 'normal' || outerCanMove() ? Math.abs(speed) > MIN_SPEED : stepsGoOn(speed, cellHeight());
+      const pixels = xterm.buffer.active.type === 'normal' || outerCanMove(); // else wheel steps
+      speed *= (pixels ? FRICTION_PER_MS : WHEEL_FRICTION_PER_MS) ** dt;
+      const goOn = pixels ? Math.abs(speed) > MIN_SPEED : stepsGoOn(speed, cellHeight());
       coast = goOn && !toMac() ? requestAnimationFrame(step) : 0;
     };
     coast = requestAnimationFrame(step);

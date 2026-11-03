@@ -127,12 +127,13 @@ await page.evaluate(() => document.querySelector('.term-latest:not([hidden])')?.
 await pause(1200);
 check('↓: the live screen again, at the latest', (await topRow()) === 300, `top row ${await topRow()}, was ${r0}`);
 const coastsBefore = await page.evaluate(() => globalThis.__sent.filter((m) => m === 'term.coast').length);
-await drag(box.x, box.mid - 150, box.x, box.mid - 150 + cellH * 3, { steps: 3, ms: 16 }); // a flick
-await pause(300);
-const at300 = await topRow();
+const flickFrom = await topRow();
+const sentBefore = await page.evaluate(() => globalThis.__sent.filter((m) => m === 'term.input').length);
+await drag(box.x, box.mid - 150, box.x, box.mid - 150 + cellH * 6, { steps: 3, ms: 16 }); // a flick
+const whileDown = await page.evaluate(() => globalThis.__sent.filter((m) => m === 'term.input').length) - sentBefore;
 await pause(1500);
-const at1800 = await topRow();
-check('a flick keeps scrolling after the finger lifts', at1800 < at300 && at300 < 300, `top row ${at300} at +300 ms, ${at1800} at +1800 ms`);
+const flickSteps = (flickFrom - (await topRow())) / 5; // the scroller moves 5 rows a step
+check('a flick keeps scrolling after the finger lifts', flickSteps > whileDown, `${whileDown} steps while the finger was down, ${flickSteps} in all (top row ${flickFrom} → ${await topRow()})`);
 const coasts = await page.evaluate(() => globalThis.__sent.filter((m) => m === 'term.coast').length) - coastsBefore;
 check('… the Mac runs that coast (one term.coast), so the steps arrive evenly', coasts === 1, `${coasts} term.coast sent`);
 await page.evaluate(() => document.querySelector('.term-latest:not([hidden])')?.click());
@@ -150,17 +151,17 @@ check('↓: the latest again', (await topRow()) === 300, `top row ${await topRow
 // scrolls first. A flick coasts it to its edge here, then the Mac carries on with the wheel steps.
 await page.setViewport({ width: 390, height: 420, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
 await pause(800);
-const tall = await page.$eval('.term-viewport', (v) => { v.scrollTop = Math.min(v.scrollHeight - v.clientHeight, cellHeight(v) * 6); return { top: v.scrollTop, room: v.scrollHeight - v.clientHeight }; function cellHeight() { return 14; } });
+const tall = await page.$eval('.term-viewport', (v) => { v.scrollTop = Math.min(v.scrollHeight - v.clientHeight, cellHeight(v) * 10); return { top: v.scrollTop, room: v.scrollHeight - v.clientHeight }; function cellHeight() { return 14; } });
 const tallBox = await page.evaluate(() => { const r = document.querySelector('.term-viewport').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + 20, h: r.height }; });
 const coasts2 = await page.evaluate(() => globalThis.__sent.filter((m) => m === 'term.coast').length);
-await drag(tallBox.x, tallBox.y, tallBox.x, tallBox.y + cellH * 3, { steps: 3, ms: 16 });
+const tallFrom = await topRow();
+await drag(tallBox.x, tallBox.y, tallBox.x, tallBox.y + cellH * 6, { steps: 2, ms: 16 }); // all 6 rows go to the outer view
 await pause(300);
 const tallTop = await page.$eval('.term-viewport', (v) => v.scrollTop);
-const tallAt300 = await topRow();
 await pause(1500);
 const handed = await page.evaluate(() => globalThis.__sent.filter((m) => m === 'term.coast').length) - coasts2;
 check('a layout taller than the phone: a flick coasts the outer view to its edge first', tall.room > 0 && tallTop === 0, `outer ${tall.top} → ${tallTop} (room ${tall.room})`);
-check('… then the Mac carries on with the wheel steps (one term.coast)', handed === 1 && (await topRow()) < tallAt300, `${handed} term.coast; top row ${tallAt300} → ${await topRow()}`);
+check('… then the Mac carries on with the wheel steps (one term.coast)', handed === 1 && (await topRow()) < tallFrom, `${handed} term.coast; top row ${tallFrom} → ${await topRow()}`);
 await page.evaluate(() => document.querySelector('.term-latest:not([hidden])')?.click());
 await pause(1500);
 await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
