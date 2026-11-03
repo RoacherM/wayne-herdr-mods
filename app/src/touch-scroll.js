@@ -20,7 +20,7 @@
  * `remoteCoast(v, cell)` starts a coast on the Mac (v: px/ms, positive = older) and says whether it
  * did; `remoteCoast(0)` stops it.
  */
-import { FRICTION_PER_MS, MIN_SPEED, coastSteps } from '../../shared/coast.js';
+import { FRICTION_PER_MS, MIN_SPEED, coastSteps, stepsGoOn } from '../../shared/coast.js';
 
 const AXIS_PX = 8; // movement before we decide vertical or sideways
 
@@ -86,19 +86,23 @@ export function touchScroll(viewport, xterm, { outer = true, onTap = null, remot
     if (!start || start.axis !== 'y') { start = null; return; }
     start = null;
     if (e.timeStamp - lastT > 80 || Math.abs(speed) < MIN_SPEED * 4) return; // finger rested before lifting
-    // A full-screen program: the Mac runs the coast, once the outer viewport has nowhere to go.
-    const outerCanMove = outer && (speed > 0 ? viewport.scrollTop > 0 : viewport.scrollTop + viewport.clientHeight < viewport.scrollHeight);
-    if (xterm.buffer.active.type !== 'normal' && !outerCanMove && remoteCoast?.(speed, cellHeight())) {
-      const steps = coastSteps(speed, cellHeight());
-      remoteUntil = performance.now() + (steps.at(-1) ?? 0);
-      return;
-    }
+    // The outer viewport coasts here; a full-screen program's wheel steps are the Mac's to send, from
+    // where the outer viewport stops (a Mac layout taller than the phone has one to scroll first).
+    const outerCanMove = () => outer && (speed > 0 ? viewport.scrollTop > 0 : viewport.scrollTop + viewport.clientHeight < viewport.scrollHeight - 1);
+    const toMac = () => {
+      if (xterm.buffer.active.type === 'normal' || outerCanMove() || !stepsGoOn(speed, cellHeight())) return false;
+      if (!remoteCoast?.(speed, cellHeight())) return false;
+      remoteUntil = performance.now() + (coastSteps(speed, cellHeight()).at(-1) ?? 0);
+      return true;
+    };
+    if (toMac()) return;
     let prev = performance.now();
     const step = (now) => {
       const dt = Math.min(50, now - prev); prev = now;
       move(speed * dt);
       speed *= FRICTION_PER_MS ** dt;
-      coast = Math.abs(speed) > MIN_SPEED ? requestAnimationFrame(step) : 0;
+      const goOn = xterm.buffer.active.type === 'normal' || outerCanMove() ? Math.abs(speed) > MIN_SPEED : stepsGoOn(speed, cellHeight());
+      coast = goOn && !toMac() ? requestAnimationFrame(step) : 0;
     };
     coast = requestAnimationFrame(step);
   });

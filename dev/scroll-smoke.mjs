@@ -145,6 +145,26 @@ check('a drag scrolls the agent\'s own view up', (await topRow()) < 300, `top ro
 await page.evaluate(() => document.querySelector('.term-latest:not([hidden])')?.click());
 await pause(1500);
 check('↓: the latest again', (await topRow()) === 300, `top row ${await topRow()}`);
+
+// A Mac layout taller than the phone (the probe on the user's iPhone: 121 rows): the outer viewport
+// scrolls first. A flick coasts it to its edge here, then the Mac carries on with the wheel steps.
+await page.setViewport({ width: 390, height: 420, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+await pause(800);
+const tall = await page.$eval('.term-viewport', (v) => { v.scrollTop = Math.min(v.scrollHeight - v.clientHeight, cellHeight(v) * 6); return { top: v.scrollTop, room: v.scrollHeight - v.clientHeight }; function cellHeight() { return 14; } });
+const tallBox = await page.evaluate(() => { const r = document.querySelector('.term-viewport').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + 20, h: r.height }; });
+const coasts2 = await page.evaluate(() => globalThis.__sent.filter((m) => m === 'term.coast').length);
+await drag(tallBox.x, tallBox.y, tallBox.x, tallBox.y + cellH * 3, { steps: 3, ms: 16 });
+await pause(300);
+const tallTop = await page.$eval('.term-viewport', (v) => v.scrollTop);
+const tallAt300 = await topRow();
+await pause(1500);
+const handed = await page.evaluate(() => globalThis.__sent.filter((m) => m === 'term.coast').length) - coasts2;
+check('a layout taller than the phone: a flick coasts the outer view to its edge first', tall.room > 0 && tallTop === 0, `outer ${tall.top} → ${tallTop} (room ${tall.room})`);
+check('… then the Mac carries on with the wheel steps (one term.coast)', handed === 1 && (await topRow()) < tallAt300, `${handed} term.coast; top row ${tallAt300} → ${await topRow()}`);
+await page.evaluate(() => document.querySelector('.term-latest:not([hidden])')?.click());
+await pause(1500);
+await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+await pause(500);
 await page.focus('.term-keys'); await page.keyboard.type('Z');
 await page.evaluate(() => document.activeElement?.blur());
 await pause(500);
