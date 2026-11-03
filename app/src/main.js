@@ -439,7 +439,6 @@ function openTerm(address) {
   // browser pans (touch-action: pan-x). A coding agent's history reads best in the conversation view.
   const stopTouch = touchScroll(viewport, xterm, {
     onTap: () => keys.focus(),
-    key: () => { const t = current(); return t?.app || t?.program; },
   });
   viewport.addEventListener('pointerup', (e) => { if (e.pointerType === 'mouse' && !xterm.hasSelection()) keys.focus(); });
   const current = () => app.list.terminals.find((x) => x.address === address);
@@ -514,6 +513,7 @@ function openTerm(address) {
   function setBack(n) { back = n; latestBtn.hidden = back === 0 || convMode; }
   /** Scroll the agent's own view back down to the latest (a few steps more: extra ones do nothing). */
   function toLatest(now = false) {
+    stopTouch(); // a coast still sending wheel steps would take it away from the latest again
     if (!back) return;
     const d = wheelReport(false).repeat(back + 2);
     setBack(0);

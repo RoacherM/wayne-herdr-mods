@@ -17,9 +17,10 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 let pass = 0, fail = 0;
 const check = (name, ok, detail = '') => { ok ? pass++ : fail++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  — ${detail}` : ''}`); };
 const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
-async function drag(x0, y0, x1, y1, { steps = 12, ms = 16 } = {}) {
+async function drag(x0, y0, x1, y1, { steps = 12, ms = 16, hold = 0 } = {}) {
   await touch('touchStart', x0, y0);
   for (let i = 1; i <= steps; i++) { await touch('touchMove', x0 + ((x1 - x0) * i) / steps, y0 + ((y1 - y0) * i) / steps); await pause(ms); }
+  if (hold) await pause(hold); // the finger rests before it lifts: no coasting
   await touch('touchEnd');
 }
 async function send(text) { await page.focus('.term-keys'); await page.keyboard.type(text); await page.keyboard.press('Enter'); await page.evaluate(() => document.activeElement.blur()); }
@@ -43,7 +44,7 @@ const box = await page.evaluate(() => { const r = document.querySelector('.term-
 const v0 = await viewY();
 await page.evaluate(() => { const l = globalThis.__herdrLink; const n = l.notify.bind(l); globalThis.__sent = []; l.notify = (m, p) => { globalThis.__sent.push(m); n(m, p); }; });
 await drag(box.x, box.mid - 150, box.x, box.mid + 150, { steps: 20 });
-await pause(600);
+await pause(2500); // the coast slows down as iOS scrolling does: about 2 s
 const v1 = await viewY();
 const sentNow = await page.evaluate(() => globalThis.__sent.filter((m) => m === 'term.input').length);
 check('a drag down scrolls the history, on the phone only', v1.y < v0.y - 5 && sentNow === 0, `line ${v0.y} → ${v1.y} (of ${v0.base}); ${sentNow} sent`);
@@ -84,7 +85,8 @@ check('typing takes it back to the latest first', ups3 > 0 && downs3 >= ups3 && 
 check('… and the ↓ button goes', await page.$eval('.term-latest', (b) => b.hidden));
 
 // An agent that moves its view 5 lines per wheel step (as Claude Code moves several); row-300 is
-// its latest. The first drag learns how it scrolls.
+// its latest. As Rex's phone app does: one wheel step per row the finger moves, sent at once,
+// nothing moved ahead of the agent's redraw, and a flick keeps sending steps while it coasts.
 writeFileSync('/tmp/relay-scroller.py', `import os, re, shutil, sys
 cols, rows = shutil.get_terminal_size()
 top = 300
@@ -108,16 +110,32 @@ await pause(500);
 const topRow = () => page.evaluate(() => Number(/row-(\d+)/.exec(document.querySelector('.xterm-rows').textContent)?.[1] ?? NaN));
 const cellH = await page.evaluate(() => document.querySelector('.xterm-rows > div').getBoundingClientRect().height);
 const r0 = await topRow();
-await drag(box.x, box.mid - 120, box.x, box.mid - 120 + cellH * 4, { steps: 8, ms: 30 }); // the first drag learns how it scrolls
-await pause(1000);
-check('how the agent scrolls was learned (5 lines a step, its rows)', await page.evaluate(() => { const v = JSON.parse(localStorage.getItem('herdr-relay.wheel') || '{}').claude; return v?.s === 5 && v.t === 0 && v.b === 2; }), await page.evaluate(() => localStorage.getItem('herdr-relay.wheel')));
+// A slow drag of 7 rows, the finger resting before it lifts (no coast). The first ~8 px only decide
+// the direction, as on iOS.
+const y0 = box.mid - 120;
+await touch('touchStart', box.x, y0);
+for (let i = 1; i <= 8; i++) { await touch('touchMove', box.x, y0 + (cellH * 7 * i) / 8); await pause(i === 4 ? 400 : 30); if (i === 4) globalThis.during = await topRow(); }
+await pause(200);
+await touch('touchEnd');
+await pause(800);
+const slow = (r0 - (await topRow())) / 5;
+check('a slow drag sends one wheel step per row the finger moves', slow >= 5 && slow <= 7, `${slow} steps for 7 rows (top row ${r0} → ${await topRow()})`);
+check('… at once: the agent has moved while the finger is still down', globalThis.during < r0, `top row ${globalThis.during} half way`);
+const faked = await page.evaluate(() => [...document.querySelectorAll('.xterm-rows > div')].some((d) => d.style.transform));
+check('nothing on the phone moves ahead of the redraw', !faked);
 await page.evaluate(() => document.querySelector('.term-latest:not([hidden])')?.click());
 await pause(1200);
 check('↓: the live screen again, at the latest', (await topRow()) === 300, `top row ${await topRow()}, was ${r0}`);
-const springs = await page.evaluate(() => [...document.querySelectorAll('.xterm-rows > div')].every((d) => !d.style.transform));
-check('the text moved ahead of the redraw is back in place', springs);
+await drag(box.x, box.mid - 150, box.x, box.mid - 150 + cellH * 3, { steps: 3, ms: 16 }); // a flick
+await pause(300);
+const at300 = await topRow();
+await pause(1500);
+const at1800 = await topRow();
+check('a flick keeps scrolling after the finger lifts', at1800 < at300 && at300 < 300, `top row ${at300} at +300 ms, ${at1800} at +1800 ms`);
+await page.evaluate(() => document.querySelector('.term-latest:not([hidden])')?.click());
+await pause(1500);
 
-// Once it is learned, a drag scrolls the agent's own view (wheel steps as the finger moves); ↓ back.
+// A long drag scrolls the agent's own view (wheel steps as the finger moves); ↓ back.
 await drag(box.x, box.mid - 200, box.x, box.mid + 100, { steps: 30 });
 await pause(1500);
 check('a drag scrolls the agent\'s own view up', (await topRow()) < 300, `top row ${await topRow()}`);
