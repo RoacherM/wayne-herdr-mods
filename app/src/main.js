@@ -12,6 +12,7 @@ import { Link } from './link.js';
 import { Duo } from './direct.js';
 import { scanQr } from './scan.js';
 import { touchScroll } from './touch-scroll.js';
+import { coastSteps } from '../../shared/coast.js';
 import { ConversationView } from './conversation.js';
 import { LiveLine, pasteText } from './live-line.js';
 import { MAX_MS, shrinkImage, startRecording, transcribe, upload, voiceSupported } from './voice.js';
@@ -439,6 +440,7 @@ function openTerm(address) {
   // browser pans (touch-action: pan-x). A coding agent's history reads best in the conversation view.
   const stopTouch = touchScroll(viewport, xterm, {
     onTap: () => keys.focus(),
+    remoteCoast: (v, cell) => remoteCoast(v, cell),
   });
   viewport.addEventListener('pointerup', (e) => { if (e.pointerType === 'mouse' && !xterm.hasSelection()) keys.focus(); });
   const current = () => app.list.terminals.find((x) => x.address === address);
@@ -508,6 +510,20 @@ function openTerm(address) {
     if (!page.s || xterm.modes.mouseTrackingMode === 'none') return false;
     out(wheelReport(up), 0, false);
     setBack(Math.max(0, back + (up ? 1 : -1)));
+    return true;
+  }
+  /**
+   * A flick's coast, run by the Mac (host/phones.js): it sends the program one wheel step per row of
+   * travel, a frame apart. Sent from here, the steps would arrive in clumps (a proxy on the phone
+   * batches them). v: px/ms, positive = older; 0 stops it.
+   */
+  function remoteCoast(v, cell) {
+    if (!page.s || xterm.modes.mouseTrackingMode === 'none' || app.link?.status !== 'ready') return false;
+    if (!v) { app.link.notify('term.coast', { s: page.s, stop: true }); return true; }
+    const up = v > 0;
+    app.link.notify('term.coast', { s: page.s, d: wheelReport(up), v: Math.abs(v), cell });
+    const n = coastSteps(v, cell).length;
+    setBack(Math.max(0, back + (up ? n : -n)));
     return true;
   }
   function setBack(n) { back = n; latestBtn.hidden = back === 0 || convMode; }

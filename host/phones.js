@@ -4,7 +4,8 @@
  *
  * Phone → host, after the handshake:
  *   {id, m, p}   a call, answered by {id, ok, r | e}
- *   {m, p}       a notification, no answer (term.input, term.ack: these are hot paths)
+ *   {m, p}       a notification, no answer (term.input, term.ack: these are hot paths; term.coast:
+ *                the coast after a flick, see shared/coast.js)
  * Host → phone:
  *   {ev, ...}    terminals (list changed), out (terminal bytes), closed (stream over), size,
  *                conv (a conversation's new items, a fresh page after `reset`, or `live`: the
@@ -14,6 +15,7 @@
  * has no password, so `machine.exec`, `file.*`, `terminal.run`, `server.*` stay unreachable.
  */
 import { homedir, userInfo } from 'node:os';
+import { coastSteps } from '../shared/coast.js';
 import { desktopAccept } from '../shared/e2e.js';
 import { CREDIT, DATA, RESIZE, size, u32 } from './hc.js';
 import { programOf } from './terminals.js';
@@ -23,6 +25,8 @@ import { MAX_BYTES as MAX_VOICE_BYTES } from './voice.js';
 
 const MAX_STREAMS = 4; // per phone
 const HISTORY_LINES = 400; // scrollback sent with the first paint
+// One wheel step, as xterm reports it to a program: SGR, or the old X10 form.
+const WHEEL_RE = /^(?:\x1b\[<6[45];\d{1,4};\d{1,4}M|\x1b\[M[`a][\x20-\xff]{2})$/;
 const KEY_RE = /^(?:(?:ctrl|alt|shift|cmd|super|meta)\+)*(?:[a-z0-9]|enter|esc|escape|tab|backspace|space|delete|del|insert|home|end|pageup|pgup|pagedown|pgdn|up|down|left|right|f(?:[1-9]|1[0-2])|[-=[\]\\;',./`])$/i;
 
 export function createPhones({ state, pairing, push, terminals, voice, link: getLink, rtc, log = () => {}, onChange = () => {}, home }) {
@@ -136,6 +140,7 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
     stream.stop = (reason = 'closed') => {
       if (stream.stopped) return;
       stream.stopped = true;
+      stopCoast(stream);
       peer.streams.delete(id);
       if (stream.channel !== null) core.release(stream.channel);
       event(peer, 'closed', { s: id, reason });
@@ -177,9 +182,34 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
     stream.core.send(stream.channel, DATA, Buffer.from(text, 'utf8'));
   }
 
+  /**
+   * The coast after a flick, sent from here so the steps reach the program evenly. `d` is one wheel
+   * step; `v` the finger's speed (px/ms) and `cell` a row's height on the phone; `stop` ends it.
+   * Anything typed (or a new drag) ends it too.
+   */
+  function coast(stream, { d, v, cell, stop }) {
+    stopCoast(stream);
+    if (stop || typeof d !== 'string' || !WHEEL_RE.test(d)) return;
+    const times = coastSteps(Math.min(20, Number(v) || 0), Math.max(4, Math.min(100, Number(cell) || 0)));
+    const t0 = performance.now();
+    let i = 0;
+    const tick = () => {
+      stream.coast = null;
+      if (stream.stopped) return;
+      const now = performance.now() - t0;
+      let n = 0;
+      while (i < times.length && times[i] <= now) { i++; n++; }
+      if (n) input(stream, d.repeat(n));
+      if (i < times.length) stream.coast = setTimeout(tick, Math.max(1, times[i] - (performance.now() - t0)));
+    };
+    if (times.length) stream.coast = setTimeout(tick, Math.max(1, times[0]));
+  }
+  function stopCoast(stream) { clearTimeout(stream.coast); stream.coast = null; }
+
   function notify(peer, { m, p = {} }) {
     try {
-      if (m === 'term.input') input(streamOf(peer, p.s), p.d);
+      if (m === 'term.input') { const stream = streamOf(peer, p.s); stopCoast(stream); input(stream, p.d); }
+      else if (m === 'term.coast') coast(streamOf(peer, p.s), p);
       else if (m === 'term.ack') {
         const stream = streamOf(peer, p.s);
         stream.core.send(stream.channel, CREDIT, u32(Math.max(0, Math.min(Number(p.n) || 0, 16 << 20))));

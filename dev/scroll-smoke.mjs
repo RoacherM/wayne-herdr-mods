@@ -126,12 +126,15 @@ check('nothing on the phone moves ahead of the redraw', !faked);
 await page.evaluate(() => document.querySelector('.term-latest:not([hidden])')?.click());
 await pause(1200);
 check('↓: the live screen again, at the latest', (await topRow()) === 300, `top row ${await topRow()}, was ${r0}`);
+const coastsBefore = await page.evaluate(() => globalThis.__sent.filter((m) => m === 'term.coast').length);
 await drag(box.x, box.mid - 150, box.x, box.mid - 150 + cellH * 3, { steps: 3, ms: 16 }); // a flick
 await pause(300);
 const at300 = await topRow();
 await pause(1500);
 const at1800 = await topRow();
 check('a flick keeps scrolling after the finger lifts', at1800 < at300 && at300 < 300, `top row ${at300} at +300 ms, ${at1800} at +1800 ms`);
+const coasts = await page.evaluate(() => globalThis.__sent.filter((m) => m === 'term.coast').length) - coastsBefore;
+check('… the Mac runs that coast (one term.coast), so the steps arrive evenly', coasts === 1, `${coasts} term.coast sent`);
 await page.evaluate(() => document.querySelector('.term-latest:not([hidden])')?.click());
 await pause(1500);
 

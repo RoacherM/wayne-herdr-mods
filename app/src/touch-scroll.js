@@ -11,18 +11,23 @@
  *     program's own redraw. This is what Rex's phone app does (measured 2026-11-03: about one step
  *     per row of finger travel, one step per frame while coasting, for about 2 s after a flick).
  * A sideways drag is left to the browser (the outer viewport scrolls wide terminals).
- * After the finger lifts, the scroll coasts and slows down at the rate of iOS native scrolling.
+ * After the finger lifts, the scroll coasts and slows down at the rate of iOS native scrolling
+ * (shared/coast.js). A full-screen program's coast runs on the Mac when it can (`remoteCoast`): the
+ * phone sends the speed once and the Mac sends the steps, evenly, one frame apart.
  *
  * Options: `outer: false` leaves the outer viewport alone (a terminal that fits the phone has
  * nothing to scroll there). `onTap` hears a tap: no drag, and not the touch that stopped a coast.
+ * `remoteCoast(v, cell)` starts a coast on the Mac (v: px/ms, positive = older) and says whether it
+ * did; `remoteCoast(0)` stops it.
  */
-const AXIS_PX = 8;                  // movement before we decide vertical or sideways
-const FRICTION = 0.998 ** 16.7;     // per frame (60 fps) while coasting: UIScrollView's normal rate
-const MIN_SPEED = 0.03;             // px per ms: below this, coasting stops
+import { FRICTION_PER_MS, MIN_SPEED, coastSteps } from '../../shared/coast.js';
 
-export function touchScroll(viewport, xterm, { outer = true, onTap = null } = {}) {
+const AXIS_PX = 8; // movement before we decide vertical or sideways
+
+export function touchScroll(viewport, xterm, { outer = true, onTap = null, remoteCoast = null } = {}) {
   let start = null;         // { x, y, axis, stopped }
   let lastY = 0, lastT = 0, speed = 0, carry = 0, coast = 0;
+  let remoteUntil = 0;      // a coast on the Mac runs until then (performance.now())
 
   const cellHeight = () => xterm._core?._renderService?.dimensions?.css?.cell?.height || xterm.options.fontSize * 1.2;
 
@@ -44,10 +49,14 @@ export function touchScroll(viewport, xterm, { outer = true, onTap = null } = {}
     else wheel(xterm, lines);
   }
 
-  function stopCoast() { cancelAnimationFrame(coast); coast = 0; }
+  function stopCoast() {
+    cancelAnimationFrame(coast); coast = 0;
+    if (remoteUntil > performance.now()) remoteCoast?.(0);
+    remoteUntil = 0;
+  }
 
   viewport.addEventListener('touchstart', (e) => {
-    const stopped = coast !== 0; // this touch only stops the coasting: it is not a tap
+    const stopped = coast !== 0 || remoteUntil > performance.now(); // this touch only stops the coasting: it is not a tap
     stopCoast();
     if (e.touches.length !== 1) { start = null; return; }
     const t = e.touches[0];
@@ -77,11 +86,18 @@ export function touchScroll(viewport, xterm, { outer = true, onTap = null } = {}
     if (!start || start.axis !== 'y') { start = null; return; }
     start = null;
     if (e.timeStamp - lastT > 80 || Math.abs(speed) < MIN_SPEED * 4) return; // finger rested before lifting
+    // A full-screen program: the Mac runs the coast, once the outer viewport has nowhere to go.
+    const outerCanMove = outer && (speed > 0 ? viewport.scrollTop > 0 : viewport.scrollTop + viewport.clientHeight < viewport.scrollHeight);
+    if (xterm.buffer.active.type !== 'normal' && !outerCanMove && remoteCoast?.(speed, cellHeight())) {
+      const steps = coastSteps(speed, cellHeight());
+      remoteUntil = performance.now() + (steps.at(-1) ?? 0);
+      return;
+    }
     let prev = performance.now();
     const step = (now) => {
       const dt = Math.min(50, now - prev); prev = now;
       move(speed * dt);
-      speed *= FRICTION ** (dt / 16.7);
+      speed *= FRICTION_PER_MS ** dt;
       coast = Math.abs(speed) > MIN_SPEED ? requestAnimationFrame(step) : 0;
     };
     coast = requestAnimationFrame(step);
