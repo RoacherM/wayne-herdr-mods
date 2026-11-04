@@ -1,5 +1,5 @@
-// wayne-herdr-mods in Herdr.app (this mod keeps the old name herdr-relay): the phones paired with this Mac, and pairing a new one.
-// Opened as a dialog (`mod.open herdr-relay`): the phone icon in the tab bar, or `wayne-herdr-mods pair` in a shell.
+// wayne-phones (wayne-herdr-mods in Herdr.app): the phones paired with this Mac, and pairing a new one.
+// Opened as a dialog (`mod.open wayne-phones`): the phone icon in the tab bar, or `wayne-herdr-mods pair` in a shell.
 // Written by `wayne-herdr-mods install` from the repo's herdr-app/; edits here are replaced on the next install.
 //
 // Everything goes through the command (`wayne-herdr-mods ctl <method> <json>`), which talks
@@ -12,7 +12,7 @@ import { exec, home, appHome, theme, notify } from "herdr";
 import * as fs from "fs/promises";
 
 const BIN = () => `${home()}/.local/bin/wayne-herdr-mods`;
-const QR_DIR = "data/herdr-relay"; // under ~/.config/herdr-app: where image() looks
+const QR_DIR = "data/wayne-phones"; // under ~/.config/herdr-app: where image() looks
 
 async function ctl(method, params = {}) {
   const r = await exec(BIN(), ["ctl", method, JSON.stringify(params)]);
@@ -104,7 +104,7 @@ export default class Phones extends View {
   render() {
     const t = theme();
     const v = this.v;
-    const root = v_flex().id("herdr-relay").size_full().min_h(0).p(18).gap(14).bg(t.popover).text_size(13).text_color(t.foreground)
+    const root = v_flex().id("wayne-phones").size_full().min_h(0).p(18).gap(14).bg(t.popover).text_size(13).text_color(t.foreground)
       .child(h_flex().items_center()
         .child(div().flex_1().text_size(15).font_semibold().child("手机"))
         .child(div().text_size(11).text_color(t.dim).child("Esc")));

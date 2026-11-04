@@ -12,7 +12,7 @@ import { controlCall, startService } from '../host/service.js';
 
 const RELAY = process.env.RELAY ?? 'http://127.0.0.1:8799';
 // REAL_VOICE=1 uses the key in the keychain (real recognition); otherwise a fake key just shows the mic.
-if (!process.env.REAL_VOICE) process.env.HERDR_RELAY_VOLC_KEY ??= 'fake-key-for-ui';
+if (!process.env.REAL_VOICE) process.env.WAYNE_HERDR_MODS_VOLC_KEY ??= 'fake-key-for-ui';
 const SESSION = 'relay-ui';
 const r = (s) => `printf '\\033]7501;${s}\\033\\\\'`;
 const b64 = (s) => Buffer.from(s).toString('base64');

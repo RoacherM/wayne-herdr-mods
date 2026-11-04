@@ -1,6 +1,6 @@
 # wayne-herdr-mods 设计（草案）
 
-> 2026-11-04 起项目叫 wayne-herdr-mods（旧名 herdr-relay）：手机网页和 Herdr.app 里的界面是一套东西，agent 照 `SKILL.md` 用它。改了名的只有仓库、npm 包、命令（`herdr-relay` 留作别名）。没改的：中继地址 `herdr-relay.sir-housir.workers.dev`（已配对的手机和主屏幕上的 PWA 都记着它）、加密协议里的标签、launchd 的 `com.roacherm.herdr-relay`、`~/.local/share/herdr-relay`、数据目录、日志、钥匙串、mod 名 `herdr-relay`。下文的 `herdr-relay` 命令都可以换成 `wayne-herdr-mods`。
+> 2026-11-04 起项目叫 wayne-herdr-mods（旧名 herdr-relay）：手机网页和 Herdr.app 里的界面是一套东西，agent 照 `SKILL.md` 用它。命令、后台服务（`com.roacherm.wayne-herdr-mods`）、`~/.config/wayne-herdr-mods`、`~/.local/share/wayne-herdr-mods`、日志、钥匙串（`wayne-herdr-mods.voice`）、mod（`wayne-phones`）都改了新名字；`install` 把旧的配置搬过来一次（`host/main.js` 的 `migrateOld`）。故意不改的：中继地址 `herdr-relay.sir-housir.workers.dev` 和 Worker 名、加密协议里的 `herdr-relay/v1` 等标签（已配对的手机靠它们）、手机网页的 localStorage 键 `herdr-relay`（手机上的配对存在这里）、`ios/` 和 `shell/` 里的原型。下文旧的段落里写的 `herdr-relay` 命令，现在都是 `wayne-herdr-mods`。
 
 在手机浏览器里看和操作这台 Mac 上 Herdr.app 的终端和 agent。不用 Tailscale，不用 SSH，不开端口。做法照 `dsh-pair`（`~/Projects/sides/dsh-plugins/dsh-pair`）：Cloudflare 上放一个中继，电脑只往外连。
 
@@ -96,17 +96,17 @@ iPhone 浏览器 / PWA ──wss /v1/client/<id>──▶ Cloudflare Worker + DO
 
 ## 电脑上的确认
 
-两个入口，做的事一样：发二维码、显示核对码、允许或拒绝、移除设备。
+配对统一在 Herdr.app 里做：发二维码、显示核对码、允许或拒绝、移除设备。
 
 | 入口 | 怎么打开 | 说明 |
 |---|---|---|
-| Herdr.app 的「手机」窗口（2026-11-04） | 标签栏右上角的手机图标；或在 Herdr 的终端里运行 `herdr-relay pair` | 列出配对的手机（在线、上次连接、推送），「配对新手机」显示二维码，手机来了显示核对码和「允许 / 拒绝」，「移除」点两次才删。关掉窗口时，还没人扫的二维码作废。 |
-| 命令行 | `herdr-relay pair --here`；`herdr-relay devices` | 在终端里打印二维码，按 y 允许。Herdr.app 不在时 `pair` 也走这里。 |
+| Herdr.app 的「手机」窗口（2026-11-04） | 标签栏右上角的手机图标；agent 用 `wayne-herdr-mods pair` 替人打开并显示二维码 | 列出配对的手机（在线、上次连接、推送），「配对新手机」显示二维码，手机来了显示核对码和「允许 / 拒绝」，「移除」点两次才删。关掉窗口时，还没人扫的二维码作废。 |
+| 命令行 | `wayne-herdr-mods devices`（`devices rm <id>`） | 只列出、移除。配对只在 Herdr.app 里做（2026-11-04 起，终端里打二维码的方式删了）。 |
 
-「手机」窗口是一个 Herdr.app mod（插件），叫 `herdr-relay`，在 `herdr-app/mods/herdr-relay/`。它是下面「Herdr.app 里的界面」的一部分。
+「手机」窗口是一个 Herdr.app mod（插件），叫 `wayne-phones`，在 `herdr-app/mods/wayne-phones/`。它是下面「Herdr.app 里的界面」的一部分。
 
-- 它不直接连后台服务，只运行 `herdr-relay ctl <方法> <json>`。`ctl` 走后台服务的控制 socket：`status`、`pair.start`、`pair.cancel`、`pair.decide`、`devices.remove`、`watch`。`watch` 在有变化时返回，最多等 20 秒，所以窗口跟着手机上线、下线、来配对。有二维码时 `ctl` 顺带给出 `qrSvg`。
-- 二维码写成 `~/.config/herdr-app/data/herdr-relay/qr-<到期时间>.svg` 再显示（`image()` 只读文件）。不写进 mod 目录：那里的文件一变 mod 就重新加载。
+- 它不直接连后台服务，只运行 `wayne-herdr-mods ctl <方法> <json>`。`ctl` 走后台服务的控制 socket：`status`、`pair.start`、`pair.cancel`、`pair.decide`、`devices.remove`、`watch`。`watch` 在有变化时返回，最多等 20 秒，所以窗口跟着手机上线、下线、来配对。有二维码时 `ctl` 顺带给出 `qrSvg`。
+- 二维码写成 `~/.config/herdr-app/data/wayne-phones/qr-<到期时间>.svg` 再显示（`image()` 只读文件）。不写进 mod 目录：那里的文件一变 mod 就重新加载。
 - 为什么不放进「设置」：Herdr.app 的设置页只有固定的几节，每次启动重写，mod 加不进去；要加只能改 Herdr.app 本身。所以入口是标签栏上的图标。
 
 ## Herdr.app 里的界面（2026-11-04）
@@ -118,13 +118,13 @@ iPhone 浏览器 / PWA ──wss /v1/client/<id>──▶ Cloudflare Worker + DO
 | `layouts/main-preview.json`、`.svg` | 窗口布局：在 Herdr 自带的 `main` 上换了标签栏和文件面板 | 复制自 `main` |
 | `mods/my-tabs/` | 标签栏：右上角只留「+」、手机图标、一个面板按钮 | 复制自 `tabs` 0.1.12 |
 | `mods/my-files/` | 文件面板 | 复制自 `files` 0.1.12 |
-| `mods/herdr-relay/` | 「手机」窗口和它的图标 `phone.svg` | 新写 |
+| `mods/wayne-phones/` | 「手机」窗口和它的图标 `phone.svg` | 新写 |
 
-- 改界面就改仓库里的文件，再运行 `herdr-relay install`。install 把 `herdr-app/` 打进 `wayne-herdr-mods.mjs`，写进 `~/.config/herdr-app/`，内容没变的文件不写（写了 Herdr 会重新加载那个 mod）。在 Herdr.app 里直接改的文件，下次 install 会被覆盖，要先复制回仓库。
+- 改界面就改仓库里的文件，再运行 `node dist/wayne-herdr-mods.mjs install`。install 把 `herdr-app/` 打进 `wayne-herdr-mods.mjs`，写进 `~/.config/herdr-app/`，内容没变的文件不写（写了 Herdr 会重新加载那个 mod）。在 Herdr.app 里直接改的文件，下次 install 会被覆盖，要先复制回仓库。
 - install 不切换布局。换一台 Mac，要在 Herdr 里选一次 `main-preview`（`herdr-app do layout.switch --name main-preview`）。
 - 不放进来的：Herdr 自带的布局和 mod（每次启动重写），Herdr 自己写的 `gpui-kit.d.ts`、`jsconfig.json`，个人设置 `settings.json`、`keys.json`。
-- 不加快捷键；早先版本加在 `keys.json` 的 ⌘⇧M，install 和 uninstall 都会删掉。
-- `herdr-relay uninstall` 只删「手机」窗口，布局和标签栏留着（那时标签栏的手机图标点了没反应）。
+- 不加快捷键；2026-11-04 一次安装加在 `keys.json` 的 ⌘⇧M，搬配置时删掉。
+- `wayne-herdr-mods uninstall` 只删「手机」窗口，布局和标签栏留着（那时标签栏的手机图标点了没反应）。
 - 复制来的 mod 不跟着 Herdr 更新。Herdr 改了 `tabs` 或 `files`，要自己对比 `cloned_from` 的版本再合进来。
 
 ## 地址和域名
@@ -166,7 +166,7 @@ iPhone 浏览器 / PWA ──wss /v1/client/<id>──▶ Cloudflare Worker + DO
 
 ## 安全
 
-- 配对过的手机能往终端打字，权限等于这台 Mac 的 shell。所以必须配对确认，设备可以单独移除，状态文件权限 0600（`~/.config/herdr-relay/state.json`）。
+- 配对过的手机能往终端打字，权限等于这台 Mac 的 shell。所以必须配对确认，设备可以单独移除，状态文件权限 0600（`~/.config/wayne-herdr-mods/state.json`）。
 - 中继只见密文和连接时间、大小这类元数据。
 - 推送只发概要（「t6 claude-code 等你确认」），不发终端内容。
 - herdr-core 的 socket 没有密码（官方文档说不要转发给不信任的人），所以宿主进程只把上面表格里的接口转给手机，不转发任意 RPC。`machine.exec`、`file.*`、`terminal.run`、`server.*` 一律不开放。
@@ -268,11 +268,11 @@ A 部分在 `HC_SESSION=relay-probe` 的独立 core 里自己开一个 `/bin/sh`
 | 转码 | Mac 用 ffmpeg 转成 ogg/opus 16 kHz 单声道：极速版文档列的格式里没有 webm，iOS 的 mp4 也不确定是否直收，统一转码最稳。 |
 | 识别 | 极速版：一次 POST 直接返回结果，没有提交再轮询。头：`X-Api-Key`（新版控制台的 Key）或 `X-Api-App-Key` + `X-Api-Access-Key`（旧版），`X-Api-Resource-Id: volc.bigasr.auc_turbo`，`X-Api-Request-Id`（UUID），`X-Api-Sequence: -1`。体：`audio.data`（base64）+ `audio.format`，`request.model_name: "bigmodel"`，`enable_itn`、`enable_punc`。结果状态在响应头 `X-Api-Status-Code`：`20000000` 成功，`20000003` 静音。 |
 | 热词 | 带上编程词和当前终端的项目名、文件名。具体字段（`request.context` 或 `corpus`）以真实请求为准，未验证。 |
-| 密钥 | `herdr-relay voice key` 从标准输入读入，存进 macOS 钥匙串（`security add-generic-password`），不进 state.json、不进日志。没配 key 时 `ready` 里 `voice: false`，手机不显示麦克风键。 |
+| 密钥 | `wayne-herdr-mods voice key` 从标准输入读入，存进 macOS 钥匙串（`security add-generic-password`），不进 state.json、不进日志。没配 key 时 `ready` 里 `voice: false`，手机不显示麦克风键。 |
 | 结果 | `voice.done {id}` 返回文字，填进发送框，不自动发。 |
 | 限制 | 单条 ≤ 2 MB、≤ 120 秒；每台手机同时只识别一条；识别完立刻删音频。 |
 
-备选（不做，除非云端用不了）：本地 whisper.cpp。本机 M5 Pro 实测 9.7 秒中文，热启动 0.6 秒；中文对，英文词会被拆开（`npm` → `N,T,M`）。模型在 `~/.local/share/herdr-relay/models/`（574 MB），不用就删。
+备选（不做，除非云端用不了）：本地 whisper.cpp。本机 M5 Pro 实测 9.7 秒中文，热启动 0.6 秒；中文对，英文词会被拆开（`npm` → `N,T,M`）。模型在 `~/.local/share/herdr-relay/models/`（574 MB；改名时没搬也没删，留在旧目录），不用就删。
 
 参考：火山引擎接入说明 https://docs.volcengine.com/docs/DoubaoVoice/Accessmust-read?lang=zh ；极速版字段对照了社区实现 https://github.com/lanbinleo/bili2text （src/b2t/transcribers/volcengine.py）。官方极速版页面里只找到旧版 v1 submit/query 接口，v3 flash 的字段是从接入说明和社区实现交叉得到的，第一次真实请求前都算猜测。
 
@@ -337,7 +337,7 @@ npm run ios:dev                        # Mac 上的 iPhone 尺寸窗口（Cataly
 
 实测（2026-11-02，真 Key，2.0 标准版）：Mac 朗读一句 9.7 秒中文，1.4–1.9 秒返回。中文全对；火山原样输出「phones js」「NPM Test」，经过拼写还原后是「phones.js」「npm test」。
 
-拼写还原：识别后，把结果里和热词只差大小写、或者只差空格/点/横线的地方，改回热词原样（只改整词，`testing` 不会被改）。只对 `SPELL` 表和你自己的词生效；`Node`、`push` 这类普通词只当提示、不强改。你的词写在 `~/.config/herdr-relay/voice-words.txt`，一行一个，`#` 开头是注释；终端所在文件夹名自动加入。
+拼写还原：识别后，把结果里和热词只差大小写、或者只差空格/点/横线的地方，改回热词原样（只改整词，`testing` 不会被改）。只对 `SPELL` 表和你自己的词生效；`Node`、`push` 这类普通词只当提示、不强改。你的词写在 `~/.config/wayne-herdr-mods/voice-words.txt`，一行一个，`#` 开头是注释；终端所在文件夹名自动加入。
 
 ## 发图片（已实现）
 

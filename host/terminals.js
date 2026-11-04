@@ -34,7 +34,7 @@ export function createTerminals({ coreOptions = {}, log = () => {}, onChange = (
       layout = projectLayout(doc.value);
       changed();
     } catch (error) {
-      log(`herdr-relay: 读取 Herdr 布局失败：${error.message}`);
+      log(`wayne-herdr-mods: 读取 Herdr 布局失败：${error.message}`);
     }
   }
 
@@ -125,7 +125,7 @@ export function createTerminals({ coreOptions = {}, log = () => {}, onChange = (
       setState('online');
       onCore(c);
     } catch (error) {
-      if (state !== 'offline') log(`herdr-relay: 连不上 herdr-core：${error.message}`);
+      if (state !== 'offline') log(`wayne-herdr-mods: 连不上 herdr-core：${error.message}`);
       setState('offline');
       schedule();
     }

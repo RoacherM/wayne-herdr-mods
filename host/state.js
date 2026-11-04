@@ -1,5 +1,5 @@
 /**
- * Everything herdr-relay keeps on disk: this Mac's keys, the paired devices (public keys only)
+ * Everything wayne-herdr-mods keeps on disk: this Mac's keys, the paired devices (public keys only)
  * with their Web Push subscriptions, and the VAPID key pair. One JSON file, mode 0600, written
  * atomically. Secrets never leave this file.
  */
@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import webpush from 'web-push';
 import { b64, boxKeysFromSecret, newBoxKeys, newSignKeys, signKeysFromSecret, unb64 } from '../shared/e2e.js';
 
-export const defaultDataDir = () => process.env.HERDR_RELAY_DIR ?? join(homedir(), '.config', 'herdr-relay');
+export const defaultDataDir = () => process.env.WAYNE_HERDR_MODS_DIR ?? join(homedir(), '.config', 'wayne-herdr-mods');
 
 export function defaultDesktopName() {
   if (process.platform === 'darwin') {

@@ -38,7 +38,7 @@ export function createRelayLink({ relayUrl, desktopId, signKeys, log = () => {},
     try {
       socket = new WebSocket(url);
     } catch (error) {
-      log(`herdr-relay: 无法连接中继：${error.message}`);
+      log(`wayne-herdr-mods: 无法连接中继：${error.message}`);
       schedule();
       return;
     }
@@ -78,12 +78,12 @@ export function createRelayLink({ relayUrl, desktopId, signKeys, log = () => {},
       if (ws !== socket) return;
       clearInterval(pingTimer);
       dropClients();
-      if (event.code === 1008 || /auth failed/.test(event.reason ?? '')) log(`herdr-relay: 中继拒绝了连接：${event.reason}`);
+      if (event.code === 1008 || /auth failed/.test(event.reason ?? '')) log(`wayne-herdr-mods: 中继拒绝了连接：${event.reason}`);
       // Code 4000: the relay replaced us with a newer desktop socket holding the same key —
       // reconnecting would kick that one and ping-pong forever. Stay down until kicked
       // (e.g. after the other instance exits, the user reloads this plugin, or a wake-up).
       if (event.code === 4000) {
-        log(`herdr-relay: 另一个桌面实例接管了中继连接，本实例不再自动重连`);
+        log(`wayne-herdr-mods: 另一个桌面实例接管了中继连接，本实例不再自动重连`);
         setStatus('offline', event.reason ?? 'replaced');
         return;
       }

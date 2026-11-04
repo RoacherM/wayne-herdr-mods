@@ -10,7 +10,7 @@ description: "Wayne 的 Herdr 套件：用手机浏览器操作这台 Mac 上 He
 - **手机**：后台服务（launchd 常驻）把 Herdr 的终端通过中继端到端加密地给手机网页。手机打开终端时，终端换成手机的大小；回到 Mac 上打字，就换回 Mac 的大小。
 - **Herdr.app 里的界面**：仓库 `herdr-app/` 和 `~/.config/herdr-app/` 一一对应。标签栏右上角的手机图标打开「手机」窗口。
 
-命令是 `wayne-herdr-mods`（旧名 `herdr-relay` 一样能用）。不存在就是没装，见「安装」。
+命令是 `wayne-herdr-mods`。不存在就是没装，见「安装」。（旧名 herdr-relay，2026-11-04 改名，旧命令已删。）
 
 ## 先看状态
 
@@ -20,18 +20,19 @@ wayne-herdr-mods devices      # 已配对的手机：id 前 8 位、名字、在
 wayne-herdr-mods ctl status   # 同样的信息，JSON（脚本用这个）
 ```
 
-`relay` 或 `core` 不是 `online` 时，先看日志 `~/Library/Logs/herdr-relay.log`。不要重启 Herdr.app 或 herdr-core；后台服务会自己等它们回来。
+`relay` 或 `core` 不是 `online` 时，先看日志 `~/Library/Logs/wayne-herdr-mods.log`。不要重启 Herdr.app 或 herdr-core；后台服务会自己等它们回来。
 
 ## 配对一台手机
 
-配对要人做：用手机相机扫码，再核对 6 位数字。你只负责把二维码摆到人面前。
+配对只在 Herdr.app 里做：标签栏右上角的手机图标打开「手机」窗口，点「配对新手机」。要人做的：用手机相机扫码，核对手机和 Mac 上的 6 位数字，一样就点「允许」。
+
+你可以替人把二维码摆出来：
 
 ```sh
-wayne-herdr-mods pair         # Herdr.app 开着：在「手机」窗口里显示二维码，命令马上返回
-wayne-herdr-mods pair --here  # 在这个终端里打印二维码，等人按 y（要交互的终端）
+wayne-herdr-mods pair    # 打开「手机」窗口并显示二维码，马上返回
 ```
 
-告诉人：扫码，看手机和 Mac 上的 6 位数字是否一样，一样就点「允许」。二维码 10 分钟后失效，只能配一台。
+然后告诉人去扫码、核对数字。二维码 10 分钟后失效，只能配一台。关掉窗口，没扫的二维码就作废。
 
 不要替人点「允许」（`ctl pair.decide`）：核对数字就是为了确认扫码的是这个人自己的手机。
 
@@ -53,13 +54,13 @@ wayne-herdr-mods ctl watch '{"ms":20000}'   # 有变化就返回新状态，最�
 
 ## 改 Herdr.app 的界面
 
-源文件在仓库的 `herdr-app/`（`layouts/main-preview.json`、`mods/my-tabs/`、`mods/my-files/`、`mods/herdr-relay/`）。改仓库里的，不要只改 `~/.config/herdr-app/` 里的：下次安装会覆盖。
+源文件在仓库的 `herdr-app/`（`layouts/main-preview.json`、`mods/my-tabs/`、`mods/my-files/`、`mods/wayne-phones/`）。改仓库里的，不要只改 `~/.config/herdr-app/` 里的：下次安装会覆盖。
 
 ```sh
 npm run build && node dist/wayne-herdr-mods.mjs install   # 只写改了的文件，Herdr 自动重新加载
 herdr-app check ~/.config/herdr-app/mods/my-tabs           # 检查一个 mod
 herdr-app status                                           # errors 里有加载失败的 mod
-herdr-app do mod.open --name herdr-relay                   # 打开或关上「手机」窗口
+herdr-app do mod.open --name wayne-phones                  # 打开或关上「手机」窗口
 ```
 
 mod 怎么写：`~/.config/herdr-app/AGENTS.md`。`my-tabs`、`my-files` 复制自 Herdr 0.1.12 的 `tabs`、`files`，不会跟着 Herdr 更新。
@@ -72,4 +73,4 @@ mod 怎么写：`~/.config/herdr-app/AGENTS.md`。`my-tabs`、`my-files` 复制�
 npm install && npm run build && node dist/wayne-herdr-mods.mjs install
 ```
 
-这会装好命令、后台服务、Herdr.app 的界面和这个 skill。设计和每条规则的原因在仓库的 `DESIGN.md`。
+这会装好命令、后台服务、Herdr.app 的界面和这个 skill。装过旧的 herdr-relay 的话，它的密钥、已配对的手机、语音 Key 和日志会一起搬过来。设计和每条规则的原因在仓库的 `DESIGN.md`。

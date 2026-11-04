@@ -27,12 +27,12 @@ function isAllowedEndpoint(endpoint) {
 
 export function createPush({ state, log = () => {}, isOnline = () => false }) {
   const vapid = state.vapid;
-  const details = { subject: 'mailto:herdr-relay@localhost.invalid', publicKey: vapid.publicKey, privateKey: vapid.privateKey };
+  const details = { subject: 'mailto:wayne-herdr-mods@localhost.invalid', publicKey: vapid.publicKey, privateKey: vapid.privateKey };
 
   async function sendTo(device, payload) {
     if (!device.push?.endpoint) return { sent: false, reason: 'no-subscription' };
     if (!isAllowedEndpoint(device.push.endpoint)) {
-      log(`herdr-relay: 拒绝推送到未知服务「${device.push.endpoint.slice(0, 60)}…」`);
+      log(`wayne-herdr-mods: 拒绝推送到未知服务「${device.push.endpoint.slice(0, 60)}…」`);
       return { sent: false, reason: 'unknown-push-service' };
     }
     try {
@@ -45,7 +45,7 @@ export function createPush({ state, log = () => {}, isOnline = () => false }) {
         await state.updateDevice(device.id, { push: null });
         return { sent: false, reason: 'expired' };
       }
-      log(`herdr-relay: 推送到「${device.name}」失败：${error.statusCode ?? ''} ${error.body ?? error.message}`);
+      log(`wayne-herdr-mods: 推送到「${device.name}」失败：${error.statusCode ?? ''} ${error.body ?? error.message}`);
       return { sent: false, reason: String(error.statusCode ?? error.message) };
     }
   }

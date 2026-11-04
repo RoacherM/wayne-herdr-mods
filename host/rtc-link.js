@@ -83,7 +83,7 @@ export function createRtcLink({ onOpen, onData, onClose, log = () => {}, iceServ
       return { sdp: pc.localDescription.sdp };
     } catch (error) {
       close(cid);
-      log(`herdr-relay: 直连失败：${error.message}`);
+      log(`wayne-herdr-mods: 直连失败：${error.message}`);
       throw new Error('直连失败');
     }
   }

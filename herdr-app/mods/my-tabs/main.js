@@ -103,8 +103,8 @@ export default class Tabs extends View {
       .when(w?.buttons, el => el.child(button("minimize", w.platform === "windows" ? svg("mods/my-tabs/win-min.svg").size(16) : "−", () => run("window.minimize")))
         .child(button("maximize", w.platform === "windows" ? svg(`mods/my-tabs/${w.maximized ? "win-restore" : "win-max"}.svg`).size(16) : "□", () => run("window.maximize")))
         .child(button("close-window", w.platform === "windows" ? svg("mods/my-tabs/win-close.svg").size(16) : svg("mods/pane/close.svg").size(13), () => run("window.close"))))
-      // wayne-herdr-mods: the phones paired with this Mac, and pairing a new one (mods/herdr-relay).
-      .child(button("phones", svg("mods/herdr-relay/phone.svg").size(15), () => run("mod.open", { name: "herdr-relay" })))
+      // wayne-herdr-mods: the phones paired with this Mac, and pairing a new one (mods/wayne-phones).
+      .child(button("phones", svg("mods/wayne-phones/phone.svg").size(15), () => run("mod.open", { name: "wayne-phones" })))
       .child(panelToggle());
   }
 }

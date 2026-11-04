@@ -68,7 +68,7 @@ const icon = (name) => { const s = h('span', { class: 'ico' }); s.innerHTML = `<
 // ------------------------------------------------------------------ storage ----
 // The device keypair lives in localStorage on this origin (the relay we paired with, which also
 // serves this script). The pairing link and the E2E handshake protect the channel itself.
-const STORE_KEY = 'herdr-relay';
+const STORE_KEY = 'herdr-relay'; // the old name, kept: phones paired before keep their pairing under it
 const DIRECT = 'herdr-relay.direct'; // 'off': relay only (for comparing)
 const load = () => { try { return JSON.parse(localStorage.getItem(STORE_KEY)) ?? {}; } catch { return {}; } };
 const save = (value) => localStorage.setItem(STORE_KEY, JSON.stringify(value));
@@ -204,7 +204,7 @@ function renderWelcome() {
   } else {
     wrap.append(
       h('div', { class: 'card steps' }, h('ol', {},
-        h('li', {}, '在 Mac 的终端里运行 herdr-relay pair。'),
+        h('li', {}, '在 Mac 的 Herdr.app 里点标签栏右上角的手机图标，再点「配对新手机」。'),
         h('li', {}, isIOS() && !standalone() ? '想收通知：先点 Safari 的「分享 → 添加到主屏幕」，之后从主屏幕打开。' : '点下面的按钮扫描 Mac 上的二维码。'),
         h('li', {}, '在 Mac 上核对 6 位数字，输入 y 确认。'))),
       h('button', { class: 'btn primary block', onClick: scanAndPair }, icon('scan'), '扫描二维码'),
@@ -222,7 +222,7 @@ async function scanAndPair() {
 function startPairing(linkText, name) {
   let offer;
   try { offer = decodePairLink(linkText.trim()); } catch { toast('不是有效的配对链接', 'err'); return; }
-  if (offer.e && Date.now() > offer.e) { app.view = { name: 'welcome', error: '二维码已过期，请在 Mac 上重新运行 herdr-relay pair' }; render(); return; }
+  if (offer.e && Date.now() > offer.e) { app.view = { name: 'welcome', error: '二维码已过期，请在 Mac 的 Herdr.app 里重新配对' }; render(); return; }
   history.replaceState(null, '', location.pathname);
   const desktop = { id: offer.i, relay: offer.r, k: offer.k, name: offer.n };
   app.view = { name: 'pairing', desktopName: offer.n };
@@ -250,7 +250,7 @@ function renderHome() {
     h('header', { class: 'bar' },
       h('div', { class: 'bar-title' }, h('b', {}, desktop?.name ?? 'Mac'), statusLine()),
       h('button', { class: 'icon-btn', 'aria-label': '设置', onClick: () => { app.view = { name: 'settings' }; render(); } }, icon('gear'))),
-    h('div', { class: 'banner', id: 'offline', hidden: app.link?.status !== 'offline' }, 'Mac 离线或 herdr-relay 没在运行。恢复后会自动重连。'),
+    h('div', { class: 'banner', id: 'offline', hidden: app.link?.status !== 'offline' }, 'Mac 离线或后台服务没在运行。恢复后会自动重连。'),
     h('div', { id: 'needs' }),
     h('div', { id: 'groups', class: 'groups' }));
 }
@@ -819,7 +819,7 @@ function openTerm(address) {
     };
     const begin = async (e) => {
       e.preventDefault();
-      if (!voiceOk) { toast(app.info?.voice ? '这个浏览器不能录音' : '这台 Mac 没开语音识别：在 Mac 上运行 herdr-relay voice 设置'); return; }
+      if (!voiceOk) { toast(app.info?.voice ? '这个浏览器不能录音' : '这台 Mac 没开语音识别：在 Mac 上运行 wayne-herdr-mods voice key 设置'); return; }
       if (rec || held || talkBtn.disabled) return;
       held = true;
       startY = e.clientY;

@@ -2,8 +2,8 @@
  * Voice input: the phone records, the audio comes over the E2E channel in chunks, the Mac turns it
  * into text with Volcengine 豆包语音「录音文件识别 2.0 标准版」(submit, then poll query).
  *
- * The API key lives in the macOS keychain (service herdr-relay.voice). It never reaches the phone,
- * the relay, state.json or the log. HERDR_RELAY_VOLC_KEY overrides it (tests).
+ * The API key lives in the macOS keychain (service wayne-herdr-mods.voice). It never reaches the phone,
+ * the relay, state.json or the log. WAYNE_HERDR_MODS_VOLC_KEY overrides it (tests).
  */
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -11,9 +11,9 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const KEYCHAIN = { service: 'herdr-relay.voice', account: 'volcengine' };
+export const KEYCHAIN = { service: 'wayne-herdr-mods.voice', account: 'volcengine' };
 const API = 'https://openspeech.bytedance.com/api/v3/auc/bigmodel';
-export const RESOURCE = process.env.HERDR_RELAY_VOLC_RESOURCE ?? 'volc.seedasr.auc'; // 2.0 标准版
+export const RESOURCE = process.env.WAYNE_HERDR_MODS_VOLC_RESOURCE ?? 'volc.seedasr.auc'; // 2.0 标准版
 export const MAX_BYTES = 2 * 1024 * 1024;
 export const MAX_SECONDS = 120;
 const FFMPEG = ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', 'ffmpeg'];
@@ -27,7 +27,7 @@ const run = (bin, args, input) => new Promise((resolve, reject) => {
 
 // ------------------------------------------------------------------ key ---------
 export async function readKey() {
-  if (process.env.HERDR_RELAY_VOLC_KEY) return process.env.HERDR_RELAY_VOLC_KEY;
+  if (process.env.WAYNE_HERDR_MODS_VOLC_KEY) return process.env.WAYNE_HERDR_MODS_VOLC_KEY;
   try {
     const out = await run('/usr/bin/security', ['find-generic-password', '-s', KEYCHAIN.service, '-a', KEYCHAIN.account, '-w']);
     return out.toString().trim() || null;
@@ -35,7 +35,7 @@ export async function readKey() {
 }
 export async function saveKey(key) {
   // -U updates an existing item. The key is on security's argv for the few ms it runs.
-  await run('/usr/bin/security', ['add-generic-password', '-U', '-s', KEYCHAIN.service, '-a', KEYCHAIN.account, '-l', 'herdr-relay 火山语音识别', '-w', key]);
+  await run('/usr/bin/security', ['add-generic-password', '-U', '-s', KEYCHAIN.service, '-a', KEYCHAIN.account, '-l', 'wayne-herdr-mods 火山语音识别', '-w', key]);
 }
 export async function deleteKey() {
   await run('/usr/bin/security', ['delete-generic-password', '-s', KEYCHAIN.service, '-a', KEYCHAIN.account]).catch(() => {});
@@ -72,12 +72,12 @@ const hotwords = (words) => (words?.length ? { corpus: { context: JSON.stringify
  * flash API takes and what we try first.
  */
 export async function recognize(wav, { key, words = [], spell = words, fetchImpl = fetch, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), timeoutMs = 60_000 } = {}) {
-  if (!key) throw Object.assign(new Error('还没配置语音识别的 API Key：在 Mac 上运行 herdr-relay voice key'), { kind: 'no_key' });
+  if (!key) throw Object.assign(new Error('还没配置语音识别的 API Key：在 Mac 上运行 wayne-herdr-mods voice key'), { kind: 'no_key' });
   const id = randomUUID();
   const headers = { 'Content-Type': 'application/json', 'X-Api-Key': key, 'X-Api-Resource-Id': RESOURCE, 'X-Api-Request-Id': id };
   const started = Date.now();
   const body = {
-    user: { uid: 'herdr-relay' },
+    user: { uid: 'wayne-herdr-mods' },
     audio: { format: 'wav', codec: 'raw', rate: 16000, bits: 16, channel: 1, data: Buffer.from(wav).toString('base64') },
     request: { model_name: 'bigmodel', enable_itn: true, enable_punc: true, enable_ddc: false, ...hotwords(words) },
   };

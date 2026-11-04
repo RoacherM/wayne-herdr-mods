@@ -1,6 +1,6 @@
 # wayne-herdr-mods
 
-（旧名 herdr-relay。命令 `herdr-relay` 还能用；中继地址、后台服务、数据目录都没改名。）
+（2026-11-04 前叫 herdr-relay。装过旧版的话，`install` 会把配置搬过来，已配对的手机不用重配。）
 
 在手机浏览器里操作 Mac 上 [Herdr](https://herdr.dev) 的终端和 agent。不用 Tailscale：Mac 主动连 Cloudflare 上的中继，手机也连中继，中间全程端到端加密，中继只转发密文。
 
@@ -26,7 +26,7 @@ npm install
 npm run relay:deploy                 # 部署中继到你的 Cloudflare 账号（改 relay/wrangler.jsonc 和 host/service.js 里的地址）
 npm run build
 node dist/wayne-herdr-mods.mjs install  # 装命令、LaunchAgent、Herdr.app 的界面和 agent skill
-wayne-herdr-mods pair                # 手机扫码，核对 6 位数字（Herdr.app 里也可以在「手机」窗口里配对和管理）
+# 配对：在 Herdr.app 里点标签栏右上角的手机图标 →「配对新手机」，手机扫码，核对 6 位数字
 wayne-herdr-mods voice key           # 可选：火山「录音文件识别 2.0 标准版」的 API Key，存进钥匙串
 ```
 

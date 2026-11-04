@@ -1,10 +1,10 @@
 /**
  * The background host: one outbound WebSocket to the relay, one connection to herdr-core, and a
- * local control socket for the `herdr-relay` commands (pair, devices, status).
+ * local control socket for the `wayne-herdr-mods` commands (pair, devices, status, ctl).
  *
  *   phones ──relay──▶ relay-link ─▶ phones.js ─▶ terminals.js ─▶ herdr-core
  *                                        ▲
- *   herdr-relay pair / devices ──control.sock (0600, JSON lines)
+ *   wayne-herdr-mods pair / devices / ctl ──control.sock (0600, JSON lines)
  */
 import { chmod, mkdir, readFile, rm } from 'node:fs/promises';
 import net from 'node:net';
@@ -22,7 +22,7 @@ import { readKey, recognize, toWav } from './voice.js';
 
 export const DEFAULT_RELAY = 'https://herdr-relay.sir-housir.workers.dev';
 
-export async function startService({ relayUrl = process.env.HERDR_RELAY_URL ?? DEFAULT_RELAY, dataDir, coreOptions = {}, log = console.error, notifyAfterSeconds = 20 } = {}) {
+export async function startService({ relayUrl = process.env.WAYNE_HERDR_MODS_URL ?? DEFAULT_RELAY, dataDir, coreOptions = {}, log = console.error, notifyAfterSeconds = 20 } = {}) {
   const state = await createState(dataDir ? { dir: dataDir } : {});
   const desktopId = await desktopIdFor(state.signKeys.publicKey);
 
@@ -37,7 +37,7 @@ export async function startService({ relayUrl = process.env.HERDR_RELAY_URL ?? D
     minRunMs: notifyAfterSeconds * 1000,
     // Push even to phones that look connected: iOS suspends a backgrounded PWA without closing its
     // socket. The service worker drops the notification when the app is on screen.
-    notify: (payload) => push.notify(payload, { includeOnline: true }).catch((error) => log(`herdr-relay: 推送失败：${error.message}`)),
+    notify: (payload) => push.notify(payload, { includeOnline: true }).catch((error) => log(`wayne-herdr-mods: 推送失败：${error.message}`)),
   });
   const terminals = createTerminals({
     coreOptions, log,
@@ -52,14 +52,14 @@ export async function startService({ relayUrl = process.env.HERDR_RELAY_URL ?? D
   const rtc = createRtcLink({
     log,
     onOpen: (cid) => phones.open(cid),
-    onData: (cid, data) => { phones.data(cid, data).catch((error) => log(`herdr-relay: ${error.stack ?? error.message}`)); },
+    onData: (cid, data) => { phones.data(cid, data).catch((error) => log(`wayne-herdr-mods: ${error.stack ?? error.message}`)); },
     onClose: (cid) => phones.close(cid),
   });
   phones = createPhones({ state, pairing, push, terminals, voice, link: () => links, rtc, log, onChange: changed });
   link = createRelayLink({
     relayUrl, desktopId, signKeys: state.signKeys, log,
     onOpen: (cid) => phones.open(cid),
-    onData: (cid, data) => { phones.data(cid, data).catch((error) => log(`herdr-relay: ${error.stack ?? error.message}`)); },
+    onData: (cid, data) => { phones.data(cid, data).catch((error) => log(`wayne-herdr-mods: ${error.stack ?? error.message}`)); },
     onClose: (cid) => phones.close(cid),
     onStatus: () => changed(),
   });
@@ -152,7 +152,7 @@ export const controlSocketPath = (dir) => join(dir, 'control.sock');
 const HINTS = ['commit', 'push', 'pull', 'merge', 'rebase', 'branch', 'diff', 'deploy', 'bug', 'Node', 'Rust', 'Python', 'Worker', 'Cloudflare'];
 const SPELL = ['npm', 'pnpm', 'npx', 'git', 'test', 'README', 'JSON', 'API', 'PR', 'pull request', 'JavaScript', 'TypeScript', 'Claude', 'Claude Code', 'Codex', 'herdr', 'wrangler'];
 
-/** { hints, spell } for one recognition: built-ins, ~/.config/herdr-relay/voice-words.txt, the terminal's folder. */
+/** { hints, spell } for one recognition: built-ins, ~/.config/wayne-herdr-mods/voice-words.txt, the terminal's folder. */
 export async function voiceWords(dir, cwd) {
   const own = [];
   try { for (const w of (await readFile(join(dir, 'voice-words.txt'), 'utf8')).split(/\r?\n/)) if (w.trim() && !w.trim().startsWith('#')) own.push(w.trim()); } catch {}
@@ -171,10 +171,10 @@ function createVoice({ dir, log }) {
       const { hints, spell } = await voiceWords(dir, terminal?.foreground?.cwd ?? terminal?.cwd);
       try {
         const r = await recognize(wav, { key, words: hints, spell });
-        log(`herdr-relay: 语音识别 ${(wav.length / 32000).toFixed(1)} 秒音频，用时 ${r.ms} ms`);
+        log(`wayne-herdr-mods: 语音识别 ${(wav.length / 32000).toFixed(1)} 秒音频，用时 ${r.ms} ms`);
         return { text: r.text, ms: r.ms };
       } catch (error) {
-        log(`herdr-relay: 语音识别失败：${error.message}${error.logid ? ` logid=${error.logid}` : ''}`);
+        log(`wayne-herdr-mods: 语音识别失败：${error.message}${error.logid ? ` logid=${error.logid}` : ''}`);
         throw error;
       }
     },
@@ -185,7 +185,7 @@ function createVoice({ dir, log }) {
 export function controlCall(dir, m, p = {}, { timeoutMs = 65_000 } = {}) {
   return new Promise((resolve, reject) => {
     const conn = net.connect(controlSocketPath(dir));
-    const timer = setTimeout(() => { conn.destroy(); reject(new Error('herdr-relay 后台服务没有响应')); }, timeoutMs);
+    const timer = setTimeout(() => { conn.destroy(); reject(new Error('wayne-herdr-mods 后台服务没有响应')); }, timeoutMs);
     let buf = '';
     conn.on('connect', () => conn.write(JSON.stringify({ id: 1, m, p }) + '\n'));
     conn.on('data', (d) => {
@@ -200,7 +200,7 @@ export function controlCall(dir, m, p = {}, { timeoutMs = 65_000 } = {}) {
     conn.on('error', (error) => {
       clearTimeout(timer);
       reject(error.code === 'ENOENT' || error.code === 'ECONNREFUSED'
-        ? Object.assign(new Error('herdr-relay 后台服务没有运行。先运行 herdr-relay install（或前台运行 herdr-relay serve）。'), { code: 'NOT_RUNNING' })
+        ? Object.assign(new Error('wayne-herdr-mods 后台服务没有运行。先在仓库里运行 node dist/wayne-herdr-mods.mjs install（或前台运行 wayne-herdr-mods serve）。'), { code: 'NOT_RUNNING' })
         : error);
     });
   });

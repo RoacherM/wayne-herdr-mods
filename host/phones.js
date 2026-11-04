@@ -92,7 +92,7 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
       send(peer, { type: 'confirm', sas: peer.sas, desktopName: state.desktopName });
       const verdict = await pairing.ask({ cid: peer.cid, token: message.token, name: message.name, sas: peer.sas, pub: peer.pub });
       if (!peers.has(peer.cid)) return;
-      if (verdict === 'invalid') return kick(peer, 'expired', '配对二维码已失效，请在电脑上重新运行 herdr-relay pair');
+      if (verdict === 'invalid') return kick(peer, 'expired', '配对二维码已失效，请在 Mac 的 Herdr.app 里点手机图标，重新配对');
       if (verdict === 'busy') return kick(peer, 'busy', '电脑正在确认另一台设备，请稍后再试');
       if (verdict !== 'allowed') return kick(peer, 'denied', '电脑上拒绝了这次配对');
       const device = await state.addDevice({ name: message.name, pub: peer.pub });
