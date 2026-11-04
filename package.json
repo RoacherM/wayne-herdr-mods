@@ -5,8 +5,7 @@
   "type": "module",
   "description": "Wayne's Herdr kit: Herdr.app terminals in a phone browser (end-to-end encrypted relay), and our layout and mods for Herdr.app",
   "bin": {
-    "wayne-herdr-mods": "host/main.js",
-    "herdr-relay": "host/main.js"
+    "wayne-herdr-mods": "host/main.js"
   },
   "scripts": {
     "build": "node app/build.mjs && node host/build.mjs",

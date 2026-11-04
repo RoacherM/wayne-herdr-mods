@@ -52,6 +52,15 @@ wayne-herdr-mods ctl watch '{"ms":20000}'   # 有变化就返回新状态，最�
 
 `ctl` 的方法：`status`、`watch {ms}`、`pair.start`、`pair.cancel`、`pair.decide {allow}`、`devices.remove {id}`。输出一行 JSON；有二维码时带 `pairing.offer.qrSvg`。
 
+## 手机体验好不好（延迟、卡顿）
+
+```sh
+wayne-herdr-mods metrics --json --days 7   # 真实手机的数字：每个测量按直连、中继分开，p50 和 p95（毫秒）
+wayne-herdr-mods metrics                   # 同样的内容，打开一个报告页给人看
+```
+
+测量：`echo.paint` 打字到看见、`scroll.lag` 全屏程序里滑动到画面跟上、`open.ms` 打开终端、`resume.paint` 切回页面到画出来、`resume.ready` 切回到连接恢复、`rtt.ms` 往返（含排队）、`rtt.ice` 直连时的网络往返（不含排队）、`macscroll.prog` 程序回应滚轮（Mac 上，不含网络）、`macscroll.behind` 滑动时在路上的数据（KB）、`scroll.p95` 滑动时慢的帧。原始记录每天一个文件：`~/.config/wayne-herdr-mods/metrics/YYYY-MM-DD.jsonl`。改了手机网页或连接的代码后，在仓库里跑 `node dev/bench.mjs`（只看滑动：`--scroll`）（要先 `npm run build` 和 `npm run relay:dev`）：它和上次比，慢了 20% 以上会指出来，退出码 1。
+
 ## 改 Herdr.app 的界面
 
 源文件在仓库的 `herdr-app/`（`layouts/main-preview.json`、`mods/my-tabs/`、`mods/my-files/`、`mods/wayne-phones/`）。改仓库里的，不要只改 `~/.config/herdr-app/` 里的：下次安装会覆盖。

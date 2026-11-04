@@ -17,17 +17,25 @@ import { homedir, userInfo } from 'node:os';
 import { coastSteps } from '../shared/coast.js';
 import { desktopAccept } from '../shared/e2e.js';
 import { CREDIT, DATA, RESIZE, size, u32 } from './hc.js';
+import { wheelSteps } from '../shared/wheel.js';
+import { scrollWatch } from './scroll-watch.js';
 import { createUploads } from './uploads.js';
 import { MAX_BYTES as MAX_VOICE_BYTES } from './voice.js';
 
 const MAX_STREAMS = 4; // per phone
 const HISTORY_LINES = 400; // scrollback sent with the first paint
 const OUT_MERGE_MS = 4; // terminal output merged this long into one message
+// Wheel steps wait while more than this is on its way to the phone (sent, not yet drawn there), then
+// go to the program together: one redraw for many steps, so redraws never queue up on a slow
+// network (DESIGN.md「滑动延迟」).
+const WHEEL_BEHIND = 12 * 1024;
+const WHEEL_HELD_MAX = 4096; // characters of held steps (about 400): beyond, the oldest go
+const WHEEL_ANSWER_MS = 100; // a step the program has not answered yet holds the next ones this long at most
 // One wheel step, as xterm reports it to a program: SGR, or the old X10 form.
 const WHEEL_RE = /^(?:\x1b\[<6[45];\d{1,4};\d{1,4}M|\x1b\[M[`a][\x20-\xff]{2})$/;
 const KEY_RE = /^(?:(?:ctrl|alt|shift|cmd|super|meta)\+)*(?:[a-z0-9]|enter|esc|escape|tab|backspace|space|delete|del|insert|home|end|pageup|pgup|pagedown|pgdn|up|down|left|right|f(?:[1-9]|1[0-2])|[-=[\]\\;',./`])$/i;
 
-export function createPhones({ state, pairing, push, terminals, voice, link: getLink, rtc, log = () => {}, onChange = () => {} }) {
+export function createPhones({ state, pairing, push, terminals, voice, metrics, link: getLink, rtc, log = () => {}, onChange = () => {} }) {
   const peers = new Map(); // cid → peer
   let nextStream = 1;
 
@@ -67,6 +75,12 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
         const accepted = desktopAccept(state.boxKeys, text);
         Object.assign(peer, { cipher: accepted.cipher, sas: accepted.sas, pub: accepted.phonePublicKey, stage: 'auth' });
         sendRaw(peer, accepted.welcome);
+        // A paired phone: its `ready` goes with the welcome, one round trip earlier (DESIGN.md
+        // 「体验记录」). Safe: sealed with a key only the holder of the phone's secret can derive.
+        // The phone still sends `auth` next, and only that proves it: until then it is not online
+        // and nothing it sends is served (a replayed hello gets a `ready` nobody can read).
+        const known = state.deviceByKey(peer.pub);
+        if (known) { peer.early = known; await sendReady(peer, known); }
       } catch (error) {
         kick(peer, 'bad-hello', error.message);
       }
@@ -82,6 +96,9 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
 
   async function auth(peer, message) {
     if (message?.type !== 'auth') return kick(peer, 'bad-auth', 'expected auth');
+    // `ready` already sent with the welcome: this is the proof. (Pairing a phone that is paired
+    // already is the same: it is let in as itself.)
+    if (peer.early && (message.mode === 'resume' || message.mode === 'pair')) return ready(peer, peer.early, false, false);
     if (message.mode === 'resume') {
       const device = state.deviceByKey(peer.pub);
       if (!device) return kick(peer, 'unknown-device', '这台设备已被移除或尚未配对，请重新扫码配对');
@@ -101,17 +118,22 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
     return kick(peer, 'bad-auth', 'unknown auth mode');
   }
 
-  async function ready(peer, device, paired = false) {
+  async function ready(peer, device, paired = false, tell = true) {
     peer.device = device;
     peer.stage = 'ready';
     await state.updateDevice(device.id, { lastSeen: Date.now() });
     if (!peers.has(peer.cid)) return;
+    if (tell) await sendReady(peer, device, paired);
+    onChange();
+  }
+
+  async function sendReady(peer, device, paired = false) {
+    const voiceOn = Boolean(await voice?.available());
+    if (!peers.has(peer.cid)) return;
     send(peer, {
       type: 'ready', paired, deviceId: device.id, deviceName: device.name, desktopName: state.desktopName,
-      vapidPublicKey: push.publicKey, hasPush: Boolean(device.push),
-      voice: Boolean(await voice?.available()),
+      vapidPublicKey: push.publicKey, hasPush: Boolean(device.push), voice: voiceOn,
     });
-    onChange();
   }
 
   // ------------------------------------------------------------------ streams ----
@@ -141,19 +163,26 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
     const t = terminals.get(address);
     if (!t || t.state !== 'live') throw new Error(`没有正在运行的终端 ${address}`);
     const id = nextStream++;
-    const stream = { id, address, core, device: peer.device?.id, channel: null, typer: null, fit, sized: false, cols: t.cols, rows: t.rows, out: [], outTimer: null, stopped: false };
+    const stream = { id, address, core, device: peer.device?.id, channel: null, typer: null, fit, sized: false, cols: t.cols, rows: t.rows, out: [], outW: null, outTimer: null, stopped: false };
+    // Scrolling, as the Mac sees it (scroll-watch.js), to the same records as the phone's.
+    const via = String(peer.cid).startsWith('rtc:') ? 'direct' : 'relay';
+    stream.watch = scrollWatch({ record: (e) => metrics?.put(peer.device, { ctx: { src: 'mac' }, events: [{ t: Date.now(), via, ...e }] }).catch(() => {}) });
     stream.flush = () => {
       clearTimeout(stream.outTimer);
       stream.outTimer = null;
       if (!stream.out.length || stream.stopped) { stream.out = []; return; }
       const bytes = stream.out.length === 1 ? stream.out[0] : Buffer.concat(stream.out);
       stream.out = [];
-      event(peer, 'out', { s: id, d: bytes.toString('base64') });
+      // w: the phone's wheel steps the program had when these bytes began (the phone's lag, DESIGN.md「滑动延迟」).
+      event(peer, 'out', { s: id, d: bytes.toString('base64'), w: stream.outW });
+      stream.outW = null;
+      stream.watch.sent(bytes.length);
     };
     stream.stop = (reason = 'closed') => {
       if (stream.stopped) return;
       stream.stopped = true;
       stopCoast(stream);
+      stream.watch.stop();
       clearTimeout(stream.outTimer);
       peer.streams.delete(id);
       if (stream.channel !== null) core.release(stream.channel);
@@ -183,6 +212,8 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
     stream.sized = reply.resize_notifications === true;
     core.on(reply.channel, {
       onData: (bytes) => {
+        stream.watch.output(bytes.length);
+        stream.outW ??= stream.watch.w;
         stream.out.push(bytes);
         stream.outTimer ??= setTimeout(stream.flush, OUT_MERGE_MS);
       },
@@ -196,6 +227,7 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
         if (stream.stopped) return;
         stream.flush();
         stream.stopped = true;
+        stream.watch.stop();
         clearTimeout(stream.outTimer);
         peer.streams.delete(id);
         dropTyper(stream, false);
@@ -277,8 +309,39 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
     return stream.typer;
   }
 
-  function input(stream, text) {
+  function input(stream, text, coasting = false) {
     if (typeof text !== 'string' || !text || text.length > 64 * 1024) return;
+    const steps = wheelSteps(text);
+    const phone = coasting ? 0 : steps, coast = coasting ? steps : 0;
+    if (steps && (stream.held || !wheelMay(stream))) {
+      // Held, never dropped: the phone counts its own steps (`w`), so the count stays whole even
+      // when the oldest characters must go.
+      const h = stream.held ??= { text: '', phone: 0, coast: 0 };
+      h.text += text; h.phone += phone; h.coast += coast;
+      if (h.text.length > WHEEL_HELD_MAX) h.text = h.text.slice(h.text.length - WHEEL_HELD_MAX).replace(/^[^\x1b]*/, '');
+      retry(stream);
+      return;
+    }
+    if (stream.held) release(stream); // anything else goes after the steps before it
+    write(stream, text, phone, coast);
+  }
+  /** May a wheel step go to the program now: little on its way to the phone, and the last step answered. */
+  const wheelMay = (stream) => stream.watch.behind() <= WHEEL_BEHIND && stream.watch.waiting() > WHEEL_ANSWER_MS;
+  function retry(stream) {
+    stream.heldTimer ??= setTimeout(() => {
+      stream.heldTimer = null;
+      if (!stream.held || stream.stopped) return;
+      if (wheelMay(stream)) release(stream); else retry(stream);
+    }, 15);
+  }
+  /** The held wheel steps, to the program at once. */
+  function release(stream) {
+    const h = stream.held;
+    stream.held = null;
+    clearTimeout(stream.heldTimer); stream.heldTimer = null;
+    if (h?.text) write(stream, h.text, h.phone, h.coast);
+  }
+  function write(stream, text, phone = 0, coast = 0) {
     const bytes = Buffer.from(text, 'utf8');
     // In order, also while the typer is still attaching.
     stream.inputs = (stream.inputs ?? Promise.resolve()).then(async () => {
@@ -287,6 +350,8 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
       const [cols, rows] = typerSize(stream); // the device used last leads
       stream.core.send(channel, RESIZE, size(cols, rows));
       stream.core.send(channel, DATA, bytes);
+      stream.watch.steps(phone, false);
+      stream.watch.steps(coast, true);
     });
   }
 
@@ -307,12 +372,15 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
       const now = performance.now() - t0;
       let n = 0;
       while (i < times.length && times[i] <= now) { i++; n++; }
-      if (n) input(stream, d.repeat(n));
+      if (n) input(stream, d.repeat(n), true);
       if (i < times.length) stream.coast = setTimeout(tick, Math.max(1, times[i] - (performance.now() - t0)));
     };
     if (times.length) stream.coast = setTimeout(tick, Math.max(1, times[0]));
   }
-  function stopCoast(stream) { clearTimeout(stream.coast); stream.coast = null; }
+  function stopCoast(stream) {
+    clearTimeout(stream.coast); stream.coast = null;
+    if (stream.held && !stream.held.phone) stream.held = null; // a stopped coast's held steps are void too
+  }
 
   /**
    * The phone's grid changed (it turned), or the phone left (`fit` null: back, locked, in the
@@ -343,7 +411,10 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
       else if (m === 'term.fit') refit(streamOf(peer, p.s), p.fit);
       else if (m === 'term.ack') {
         const stream = streamOf(peer, p.s);
-        stream.core.send(stream.channel, CREDIT, u32(Math.max(0, Math.min(Number(p.n) || 0, 16 << 20))));
+        const n = Math.max(0, Math.min(Number(p.n) || 0, 16 << 20));
+        stream.watch.acked(n);
+        stream.core.send(stream.channel, CREDIT, u32(n));
+        if (stream.held && wheelMay(stream)) release(stream);
       }
     } catch {}
   }
@@ -451,6 +522,8 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
     },
     'push.unsubscribe': async (peer) => { await state.updateDevice(peer.device.id, { push: null }); onChange(); return { ok: true }; },
     'push.test': (peer) => push.sendTo(state.deviceById(peer.device.id), { title: 'herdr 推送测试', body: `来自「${state.desktopName}」的测试通知`, tag: 'test' }),
+    // The phone's experience records (metrics.js): times and kinds only.
+    'metrics.put': (peer, p) => { if (!metrics) throw new Error('不记录'); return metrics.put(peer.device, p); },
     'device.forget': async (peer) => { await state.removeDevice(peer.device.id); setTimeout(() => getLink()?.close(peer.cid, 'forgotten'), 50); onChange(); return { ok: true }; },
   };
 

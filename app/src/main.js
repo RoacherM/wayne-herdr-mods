@@ -18,6 +18,12 @@ import { textStyle } from './text-style.js';
 import { coastSteps } from '../../shared/coast.js';
 import { LiveLine, PASTE_LF, pasteText } from './live-line.js';
 import { MAX_MS, shrinkImage, startRecording, transcribe, upload, voiceSupported } from './voice.js';
+import { createMetrics } from './metrics.js';
+
+// Times and kinds of what happens, to the Mac (DESIGN.md「体验记录」). Never content.
+// eslint-disable-next-line no-undef
+const metrics = createMetrics({ version: typeof __APP_V__ !== 'undefined' ? __APP_V__ : '' });
+if (['localhost', '127.0.0.1'].includes(location.hostname)) globalThis.__herdrMetrics = metrics; // dev/bench.mjs
 
 // ------------------------------------------------------------------ utilities --
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -102,11 +108,15 @@ function connect(desktop, pair) {
   const relay = new Link({ relay: desktop.relay, desktopId: desktop.id, desktopKey: desktop.k, deviceKeys: deviceKeys(), pair });
   const link = new Duo(relay, localStorage.getItem(DIRECT) === 'off' ? { direct: false } : {});
   app.link = link;
+  metrics.watch(link);
   if (['localhost', '127.0.0.1'].includes(location.hostname)) globalThis.__herdrLink = link; // tests (dev/rtc-smoke.mjs)
   link.addEventListener('status', () => { renderStatus(); if (link.status !== 'ready') app.term?.lost(); });
+  let pairing = Boolean(pair);
   link.addEventListener('ready', async (e) => {
     app.info = e.detail;
-    if (e.detail.paired) {
+    // paired: false while pairing is a phone the Mac knows already (host/phones.js): it is in too.
+    if (e.detail.paired || pairing) {
+      pairing = false;
       const store = load();
       store.desktop = { ...desktop, name: e.detail.desktopName, deviceId: e.detail.deviceId, pairedAt: Date.now() };
       save(store);
@@ -114,9 +124,10 @@ function connect(desktop, pair) {
       vibrate(30);
       app.view = { name: 'home' };
     }
-    await refreshList();
+    // The open terminal first, the list at the same time: one round trip, not two (DESIGN.md「体验记录」).
     if (app.view.name === 'term') app.term?.reopen();
-    else render();
+    await refreshList();
+    if (app.view.name !== 'term') render();
     maybeResubscribePush();
   });
   link.addEventListener('ev', (e) => onEvent(e.detail));
@@ -369,6 +380,7 @@ const KEYBAR = [
   ['粘贴', 'paste'], ['Esc', '\x1b'], ['⇧Tab', '\x1b[Z'], ['^C', '\x03'], ['↑', 'up'], ['↓', 'down'], ['⏎', '\r'], ['Tab', '\t'],
   ['←', 'left'], ['→', 'right'], ['换行', PASTE_LF], ['1', '1'], ['2', '2'], ['3', '3'], ['y', 'y'], ['n', 'n'], ['^D', '\x04'], ['^R', '\x12'], ['^L', '\x0c'],
 ];
+const KEY_NAMES = new Map(KEYBAR.map(([label, seq]) => [seq, label])); // what metrics records: the key's name
 const ARROWS = { up: 'A', down: 'B', right: 'C', left: 'D' };
 const REPEAT = new Set(['up', 'down', 'left', 'right']);
 // A font the phone can read; the Mac's columns are wider than the phone, and the phone pans.
@@ -383,6 +395,8 @@ const quotePath = (p) => (/\s/.test(p) ? `"${p}"` : p);
 
 function openTerm(address) {
   app.term?.dispose();
+  metrics.op('open');
+  metrics.opening(false);
   app.view = { name: 'term', address };
   const t0 = app.list.terminals.find((t) => t.address === address);
   const page = { address, s: null, closed: false, cols: t0?.cols ?? 80, rows: t0?.rows ?? 24, unacked: 0, opening: false, early: [], sized: false, opened: false };
@@ -407,7 +421,7 @@ function openTerm(address) {
 
   const screen = h('main', { class: 'screen term' },
     h('header', { class: 'bar' },
-      h('button', { class: 'icon-btn', 'aria-label': '返回', onClick: () => { app.view = { name: 'home' }; render(); } }, icon('back')),
+      h('button', { class: 'icon-btn', 'aria-label': '返回', onClick: () => { metrics.op('back'); app.view = { name: 'home' }; render(); } }, icon('back')),
       h('div', { class: 'bar-title' }, title, sub),
       h('span', { class: 'icon-btn bar-pad' })), // keeps the title in the middle
     h('div', { class: 'term-stage' }, viewport, bubble, latestBtn),
@@ -436,6 +450,9 @@ function openTerm(address) {
     onTap: () => keys.focus(),
     remoteCoast: (v, cell) => remoteCoast(v, cell),
   });
+  viewport.addEventListener('touchstart', () => metrics.touchStart(xterm.buffer.active.type === 'alternate' ? 'program' : 'history'), { passive: true });
+  viewport.addEventListener('touchend', () => metrics.touchEnd(), { passive: true });
+  viewport.addEventListener('touchcancel', () => metrics.touchEnd(), { passive: true });
   viewport.addEventListener('pointerup', (e) => { if (e.pointerType === 'mouse' && !xterm.hasSelection()) keys.focus(); });
   const showTerm = () => { showLatest(); layout(); };
   xterm.buffer.onBufferChange(() => { if (xterm.buffer.active.type !== 'alternate') setBack(0); showTerm(); });
@@ -465,6 +482,7 @@ function openTerm(address) {
     const up = v > 0;
     app.link.notify('term.coast', { s: page.s, d: wheelReport(up), v: Math.abs(v), cell });
     const n = coastSteps(v, cell).length;
+    metrics.coasting(n);
     setBack(Math.max(0, back + (up ? n : -n)));
     return true;
   }
@@ -476,7 +494,7 @@ function openTerm(address) {
     const d = wheelReport(false).repeat(back + 2);
     setBack(0);
     if (!page.s || xterm.modes.mouseTrackingMode === 'none') return;
-    if (now) app.link.notify('term.input', { s: page.s, d }); else out(d, 0, false);
+    if (now) send(d); else out(d, 0, false);
   }
   // Nothing else on this page pans: with the keyboard up, iOS would slide the whole page.
   screen.addEventListener('touchmove', (e) => { if (!e.target.closest('.keybar, .term-viewport')) e.preventDefault(); }, { passive: false });
@@ -492,13 +510,13 @@ function openTerm(address) {
   // a program that does not read it shows as "^[[O" in its input line; focus is Herdr's to report.
   xterm.onData((d) => {
     if (!page.s || !MOUSE_REPORT.test(d)) return;
-    app.link.notify('term.input', { s: page.s, d });
+    send(d);
     // A drag on xterm itself scrolled the program's view: count it, for ↓ and for typing after it.
     const ups = (d.match(/\x1b\[<64;|\x1b\[M`/g) ?? []).length, downs = (d.match(/\x1b\[<65;|\x1b\[Ma/g) ?? []).length;
     if (ups || downs) setBack(Math.max(0, back + ups - downs));
   });
 
-  function write(b64data) {
+  function write(b64data, w = null) {
     const bytes = unb64(b64data);
     // A repaint (first paint, after a resize, after falling behind) is drawn in one frame, never
     // half (paint.js). Opened again, it brings the history again: the old one goes first.
@@ -511,14 +529,16 @@ function openTerm(address) {
         last = repaint;
       }
     }
+    const drawn = metrics.output(bytes.length, w);
     xterm.write(textStyle(last), () => {
+      drawn?.();
       if (follow.y && !placing) { placing = true; requestAnimationFrame(() => { placing = false; layout(); }); }
       // Credit only what xterm has actually drawn: a slow phone slows the stream down.
+      // Often, so the Mac knows how far behind the phone is (it holds wheel steps then, host/phones.js).
       page.unacked += bytes.length;
-      if (page.unacked >= 32 * 1024) { app.link.notify('term.ack', { s: page.s, n: page.unacked }); page.unacked = 0; }
+      if (page.unacked >= 8 * 1024) { app.link.notify('term.ack', { s: page.s, n: page.unacked }); page.unacked = 0; }
+      else page.ackTimer ??= setTimeout(() => { page.ackTimer = null; if (page.unacked && page.s) { app.link.notify('term.ack', { s: page.s, n: page.unacked }); page.unacked = 0; } }, 30);
     });
-    clearTimeout(page.ackTimer);
-    page.ackTimer = setTimeout(() => { if (page.unacked && page.s) { app.link.notify('term.ack', { s: page.s, n: page.unacked }); page.unacked = 0; } }, 100);
   }
 
   // ---- size: the Mac's columns and rows; the phone shows part of them. Where it looks, as a terminal
@@ -647,7 +667,7 @@ function openTerm(address) {
     // The first paint can arrive before term.open's reply: hold it until we know our stream id.
     if (page.s === null && page.opening) { page.early.push(msg); return; }
     if (msg.s !== page.s) return;
-    if (msg.ev === 'out') write(msg.d);
+    if (msg.ev === 'out') write(msg.d, msg.w);
     else if (msg.ev === 'size') {
       // In order with the bytes: those before were drawn for the old grid, the repaint after for
       // this one. Nothing is drawn from here until that repaint is done (sync on, see write()).
@@ -664,17 +684,19 @@ function openTerm(address) {
 
   // ---- typing: everything goes out in order; an image path waits for the program to read the file.
   let chain = Promise.resolve();
+  /** Input to the terminal; the metrics count its wheel steps (as the Mac does). */
+  function send(d) { app.link.notify('term.input', { s: page.s, d }); metrics.input(page.s, d); }
   function out(d, after = 0, latest = true) {
     if (latest) toLatest();
     chain = chain.then(async () => {
       if (page.s) {
-        app.link.notify('term.input', { s: page.s, d });
+        send(d);
         if (latest) { xterm.scrollToBottom(); follow.x = follow.y = true; showLatest(); layout(); }
       }
       if (after) await new Promise((r) => setTimeout(r, after));
     });
   }
-  const line = new LiveLine((d) => out(d));
+  const line = new LiveLine((d) => { metrics.typed(); out(d); });
   /** The textarea shows the burst; the bubble says what the line cannot. */
   function sync() {
     if (keys.value !== line.value) keys.value = line.value;
@@ -727,8 +749,10 @@ function openTerm(address) {
 
   /** A key: the program owns what went in (Tab may complete it), then the key. */
   function key(seq) {
+    metrics.op('key', KEY_NAMES.get(seq) ?? '?');
     if (seq === 'paste') { paste(); return; }
     vibrate(6);
+    metrics.typed();
     line.commit(); sync();
     // Arrows as the program asked for them: ESC O A in application mode (vim, less), else ESC [ A.
     out(ARROWS[seq] ? `\x1b${xterm.modes.applicationCursorKeysMode ? 'O' : '['}${ARROWS[seq]}` : seq);
@@ -765,6 +789,8 @@ function openTerm(address) {
     }
   }
   function pasteIn(text) {
+    metrics.op('paste');
+    metrics.typed();
     vibrate(6);
     line.commit(); sync();
     out(pasteText(text.replace(/\r\n?/g, '\n')));
@@ -791,6 +817,7 @@ function openTerm(address) {
     sendImages(files);
   });
   async function sendImages(all) {
+    metrics.op('image');
     const files = all.slice(0, 6);
     try {
       for (const [i, file] of files.entries()) {
@@ -826,6 +853,7 @@ function openTerm(address) {
       cancelled = false;
       talkBtn.setPointerCapture?.(e.pointerId);
       let r;
+      metrics.op('voice');
       try { r = await startRecording(); } catch (error) {
         held = false;
         toast(error.name === 'NotAllowedError' ? '没有麦克风权限：在 设置 → Safari → 麦克风 里允许' : `录音失败：${error.message}`, 'err');
@@ -910,6 +938,7 @@ function openTerm(address) {
   Object.assign(page, {
     onEvent, onList,
     reopen() {
+      metrics.opening(true);
       page.s = null; open();
     },
     lost() { if (page.s) { page.s = null; setStatus('notice', '连接断开，正在重连…'); } },

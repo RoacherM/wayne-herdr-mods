@@ -4,3 +4,5 @@ relay/public/
 relay/.wrangler/
 dev/shots/
 .wrangler/
+bench/report.html
+bench/events.json

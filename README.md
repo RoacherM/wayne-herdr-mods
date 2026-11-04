@@ -36,6 +36,9 @@ wayne-herdr-mods voice key           # 可选：火山「录音文件识别 2.0 
 npm run relay:dev                                  # 本地中继
 RELAY=http://127.0.0.1:8799 npm test               # 加密 + 全链路（在独立的 scratch herdr-core 上）
 node probe/sync.mjs                                # herdr-core 多窗口规则
+node dev/bench.mjs                                 # 模拟跑分：直连、中继、中继+150ms；写 bench/results.jsonl 和 bench/report.html
 ```
+
+真实手机的体验记录：`wayne-herdr-mods metrics` 打开报告页（`--json` 只出数字）。
 
 设计、协议、验证结果和没验证的部分：见 [DESIGN.md](DESIGN.md)。

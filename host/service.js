@@ -12,6 +12,7 @@ import { basename, join } from 'node:path';
 import { desktopIdFor } from '../shared/e2e.js';
 import { createNotifier } from './notify.js';
 import { createPairing } from './pairing.js';
+import { createMetricsStore } from './metrics.js';
 import { createPhones } from './phones.js';
 import { createPush } from './push.js';
 import { createRelayLink } from './relay-link.js';
@@ -46,6 +47,7 @@ export async function startService({ relayUrl = process.env.WAYNE_HERDR_MODS_URL
     onCore: () => { phones?.coreChanged(); changed(); },
   });
   const voice = createVoice({ dir: state.dir, log });
+  const metrics = createMetricsStore({ dir: state.dir });
   // Two kinds of connection carry phones: through the relay, and direct (WebRTC, `rtc:<n>`).
   const via = (cid) => (String(cid).startsWith('rtc:') ? rtc : link);
   const links = { send: (cid, data) => via(cid).send(cid, data), close: (cid, reason) => via(cid).close(cid, reason) };
@@ -55,7 +57,7 @@ export async function startService({ relayUrl = process.env.WAYNE_HERDR_MODS_URL
     onData: (cid, data) => { phones.data(cid, data).catch((error) => log(`wayne-herdr-mods: ${error.stack ?? error.message}`)); },
     onClose: (cid) => phones.close(cid),
   });
-  phones = createPhones({ state, pairing, push, terminals, voice, link: () => links, rtc, log, onChange: changed });
+  phones = createPhones({ state, pairing, push, terminals, voice, metrics, link: () => links, rtc, log, onChange: changed });
   link = createRelayLink({
     relayUrl, desktopId, signKeys: state.signKeys, log,
     onOpen: (cid) => phones.open(cid),

@@ -21,6 +21,8 @@ import { fileURLToPath } from 'node:url';
 import QRCode from 'qrcode';
 import { controlCall, DEFAULT_RELAY, startService, voiceWords } from './service.js';
 import { readHerdrFiles } from './herdr-files.js';
+import { createMetricsStore, summarize } from './metrics.js';
+import { renderReport } from './metrics-report.js';
 import { defaultDataDir } from './state.js';
 import { deleteKey, KEYCHAIN, readKey, recognize, saveKey, toWav } from './voice.js';
 
@@ -32,6 +34,7 @@ const HELP = `wayne-herdr-mods — 在手机浏览器里操作 Herdr.app 的终�
   wayne-herdr-mods pair        打开 Herdr.app 的「手机」窗口，显示配对二维码
   wayne-herdr-mods devices     列出已配对设备；devices rm <id> 移除一台
   wayne-herdr-mods status      中继、herdr-core、手机连接状态
+  wayne-herdr-mods metrics     手机体验记录的报告页（--days N 看几天，默认 7；--json 只出数字；--no-open 不打开）
   wayne-herdr-mods install     安装：命令、开机自启、Herdr.app 的界面、agent skill（旧的 herdr-relay 配置一起搬过来）
   wayne-herdr-mods uninstall   全部移除（保留密钥和设备）
   wayne-herdr-mods voice key   设置火山语音识别的 API Key（存进钥匙串）
@@ -323,7 +326,26 @@ function readHidden() {
   });
 }
 
-const commands = { serve, pair, ctl, devices, status, install, uninstall, voice: voiceCmd, '--skill': () => process.stdout.write(skillText()) };
+/** The phones' experience records → a report page (or JSON for scripts and agents). */
+async function metrics() {
+  const opt = (name) => { const i = args.indexOf(name); return i < 0 ? null : args[i + 1]; };
+  const days = Math.max(1, Math.min(30, Number(opt('--days') ?? 7) || 7));
+  const store = createMetricsStore({ dir: dataDir });
+  const summary = summarize(await store.read(days));
+  if (args.includes('--json')) {
+    // Without the timeline: an agent wants the numbers.
+    for (const g of Object.values(summary.groups)) delete g.recent;
+    return console.log(JSON.stringify(summary));
+  }
+  const out = opt('--out') ?? join(store.root, 'report.html');
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(out, renderReport(summary, { title: `手机体验记录（最近 ${days} 天）` }));
+  const n = Object.values(summary.groups).reduce((s, g) => s + g.n, 0);
+  console.log(`${n} 条记录 → ${out}`);
+  if (!args.includes('--no-open')) execFileSync('open', [out]);
+}
+
+const commands = { serve, pair, ctl, devices, status, metrics, install, uninstall, voice: voiceCmd, '--skill': () => process.stdout.write(skillText()) };
 if (!commands[cmd]) {
   console.log(HELP);
   process.exit(cmd === 'help' || cmd === '--help' ? 0 : 1);

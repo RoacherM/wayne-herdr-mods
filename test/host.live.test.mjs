@@ -174,15 +174,24 @@ test('pair, list, stream, type, send, keys — through the relay', { timeout: 12
   await rpc('term.close', { s });
   await until('closed event', () => events.some((e) => e.ev === 'closed' && e.s === s));
 
-  // --- resume on a new connection with the same device key
+  // --- resume on a new connection with the same device key: `ready` comes with the welcome (one
+  // round trip earlier), but the phone is online only once its sealed `auth` proves the key.
+  ws.close();
+  const onlineNow = async () => (await controlCall(dataDir, 'status')).devices.some((d) => d.online);
+  await until('first connection gone', async () => !(await onlineNow()));
   const ws2 = await phoneSocket(`${RELAY.replace(/^http/, 'ws')}/v1/client/${offer.i}`);
   t.after(() => ws2.close());
   assert.equal(await next(ws2), '\u0000online');
   const hs2 = phoneHandshake(P, unb64(offer.k));
   ws2.send(hs2.hello);
   const c2 = hs2.finish(await next(ws2)).cipher;
-  ws2.send(c2.seal({ type: 'auth', mode: 'resume' }));
   const ready2 = c2.open(await next(ws2));
   assert.equal(ready2.type, 'ready');
   assert.equal(ready2.paired, false);
+  await sleep(300);
+  assert.equal(await onlineNow(), false, 'not online before auth');
+  ws2.send(c2.seal({ type: 'auth', mode: 'resume' }));
+  await until('online after auth', onlineNow);
+  ws2.send(c2.seal({ id: 99, m: 'terminals.list', p: {} }));
+  assert.equal(c2.open(await next(ws2)).id, 99);
 });
