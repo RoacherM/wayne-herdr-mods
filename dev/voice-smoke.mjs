@@ -36,7 +36,7 @@ await page.evaluateOnNewDocument((delay, useReal) => {
   new MutationObserver(() => { const t = document.querySelector('.toast'); if (t && t.textContent !== window.__last) window.__toast(window.__last = t.textContent); })
     .observe(document, { childList: true, subtree: true, characterData: true });
 }, MIC_DELAY_MS, Boolean(wav));
-const live = () => page.evaluate(() => window.__streams.filter((s) => s.getTracks().some((t) => t.readyState === 'live')).length);
+const live = () => page.evaluate(() => window.__streams.filter((s) => s.getTracks().some((t) => t.readyState === 'live' && t.enabled)).length);
 const talk = () => page.$eval('.talk', (b) => ({ on: b.classList.contains('on'), text: b.textContent }));
 
 await browser.defaultBrowserContext().overridePermissions(new URL(link).origin, ['microphone']);

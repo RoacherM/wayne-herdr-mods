@@ -8,9 +8,13 @@
  *
  * Phone streams (attach) ride on the same connection: `core()` hands it out.
  */
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { CREDIT, openCore, u32 } from './hc.js';
 
 const THROTTLE_MS = 250;
+const APP_HOME = process.env.HERDR_APP_HOME || join(homedir(), '.config', 'herdr-app');
 
 export function createTerminals({ coreOptions = {}, log = () => {}, onChange = () => {}, onStatus = () => {}, onCore = () => {} }) {
   const terminals = new Map(); // address → record
@@ -146,6 +150,7 @@ export function createTerminals({ coreOptions = {}, log = () => {}, onChange = (
     retryTimer = setTimeout(connect, delay);
   }
 
+  const loadIcon = createIconLoader(APP_HOME);
   connect();
 
   return {
@@ -155,6 +160,18 @@ export function createTerminals({ coreOptions = {}, log = () => {}, onChange = (
     /** Live terminals as herdr-core reports them (argv included: for the host only). */
     raw: () => [...terminals.values()].filter((t) => t.state === 'live'),
     list: () => [...terminals.values()].filter((t) => t.state === 'live').map(project),
+    icons() {
+      const out = {};
+      for (const t of terminals.values()) {
+        if (t.state !== 'live') continue;
+        const p = project(t);
+        if (p.icon && !(p.icon in out)) {
+          const entry = loadIcon(p.icon, Boolean(p.app));
+          if (entry) out[p.icon] = entry;
+        }
+      }
+      return out;
+    },
     layout: () => layout,
     /** Retry right away (after a wake-up, or when a phone asks). */
     kick() { if (!core && !stopped) { attempt = 0; clearTimeout(retryTimer); connect(); } },
@@ -163,6 +180,25 @@ export function createTerminals({ coreOptions = {}, log = () => {}, onChange = (
 }
 
 const INTERPRETERS = /^(node|nodejs|python[0-9.]*|bun|deno|ruby|perl|php)$/;
+const SHELLS = new Set(['zsh', 'bash', 'fish', 'sh', 'dash', 'nu', 'pwsh', 'powershell', 'cmd', 'elvish', 'xonsh', 'tcsh', 'csh', 'ksh', 'ion']);
+const ALIASES = {
+  'claude-code': 'claude', agy: 'antigravity', 'cursor-agent': 'cursor', 'github-copilot': 'copilot',
+  'grok-build': 'grok', 'kiro-cli': 'kiro', qodercli: 'qoder', vi: 'vim', view: 'vim', helix: 'hx',
+  more: 'less', man: 'less', bat: 'less', gitui: 'lazygit', tig: 'lazygit', btop: 'htop', top: 'htop',
+  btm: 'htop', glances: 'htop', mosh: 'ssh', et: 'ssh', zellij: 'tmux', screen: 'tmux', grep: 'rg',
+  fzf: 'rg', fd: 'rg', find: 'rg', wget: 'curl', http: 'curl', httpie: 'curl', xh: 'curl',
+  just: 'make', ninja: 'make', bunx: 'bun', python3: 'python', ipython: 'python', pip: 'python',
+  pip3: 'python', uvx: 'uv', irb: 'ruby', bundle: 'ruby', gem: 'ruby', rails: 'ruby', rustc: 'cargo',
+  rustup: 'cargo', javac: 'java', jshell: 'java', gradlew: 'gradle', mvnw: 'mvn', artisan: 'php',
+  elixir: 'iex', mix: 'iex', ghc: 'ghci', stack: 'ghci', cabal: 'ghci', utop: 'ocaml', dune: 'ocaml',
+  opam: 'ocaml', kotlinc: 'kotlin', sbt: 'scala', luajit: 'lua', rscript: 'r', tsx: 'tsc',
+  'ts-node': 'tsc', npx: 'npm', nuxi: 'nuxt', postgres: 'psql', mariadb: 'mysql', sqlite: 'sqlite3',
+  'redis-server': 'redis-cli', mongo: 'mongosh', 'docker-compose': 'docker', lazydocker: 'docker',
+  k9s: 'kubectl', minikube: 'kubectl', kind: 'kubectl', tofu: 'terraform', 'ansible-playbook': 'ansible',
+  flyctl: 'fly', 'nix-shell': 'nix', 'nixos-rebuild': 'nix', 'apt-get': 'apt', dpkg: 'apt',
+  'rpm-ostree': 'dnf', yay: 'pacman', paru: 'pacman',
+};
+const NO_TINT = new Set(['claude', 'antigravity', 'epi', 'codex', 'pig', 'amp', 'kimi', 'kiro', 'crush']);
 
 /**
  * The program's name as a person would say it: a script run by an interpreter (`node …/bin/epi`)
@@ -176,9 +212,63 @@ export function programOf(fg) {
   return script.split('/').pop().replace(/\.(m?js|cjs|ts|py|rb|pl|php)$/, '') || fg.name;
 }
 
+/** Program icon key as Herdr.app's sidebar resolves it: agent report first, else foreground program. */
+export function iconOf(app, program) {
+  const raw = String(app || program || '').toLowerCase();
+  if (!raw) return 'shell';
+  if (SHELLS.has(raw)) return 'shell';
+  return ALIASES[raw] ?? raw;
+}
+
+function effectiveState(t) {
+  const raw = t.status?.state || null;
+  const seen = t.labels?.['herdr.seen'];
+  if (raw === 'done' && seen !== undefined && Number(seen) >= (t.turn || 0)) return 'idle';
+  return raw;
+}
+
+function readCustomPrograms(appDir) {
+  try {
+    return JSON.parse(readFileSync(join(appDir, 'programs.json'), 'utf8'))?.programs ?? {};
+  } catch {
+    return {};
+  }
+}
+
+function readIconSvg(appDir, rel) {
+  if (!rel || rel.includes('..')) return null;
+  try {
+    return readFileSync(join(appDir, rel), 'utf8').trim();
+  } catch {
+    return null;
+  }
+}
+
+function findCustomProgram(progs, key) {
+  return progs[key] ?? Object.values(progs).find((p) => p.match?.includes(key));
+}
+
+function createIconLoader(appDir) {
+  const cache = new Map();
+  let custom = null;
+  return (key, isAgent) => {
+    if (cache.has(key)) return cache.get(key);
+    custom ??= readCustomPrograms(appDir);
+    const hit = findCustomProgram(custom, key);
+    const fallback = isAgent ? 'icons/agent.svg' : 'icons/program.svg';
+    const svg = readIconSvg(appDir, hit?.icon ?? `icons/${key}.svg`) ?? readIconSvg(appDir, fallback);
+    if (!svg) return null;
+    const entry = { svg, tint: hit?.tint ?? !NO_TINT.has(key) };
+    cache.set(key, entry);
+    return entry;
+  };
+}
+
 /** What a phone sees of one terminal. Never argv or env: only display facts. */
 export function project(t) {
   const status = t.status ?? null;
+  const program = programOf(t.foreground);
+  const app = status?.app || null;
   return {
     address: t.address,
     name: t.name ?? null,
@@ -187,9 +277,10 @@ export function project(t) {
     space: t.labels?.['herdr.space'] ?? null,
     tab: t.labels?.['herdr.tab'] ?? null,
     cwd: t.foreground?.cwd ?? t.cwd ?? null,
-    program: programOf(t.foreground),
-    app: status?.app || null,
-    state: status?.state ?? null, // idle | working | done | blocked | error | null (never reported)
+    program,
+    app,
+    icon: iconOf(app, program),
+    state: effectiveState(t), // idle | working | done | blocked | error | null (never reported)
     kind: status?.kind ?? null, // permission | question | auth (blocked only)
     msg: status?.msg || null,
     progress: status?.progress ?? null,

@@ -8,7 +8,7 @@
 //     herdr-app do pane.split '{"direction":"right","mod":"my-files","props":{"file":"/abs/path.md"}}'
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState, TextView } from "gpui-base";
-import { spaces, panes, focused, props, exec, readTextFile, writeTextFile, watchFolder, theme, settings, window, appHome } from "herdr";
+import { spaces, panes, focused, props, exec, readTextFile, writeTextFile, watchFolder, theme, settings, window, appHome, openOverlay, closeOverlay, notify } from "herdr";
 
 const MOD = "mods/my-files";
 const CACHE = `${MOD}/.cache`;
@@ -26,7 +26,35 @@ const LANG = { ts: "js", tsx: "js", mts: "js", cts: "js", jsx: "js", mjs: "js", 
 const extOf = (path) => (path?.includes(".") ? path.split(".").pop().toLowerCase() : "");
 const kindOf = (path) => PREVIEW[extOf(path)] ?? null;
 const baseName = (path) => path?.split(/[\\/]/).pop() ?? "";
+const childPath = (prefix, name) => (prefix ? `${prefix}/${name}` : name);
 const OPENERS = { macos: "open", windows: "explorer", linux: "xdg-open" };
+
+function checkText(text, absPath) {
+  if (text === null) return `Cannot read ${absPath}`;
+  if (text.includes("\0")) return "Binary file · no text preview";
+  return null;
+}
+
+function makeEditor(path, text) {
+  const t = theme(), ext = extOf(path);
+  const value = text.length > 400000 ? text.slice(0, 400000) + "\n… (file truncated)" : text;
+  return EditorState.new({
+    language: LANG[ext] ?? (ext || "txt"), readonly: true, value,
+    font_family: settings().font_family, font_size: 12,
+    syntax: { keyword: t.ansi5, string: t.ansi2, comment: t.dim, function: t.ansi4, type: t.ansi3, number: t.ansi1, constant: t.ansi6 },
+  });
+}
+
+async function writeFileToClipboard(absPath, on, cx) {
+  const text = await readTextFile(absPath, { on }).catch(() => null);
+  const err = checkText(text, absPath);
+  if (err) {
+    notify({ title: "Cannot copy content", body: err, level: "warning" });
+    return false;
+  }
+  cx.write_to_clipboard(text);
+  return true;
+}
 
 // Where the panel looks: a pane's own file wins, then the focused pane's folder.
 function location() {
@@ -83,7 +111,8 @@ export default class MyFiles extends View {
   init(_props, cx) {
     this.saved = new Map();
     this.entries = new Map(); this.folders = new Set(); this.pending = new Set(); this.marks = {};
-    this.pref = "preview";
+    this.pref = "preview"; this.hovered = null; this.copied = null;
+    if (props()?.menu) return;
     this.refresh(cx);
     cx.timer.every(10000, (cx) => this.refresh(cx));
   }
@@ -102,6 +131,31 @@ export default class MyFiles extends View {
 
   /** A pane's own file is absolute; one from the tree is relative to the panel's folder. */
   abs(path) { return path?.startsWith("/") ? path : `${this.root}/${path}`; }
+
+  markCopied(id, cx) {
+    this.copied = id;
+    cx.notify();
+    cx.timer.after(1200, (cx) => {
+      if (this.copied === id) { this.copied = null; cx.notify(); }
+    });
+  }
+
+  copyPath(path, id, cx) {
+    cx.write_to_clipboard(this.abs(path));
+    this.markCopied(id, cx);
+  }
+
+  copyText(path, id, cx) {
+    if (path === this.file && this.text !== null) {
+      cx.write_to_clipboard(this.text);
+      this.markCopied(id, cx);
+      return;
+    }
+    const absPath = this.abs(path), on = this.on;
+    cx.spawn(async (cx) => {
+      if (await writeFileToClipboard(absPath, on, cx)) this.markCopied(id, cx);
+    });
+  }
 
   async loadFolder(path, context) {
     const { on, cwd: root } = context;
@@ -173,7 +227,7 @@ export default class MyFiles extends View {
   /** Opens `path` in the panel: its preview when it has one, its source otherwise. */
   show(path, cx) {
     this.code?.release(); this.code = null;
-    this.asset = null; this.text = null; this.mermaid = null; this.fileError = null;
+    this.asset = null; this.text = null; this.mermaid = null; this.fileError = null; this.hovered = null;
     this.file = path ?? null;
     this.kind = path ? kindOf(path) : null;
     if (!path) { this.preview = null; return; }
@@ -220,36 +274,78 @@ export default class MyFiles extends View {
   }
 
   loadSource(path, cx) {
-    const context = this.context, root = this.root, on = this.on;
+    const context = this.context, on = this.on, absPath = this.abs(path);
     cx.spawn(async (cx) => {
       try {
-        const text = await readTextFile(this.abs(path), { on });
+        const text = await readTextFile(absPath, { on });
         if (this.file !== path || !this.current(context)) return;
-        if (text === null) { this.fileError = `Cannot read ${this.abs(path)}`; return; }
-        if (text.includes("\0")) { this.fileError = "Binary file · no text preview"; return; }
-        const t = theme(), ext = extOf(path);
-        this.code = EditorState.new({ language: LANG[ext] ?? (ext || "txt"), readonly: true,
-          value: text.length > 400000 ? text.slice(0, 400000) + "\n… (file truncated)" : text,
-          font_family: settings().font_family, font_size: 12,
-          syntax: { keyword: t.ansi5, string: t.ansi2, comment: t.dim, function: t.ansi4, type: t.ansi3, number: t.ansi1, constant: t.ansi6 } });
+        this.fileError = checkText(text, absPath);
+        if (!this.fileError) { this.text = text; this.code = makeEditor(path, text); }
       } catch { if (this.file === path && this.current(context)) this.fileError = "Cannot preview this file (binary, too large, or unreadable)"; }
       finally { if (this.current(context)) cx.notify(); }
     });
+  }
+
+  iconBtn(id, icon, tip, t, action) {
+    const ok = this.copied === id;
+    return div().id(id).size(22).flex_none().flex().items_center().justify_center().rounded(6).cursor_pointer()
+      .text_color(ok ? t.ansi2 : t.dim).hover((s) => s.bg(t.hover).text_color(ok ? t.ansi2 : t.foreground))
+      .tooltip(ok ? "Copied" : tip)
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click((e, cx) => { cx.stop_propagation(); action(e, cx); })
+      .child(svg(`${MOD}/${ok ? "check" : icon}.svg`).size(13));
+  }
+
+  markColor(mark, t) {
+    if (mark === "A") return t.ansi2;
+    return mark === "D" || mark === "U" ? t.ansi1 : t.blocked;
+  }
+
+  rowActions(path, dir, t) {
+    const pid = `tree-path:${path}`, tid = `tree-text:${path}`;
+    return h_flex().gap(2).flex_none().items_center()
+      .child(this.iconBtn(pid, "path", "Copy path", t, (_e, cx) => this.copyPath(path, pid, cx)))
+      .when(!dir, (el) => el.child(this.iconBtn(tid, "copy", "Copy content", t, (_e, cx) => this.copyText(path, tid, cx))));
+  }
+
+  hasRowActions(path) {
+    return this.hovered === path || this.copied === `tree-path:${path}` || this.copied === `tree-text:${path}`;
+  }
+
+  openRowMenu(entry, path) {
+    openOverlay({ mod: "my-files", kind: "popup", width: 196, height: entry.dir ? 72 : 102, props: { menu: { absPath: this.abs(path), on: this.on, dir: entry.dir } } });
+  }
+
+  row(entry, path, depth, t) {
+    const open = this.folders.has(path), mark = this.marks[`${this.root}/${path}`];
+    return h_flex().id(`file-${path}`).h(28).flex_none().pl(8 + depth * 18).pr(8).gap(7).items_center().rounded(7).cursor_pointer().hover((s) => s.bg(t.hover))
+      .on_hover((on, cx) => {
+        if (on) this.hovered = path;
+        else if (this.hovered === path) this.hovered = null;
+        cx.notify();
+      })
+      .on_click((_e, cx) => entry.dir ? this.toggle(path, cx) : this.show(path, cx))
+      .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.openRowMenu(entry, path); })
+      .child(entry.dir ? svg(`${MOD}/chevron-${open ? "down" : "right"}.svg`).size(12).flex_none().text_color(t.dim) : div().w(12).flex_none())
+      .child(svg(`${MOD}/${entry.dir ? "folder" : "file"}.svg`).size(14).flex_none().text_color(t.muted))
+      .child(div().flex_1().min_w(0).truncate().child(entry.name))
+      .when(this.hasRowActions(path), (el) => el.child(this.rowActions(path, entry.dir, t)))
+      .when(Boolean(mark), (el) => el.child(div().text_size(11).text_color(this.markColor(mark, t)).child(mark)));
+  }
+
+  visibleEntry(entry, path) {
+    if (!this.onlyChanged) return true;
+    return entry.dir ? this.subtreeChanged(path) : Boolean(this.marks[`${this.root}/${path}`]);
   }
 
   rows(prefix, depth, out, t) {
     if (out.length >= TOTAL || depth > 40) return out;
     for (const entry of this.entries.get(prefix) ?? []) {
       if (out.length >= TOTAL) break;
-      const path = prefix ? `${prefix}/${entry.name}` : entry.name, open = this.folders.has(path), mark = this.marks[`${this.root}/${path}`];
-      if (this.onlyChanged && (entry.dir ? !this.subtreeChanged(path) : !mark)) continue;
-      out.push(h_flex().id(`file-${path}`).h(28).flex_none().pl(8 + depth * 18).pr(8).gap(7).items_center().rounded(7).cursor_pointer().hover((s) => s.bg(t.hover))
-        .on_click((_e, cx) => entry.dir ? this.toggle(path, cx) : this.show(path, cx))
-        .child(entry.dir ? svg(`${MOD}/chevron-${open ? "down" : "right"}.svg`).size(12).flex_none().text_color(t.dim) : div().w(12).flex_none())
-        .child(svg(`${MOD}/${entry.dir ? "folder" : "file"}.svg`).size(14).flex_none().text_color(t.muted))
-        .child(div().flex_1().min_w(0).truncate().child(entry.name))
-        .when(Boolean(mark), (el) => el.child(div().text_size(11).text_color(mark === "A" ? t.ansi2 : mark === "D" || mark === "U" ? t.ansi1 : t.blocked).child(mark))));
-      if (entry.dir && open) this.rows(path, depth + 1, out, t);
+      const path = childPath(prefix, entry.name);
+      if (!this.visibleEntry(entry, path)) continue;
+      out.push(this.row(entry, path, depth, t));
+      if (entry.dir && this.folders.has(path)) this.rows(path, depth + 1, out, t);
     }
     return out;
   }
@@ -281,21 +377,32 @@ export default class MyFiles extends View {
       .on_click(action).child(label);
   }
 
+  modeSwitch(t) {
+    return h_flex().gap(2).p(2).flex_none().rounded(7).border_1().border_color(t.border)
+      .child(this.seg(t, this.preview === "preview", "Preview", (_e, cx) => { this.pref = "preview"; this.show(this.file, cx); cx.notify(); }))
+      .child(this.seg(t, this.preview === "source", "Source", (_e, cx) => { this.pref = "source"; this.show(this.file, cx); cx.notify(); }));
+  }
+
+  headerActions(t) {
+    if (!this.file) {
+      return this.root ? this.iconBtn("files-copy-root", "path", "Copy folder path", t, (_e, cx) => this.copyPath(this.root, "files-copy-root", cx)) : div();
+    }
+    return h_flex().gap(2).flex_none().items_center()
+      .child(this.iconBtn("files-copy-path", "path", "Copy path", t, (_e, cx) => this.copyPath(this.file, "files-copy-path", cx)))
+      .child(this.iconBtn("files-copy-text", "copy", "Copy content", t, (_e, cx) => this.copyText(this.file, "files-copy-text", cx)))
+      .child(this.iconBtn("files-open", "open", "Open in default app", t, () => exec(OPENERS[window()?.platform] ?? "open", [this.abs(this.file)])));
+  }
+
   header(t) {
-    const name = baseName(this.file) || this.root?.split(/[\\/]/).pop() || "";
+    const name = baseName(this.file) || baseName(this.root);
     const switchable = Boolean(this.kind) && this.kind !== "look";
     return h_flex().id("my-files-head").h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
       .when(Boolean(this.file) && !props()?.file, (el) => el.child(div().id("files-back").w(20).cursor_pointer().text_color(t.muted)
         .on_click((_e, cx) => { this.show(null); this.refresh(cx); cx.notify(); }).child("←")))
-      .child(div().font_semibold().child(this.file ? name : "Files"))
+      .child(div().font_semibold().truncate().child(this.file ? name : "Files"))
       .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.dim).child(this.file ?? name))
-      .when(switchable, (el) => el.child(h_flex().gap(2).p(2).flex_none().rounded(7).border_1().border_color(t.border)
-        .child(this.seg(t, this.preview === "preview", "Preview", (_e, cx) => { this.pref = "preview"; this.show(this.file, cx); cx.notify(); }))
-        .child(this.seg(t, this.preview === "source", "Source", (_e, cx) => { this.pref = "source"; this.show(this.file, cx); cx.notify(); }))))
-      .when(Boolean(this.file), (el) => el.child(div().id("files-open").size(22).flex_none().flex().items_center().justify_center().rounded(6)
-        .text_color(t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground))
-        .on_click(() => exec(OPENERS[window()?.platform] ?? "open", [this.abs(this.file)]))
-        .child(svg(`${MOD}/open.svg`).size(13))));
+      .when(switchable, (el) => el.child(this.modeSwitch(t)))
+      .child(this.headerActions(t));
   }
 
   /** The preview body: markdown, an image, a Quick Look thumbnail, or the source. */
@@ -314,9 +421,50 @@ export default class MyFiles extends View {
       .when(this.kind === "look", (el) => el.child(div().text_size(11).text_color(t.dim).child("Rendered by Quick Look · first page or frame")));
   }
 
+  menuItem(id, icon, label, t, action) {
+    return h_flex().id(id).h(30).px(8).gap(8).rounded(6).items_center().cursor_pointer()
+      .text_color(t.foreground).hover((s) => s.bg(t.hover)).on_click(action)
+      .child(svg(`${MOD}/${icon}.svg`).size(13).flex_none().text_color(t.muted))
+      .child(div().flex_1().child(label));
+  }
+
+  menuView(menu, t) {
+    const close = () => closeOverlay(props().overlay);
+    return v_flex().id("my-files-menu").w_full().p(5).bg(t.popover).text_size(12.5)
+      .child(this.menuItem("menu-copy-path", "path", "Copy path", t, (_e, cx) => {
+        cx.write_to_clipboard(menu.absPath);
+        close();
+      }))
+      .when(!menu.dir, (el) => el.child(this.menuItem("menu-copy-text", "copy", "Copy content", t, (_e, cx) => {
+        cx.spawn(async (cx) => {
+          await writeFileToClipboard(menu.absPath, menu.on, cx);
+          close();
+        });
+      })))
+      .child(this.menuItem("menu-open", "open", "Open in default app", t, () => {
+        close();
+        exec(OPENERS[window()?.platform] ?? "open", [menu.absPath]);
+      }));
+  }
+
+  emptyText() {
+    if (this.error) return this.error;
+    if (this.loading) return "Loading files…";
+    if (!this.root) return "No folder";
+    return this.onlyChanged ? "Nothing changed here" : "No files";
+  }
+
+  treeView(t) {
+    return v_flex().id("files-tree").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(this.rows("", 0, [], t))
+      .when(Boolean(this.error) || !this.entries.get("")?.length, (inner) => inner.child(div().p(8).text_size(12).text_color(t.dim).child(this.emptyText())))
+      .when(this.limited, (inner) => inner.child(div().p(8).text_size(11).text_color(t.dim).child("File list limited to 500 entries per folder and 5,000 total")));
+  }
+
   render(cx) {
+    const t = theme(), menu = props()?.menu;
+    if (menu) return this.menuView(menu, t);
     if (key() !== this.context?.key) this.refresh(cx);
-    const t = theme(), panel = !props()?.file;
+    const panel = !props()?.file;
     return v_flex().id("my-files").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border)
       .text_color(t.foreground).text_size(13)
       .on_size_change((size, cx) => { this.width = size.width; cx.notify(); })
@@ -324,10 +472,7 @@ export default class MyFiles extends View {
       .when(panel && !this.file, (el) => el.child(h_flex().h(30).flex_none().px(10).gap(4).items_center().border_b(1).border_color(t.border)
         .child(this.seg(t, !this.onlyChanged, "All", (_e, cx) => { this.onlyChanged = false; cx.notify(); }))
         .child(this.seg(t, this.onlyChanged, "Changed", (_e, cx) => { this.onlyChanged = true; cx.notify(); }))))
-      .when(!this.file, (el) => el.child(v_flex().id("files-tree").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(this.rows("", 0, [], t))
-        .when(Boolean(this.error) || !this.entries.get("")?.length, (inner) => inner.child(div().p(8).text_size(12).text_color(t.dim)
-          .child(this.error || (this.loading ? "Loading files…" : this.root ? (this.onlyChanged ? "Nothing changed here" : "No files") : "No folder"))))
-        .when(this.limited, (inner) => inner.child(div().p(8).text_size(11).text_color(t.dim).child("File list limited to 500 entries per folder and 5,000 total")))))
+      .when(!this.file, (el) => el.child(this.treeView(t)))
       .when(Boolean(this.file), (el) => el.child(this.body(t)));
   }
 }

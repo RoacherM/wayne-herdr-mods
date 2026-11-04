@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fixWords, recognize } from '../host/voice.js';
 import { createUploads, MAX_UPLOAD_BYTES } from '../host/uploads.js';
+import { startRecording } from '../app/src/voice.js';
 
 const res = (status, code, body = '{}', extra = {}) => new Response(body, { status, headers: { 'x-api-status-code': code, 'x-tt-logid': 'L1', ...extra } });
 
@@ -49,4 +50,55 @@ test('hotwords come back in their own spelling', () => {
     '帮我把 phones.js 里的重连逻辑改一下，然后跑一遍 npm test，失败了就告诉我。');
   assert.equal(fixWords('看一下 Phones.JS 和 readme，提个 Pull  Request 给 claude', words), '看一下 phones.js 和 README，提个 pull request 给 Claude');
   assert.equal(fixWords('testing npmjs contest', words), 'testing npmjs contest', 'whole words only');
+});
+
+test('startRecording reuses one live MediaStream across recordings and windows without re-prompting', async () => {
+  let gumCalls = 0;
+  let currentTrack = null;
+  globalThis.window = {};
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: {
+      mediaDevices: {
+        async getUserMedia(constraints) {
+          assert.deepEqual(constraints, { audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
+          gumCalls++;
+          currentTrack = { readyState: 'live', enabled: true, stop() { this.readyState = 'ended'; } };
+          return { getTracks: () => [currentTrack] };
+        },
+      },
+    },
+  });
+  globalThis.MediaRecorder = class {
+    static isTypeSupported() { return true; }
+    constructor(stream) { this.stream = stream; this.state = 'inactive'; this.mimeType = 'audio/mp4'; }
+    start() { this.state = 'recording'; }
+    stop() {
+      this.state = 'inactive';
+      this.ondataavailable?.({ data: new Blob(['abc']) });
+      this.onstop?.();
+    }
+  };
+
+  // First press (e.g. cancelled when permission alert dismissed): acquires stream and mutes on release
+  const r1 = await startRecording();
+  assert.equal(gumCalls, 1);
+  assert.equal(currentTrack.enabled, true);
+  r1.cancel();
+  assert.equal(currentTrack.enabled, false, 'muted after cancel, not stopped');
+  assert.equal(currentTrack.readyState, 'live');
+
+  // Second press in a new terminal window: reuses the warm stream without calling getUserMedia again
+  const r2 = await startRecording();
+  assert.equal(gumCalls, 1, 'must not call getUserMedia a second time while stream is live');
+  assert.equal(currentTrack.enabled, true);
+  const blob = await r2.stop();
+  assert.equal(blob.size, 3);
+  assert.equal(currentTrack.enabled, false, 'muted after stop');
+
+  // If the OS ends the track (e.g. backgrounded), the next recording acquires a fresh stream
+  currentTrack.readyState = 'ended';
+  const r3 = await startRecording();
+  assert.equal(gumCalls, 2);
+  r3.cancel();
 });

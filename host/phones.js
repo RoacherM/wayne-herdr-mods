@@ -235,6 +235,9 @@ export function createPhones({ state, pairing, push, terminals, voice, metrics, 
       },
     });
     const now = reply.terminal ?? t;
+    if (t.status?.state === 'done' && (t.turn ?? 0) > Number(t.labels?.['herdr.seen'] ?? -1)) {
+      core.call('terminal.label', { terminal: address, labels: { 'herdr.seen': String(t.turn ?? 0) } }).catch(() => {});
+    }
     if (!stream.sized) { stream.cols = now.cols; stream.rows = now.rows; }
     if (fit && !stream.sized) refit(stream, null, true); // an older core cannot tell the view its size in step
     return { s: id, cols: now.cols, rows: now.rows, sized: stream.sized };
@@ -437,7 +440,7 @@ export function createPhones({ state, pairing, push, terminals, voice, metrics, 
   };
 
   const methods = {
-    'terminals.list': () => ({ core: terminals.state(), terminals: terminals.list(), layout: terminals.layout() }),
+    'terminals.list': () => ({ core: terminals.state(), terminals: terminals.list(), layout: terminals.layout(), icons: terminals.icons?.() ?? {} }),
     'term.open': (peer, p) => openStream(peer, addressOf(p), fitOf(p.fit), p.lead !== false),
     'term.close': (peer, p) => { peer.streams.get(Number(p.s))?.stop(); return {}; },
     // Direct link (rtc-link.js): the phone's WebRTC offer → our answer. The channel then gets its

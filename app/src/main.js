@@ -19,6 +19,7 @@ import { coastSteps } from '../../shared/coast.js';
 import { LiveLine, PASTE_LF, pasteText } from './live-line.js';
 import { MAX_MS, shrinkImage, startRecording, transcribe, upload, voiceSupported } from './voice.js';
 import { createMetrics } from './metrics.js';
+import { progIcon, statusIcon } from './prog-icons.js';
 
 // Times and kinds of what happens, to the Mac (DESIGN.md「体验记录」). Never content.
 // eslint-disable-next-line no-undef
@@ -266,16 +267,28 @@ function renderHome() {
     h('div', { id: 'groups', class: 'groups' }));
 }
 
+function rowLabel(t) {
+  if (t.state === 'idle') return null;
+  if (t.state === 'blocked') return KIND_TEXT[t.kind] ?? STATE_TEXT.blocked;
+  return STATE_TEXT[t.state] ?? null;
+}
+
+function rowSubtitle(t) {
+  const msg = t.msg && t.state !== 'idle' ? t.msg : null;
+  return [msg, base(t.cwd)].filter(Boolean).join(' · ');
+}
+
 function termRow(t) {
   const st = t.state;
-  const label = st === 'blocked' ? (KIND_TEXT[t.kind] ?? STATE_TEXT.blocked) : STATE_TEXT[st];
+  const label = rowLabel(t);
   const what = t.app || t.program || 'shell';
   return h('button', { class: `trow ${st ?? ''}`, onClick: () => openTerm(t.address) },
-    h('span', { class: `dot ${st === 'working' ? 'busy' : st === 'blocked' || st === 'error' ? 'err' : st === 'done' ? 'ok' : ''}` }),
+    progIcon(t, app.list?.icons),
     h('span', { class: 'trow-main' },
       h('b', {}, what, h('span', { class: 'addr' }, t.address)),
-      h('span', {}, [t.msg && st !== 'idle' ? t.msg : null, base(t.cwd)].filter(Boolean).join(' · '))),
-    label ? h('span', { class: `tag ${st}` }, label) : null);
+      h('span', {}, rowSubtitle(t))),
+    label ? h('span', { class: `tag ${st}` }, label) : null,
+    statusIcon(st));
 }
 
 // A space's name as the Mac shows it. Herdr.app names a space after where its terminals are now
@@ -399,6 +412,7 @@ function openTerm(address) {
   metrics.opening(false);
   app.view = { name: 'term', address };
   const t0 = app.list.terminals.find((t) => t.address === address);
+  if (t0?.state === 'done') t0.state = 'idle'; // looking turns done into idle, as on Herdr.app
   const page = { address, s: null, closed: false, cols: t0?.cols ?? 80, rows: t0?.rows ?? 24, unacked: 0, opening: false, early: [], sized: false, opened: false };
   app.term = page;
   const status = { notice: '', uploading: '', composing: '', voice: null }; // what the bubble may say
