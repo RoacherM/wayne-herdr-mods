@@ -1,8 +1,8 @@
-// herdr-relay in Herdr.app: the phones paired with this Mac, and pairing a new one.
-// Opened as a dialog (`mod.open herdr-relay`): the phone icon in the tab bar, or `herdr-relay pair` in a shell.
-// Written by `herdr-relay install`; edits here are replaced on the next install.
+// wayne-herdr-mods in Herdr.app (this mod keeps the old name herdr-relay): the phones paired with this Mac, and pairing a new one.
+// Opened as a dialog (`mod.open herdr-relay`): the phone icon in the tab bar, or `wayne-herdr-mods pair` in a shell.
+// Written by `wayne-herdr-mods install` from the repo's herdr-app/; edits here are replaced on the next install.
 //
-// Everything goes through the herdr-relay command (`herdr-relay ctl <method> <json>`), which talks
+// Everything goes through the command (`wayne-herdr-mods ctl <method> <json>`), which talks
 // to the running host: status, pair.start / pair.cancel / pair.decide, devices.remove, and watch
 // (answers when anything changes, or after 20 s), so the dialog follows phones coming and going.
 
@@ -11,12 +11,12 @@ import { v_flex, h_flex } from "gpui-base";
 import { exec, home, appHome, theme, notify } from "herdr";
 import * as fs from "fs/promises";
 
-const BIN = () => `${home()}/.local/bin/herdr-relay`;
+const BIN = () => `${home()}/.local/bin/wayne-herdr-mods`;
 const QR_DIR = "data/herdr-relay"; // under ~/.config/herdr-app: where image() looks
 
 async function ctl(method, params = {}) {
   const r = await exec(BIN(), ["ctl", method, JSON.stringify(params)]);
-  if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim() || `herdr-relay ctl ${method}: exit ${r.code}`);
+  if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim() || `wayne-herdr-mods ctl ${method}: exit ${r.code}`);
   return JSON.parse(r.stdout);
 }
 
@@ -56,7 +56,7 @@ export default class Phones extends View {
 
   async close() {
     this.closed = true;
-    // A QR still waiting for a phone goes with the dialog (as Ctrl-C does in `herdr-relay pair`).
+    // A QR still waiting for a phone goes with the dialog (as Ctrl-C does in `wayne-herdr-mods pair`).
     if (this.v?.pairing?.offer && !this.v?.pairing?.request) await exec(BIN(), ["ctl", "pair.cancel", "{}"]);
   }
 
@@ -110,7 +110,7 @@ export default class Phones extends View {
         .child(div().text_size(11).text_color(t.dim).child("Esc")));
     if (!v) {
       return root.child(div().text_color(this.error ? t.blocked : t.muted).child(this.error
-        ? `herdr-relay 没有在运行（${this.error}）。在终端里运行 herdr-relay install。`
+        ? `后台服务没有在运行（${this.error}）。在仓库里运行 node dist/wayne-herdr-mods.mjs install。`
         : "读取中…"));
     }
     const ok = (s) => s === "online";

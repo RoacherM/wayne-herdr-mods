@@ -1,4 +1,6 @@
-# herdr-relay
+# wayne-herdr-mods
+
+（旧名 herdr-relay。命令 `herdr-relay` 还能用；中继地址、后台服务、数据目录都没改名。）
 
 在手机浏览器里操作 Mac 上 [Herdr](https://herdr.dev) 的终端和 agent。不用 Tailscale：Mac 主动连 Cloudflare 上的中继，手机也连中继，中间全程端到端加密，中继只转发密文。
 
@@ -13,7 +15,9 @@ iPhone（PWA） ──wss──▶ Cloudflare Worker + Durable Object ◀──w
 - 按住说话：手机录音，Mac 调火山语音识别，文字填进输入框
 - 在工作区里新建终端标签页
 - agent 等你确认、出错、完成长任务时推送（添加到主屏幕后）
-- 多个 Mac 窗口同时看：手机跟随 Mac 的尺寸，不抢；手机上和 Mac 一样的排版，左右滑动看全
+- 手机布局：手机打开终端，终端换成手机的大小；回到 Mac 上打字，换回 Mac 的大小，不用按键切换
+- Herdr.app 里我们的界面（`herdr-app/`）：布局 main-preview、标签栏、文件面板；标签栏右上角的手机图标打开「手机」窗口，在里面配对和管理手机
+- 给 agent 用：`wayne-herdr-mods --skill`（就是 `SKILL.md`），安装时也装进 `~/.agents/skills/`
 
 ## 安装
 
@@ -21,9 +25,9 @@ iPhone（PWA） ──wss──▶ Cloudflare Worker + Durable Object ◀──w
 npm install
 npm run relay:deploy                 # 部署中继到你的 Cloudflare 账号（改 relay/wrangler.jsonc 和 host/service.js 里的地址）
 npm run build
-node dist/herdr-relay.mjs install    # 复制到 ~/.local/share/herdr-relay，装 LaunchAgent
-herdr-relay pair                     # 手机扫码，核对 6 位数字（Herdr.app 里也可以在「手机」窗口里配对和管理）
-herdr-relay voice key                # 可选：火山「录音文件识别 2.0 标准版」的 API Key，存进钥匙串
+node dist/wayne-herdr-mods.mjs install  # 装命令、LaunchAgent、Herdr.app 的界面和 agent skill
+wayne-herdr-mods pair                # 手机扫码，核对 6 位数字（Herdr.app 里也可以在「手机」窗口里配对和管理）
+wayne-herdr-mods voice key           # 可选：火山「录音文件识别 2.0 标准版」的 API Key，存进钥匙串
 ```
 
 ## 测试

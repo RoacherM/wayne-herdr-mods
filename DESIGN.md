@@ -1,4 +1,6 @@
-# herdr-relay 设计（草案）
+# wayne-herdr-mods 设计（草案）
+
+> 2026-11-04 起项目叫 wayne-herdr-mods（旧名 herdr-relay）：手机网页和 Herdr.app 里的界面是一套东西，agent 照 `SKILL.md` 用它。改了名的只有仓库、npm 包、命令（`herdr-relay` 留作别名）。没改的：中继地址 `herdr-relay.sir-housir.workers.dev`（已配对的手机和主屏幕上的 PWA 都记着它）、加密协议里的标签、launchd 的 `com.roacherm.herdr-relay`、`~/.local/share/herdr-relay`、数据目录、日志、钥匙串、mod 名 `herdr-relay`。下文的 `herdr-relay` 命令都可以换成 `wayne-herdr-mods`。
 
 在手机浏览器里看和操作这台 Mac 上 Herdr.app 的终端和 agent。不用 Tailscale，不用 SSH，不开端口。做法照 `dsh-pair`（`~/Projects/sides/dsh-plugins/dsh-pair`）：Cloudflare 上放一个中继，电脑只往外连。
 
@@ -118,7 +120,7 @@ iPhone 浏览器 / PWA ──wss /v1/client/<id>──▶ Cloudflare Worker + DO
 | `mods/my-files/` | 文件面板 | 复制自 `files` 0.1.12 |
 | `mods/herdr-relay/` | 「手机」窗口和它的图标 `phone.svg` | 新写 |
 
-- 改界面就改仓库里的文件，再运行 `herdr-relay install`。install 把 `herdr-app/` 打进 `herdr-relay.mjs`，写进 `~/.config/herdr-app/`，内容没变的文件不写（写了 Herdr 会重新加载那个 mod）。在 Herdr.app 里直接改的文件，下次 install 会被覆盖，要先复制回仓库。
+- 改界面就改仓库里的文件，再运行 `herdr-relay install`。install 把 `herdr-app/` 打进 `wayne-herdr-mods.mjs`，写进 `~/.config/herdr-app/`，内容没变的文件不写（写了 Herdr 会重新加载那个 mod）。在 Herdr.app 里直接改的文件，下次 install 会被覆盖，要先复制回仓库。
 - install 不切换布局。换一台 Mac，要在 Herdr 里选一次 `main-preview`（`herdr-app do layout.switch --name main-preview`）。
 - 不放进来的：Herdr 自带的布局和 mod（每次启动重写），Herdr 自己写的 `gpui-kit.d.ts`、`jsconfig.json`，个人设置 `settings.json`、`keys.json`。
 - 不加快捷键；早先版本加在 `keys.json` 的 ⌘⇧M，install 和 uninstall 都会删掉。
@@ -156,7 +158,7 @@ iPhone 浏览器 / PWA ──wss /v1/client/<id>──▶ Cloudflare Worker + DO
   - 直连每 5 秒 ping 一次，15 秒没回音就算断。断了马上回到中继，终端在中继上重新打开；之后 3 秒、15 秒、1 分钟、5 分钟再试。
   - 打不通（比如手机在蜂窝网络、Mac 在 NAT 后面）就一直用中继，跟以前一样。
 - **看得到**：首页状态写「已直连」或「已连接」（中继）。`localStorage['herdr-relay.direct'] = 'off'` 只用中继，用来对比。
-- **主机端**：`host/rtc-link.js`，用纯 JS 的 werift（不用原生模块），打包进 `dist/herdr-relay.mjs`（打包后 1.5 MB）。最多 6 条直连，多了关最旧的。
+- **主机端**：`host/rtc-link.js`，用纯 JS 的 werift（不用原生模块），打包进 `dist/wayne-herdr-mods.mjs`（打包后 1.5 MB）。最多 6 条直连，多了关最旧的。
 
 测试：`test/rtc-link.test.mjs`（主机端，werift 扮手机），`dev/rtc-smoke.mjs`（无头 Chrome，10 项：自动直连、终端、83 KB 回复分片、断开退回、再直连、关掉直连）。
 
@@ -177,7 +179,8 @@ shared/pieces.js     直连数据通道上的分片
 relay/               从 dsh-pair 复制：Worker + DO + 静态网页
 host/                新写：中继连接、配对、hc 适配、推送、命令行
 app/                 新写：手机网页（终端列表 + xterm.js 终端页），build 到 relay/public
-herdr-app/           Herdr.app 里我们的界面：布局 main-preview、标签栏、文件面板、「手机」窗口；build 时打进 herdr-relay.mjs
+herdr-app/           Herdr.app 里我们的界面：布局 main-preview、标签栏、文件面板、「手机」窗口；build 时打进 dist/wayne-herdr-mods.mjs
+SKILL.md             给 agent 的用法；`--skill` 打印它，install 装进 ~/.agents/skills/wayne-herdr-mods
 probe/               hc.mjs（分帧客户端）、sync.mjs（多窗口同步 probe）
 test/                e2e.test.mjs（加密）、host.live.test.mjs（全链路）
 dev/                 fake-desktop.mjs（假 Mac）、ui-smoke.mjs（无头 iPhone 截图）

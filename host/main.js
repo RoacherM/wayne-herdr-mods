@@ -1,17 +1,19 @@
 #!/usr/bin/env node
 /**
- * herdr-relay — control Herdr.app terminals from a phone browser.
+ * wayne-herdr-mods (old name: herdr-relay) — control Herdr.app terminals from a phone browser,
+ * and our part of Herdr.app's UI (herdr-app/). SKILL.md: how an agent uses it.
  *
- *   herdr-relay serve       run the host in the foreground (what the LaunchAgent runs)
- *   herdr-relay pair        pair a phone: in Herdr.app's 手机 dialog when it runs, else a QR here
- *   herdr-relay ctl <m> [json]  one control call, JSON out (what the Herdr.app mod uses)
- *   herdr-relay devices     list paired devices;  devices rm <id>  removes one
- *   herdr-relay status      relay / herdr-core / phones at a glance
- *   herdr-relay install     copy this build to ~/.local/share/herdr-relay and start it at login
- *   herdr-relay uninstall   stop it and remove the LaunchAgent (keeps keys and devices)
+ *   wayne-herdr-mods serve       run the host in the foreground (what the LaunchAgent runs)
+ *   wayne-herdr-mods pair        pair a phone: in Herdr.app's 手机 dialog when it runs, else a QR here
+ *   wayne-herdr-mods ctl <m> [json]  one control call, JSON out (what the Herdr.app mod uses)
+ *   wayne-herdr-mods devices     list paired devices;  devices rm <id>  removes one
+ *   wayne-herdr-mods status      relay / herdr-core / phones at a glance
+ *   wayne-herdr-mods install     copy this build to ~/.local/share/herdr-relay and start it at login
+ *   wayne-herdr-mods uninstall   stop it and remove the LaunchAgent (keeps keys and devices)
+ *   wayne-herdr-mods --skill     print SKILL.md (for an agent)
  */
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync, chmodSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
@@ -22,18 +24,20 @@ import { readHerdrFiles } from './herdr-files.js';
 import { defaultDataDir } from './state.js';
 import { deleteKey, readKey, recognize, saveKey, toWav } from './voice.js';
 
-const LABEL = 'com.roacherm.herdr-relay';
-const HELP = `herdr-relay — 在手机浏览器里操作 Herdr.app 的终端
+const NAME = 'wayne-herdr-mods';
+const LABEL = 'com.roacherm.herdr-relay'; // kept: launchd, the data and log paths and the keychain keep the old name
+const HELP = `wayne-herdr-mods — 在手机浏览器里操作 Herdr.app 的终端；Herdr.app 里我们的界面（旧名 herdr-relay，也能用）
 
-  herdr-relay serve       前台运行（LaunchAgent 跑的就是它）
-  herdr-relay pair        配对手机：Herdr.app 开着就在它的「手机」窗口里，否则在这里显示二维码
-  herdr-relay devices     列出已配对设备；devices rm <id> 移除一台
-  herdr-relay status      中继、herdr-core、手机连接状态
-  herdr-relay install     复制到 ~/.local/share/herdr-relay 并开机自启
-  herdr-relay uninstall   停止并移除自启（保留密钥和设备）
-  herdr-relay voice key   设置火山语音识别的 API Key（存进钥匙串）
-  herdr-relay voice test  用一段 Mac 朗读的中文试一次识别
-  herdr-relay voice off   删除 API Key，关掉语音输入`;
+  wayne-herdr-mods serve       前台运行（LaunchAgent 跑的就是它）
+  wayne-herdr-mods pair        配对手机：Herdr.app 开着就在它的「手机」窗口里，否则在这里显示二维码
+  wayne-herdr-mods devices     列出已配对设备；devices rm <id> 移除一台
+  wayne-herdr-mods status      中继、herdr-core、手机连接状态
+  wayne-herdr-mods install     复制到 ~/.local/share/herdr-relay 并开机自启
+  wayne-herdr-mods uninstall   停止并移除自启（保留密钥和设备）
+  wayne-herdr-mods voice key   设置火山语音识别的 API Key（存进钥匙串）
+  wayne-herdr-mods voice test  用一段 Mac 朗读的中文试一次识别
+  wayne-herdr-mods voice off   删除 API Key，关掉语音输入
+  wayne-herdr-mods --skill     给 agent 看的用法（SKILL.md）`;
 const dataDir = defaultDataDir();
 const [cmd = 'help', ...args] = process.argv.slice(2);
 
@@ -106,7 +110,7 @@ function openInHerdr() {
 /** One control call for the mod: JSON out. A pairing offer carries its QR as SVG. */
 async function ctl() {
   const [method, json = '{}'] = args;
-  if (!method) throw new Error('用法：herdr-relay ctl <method> [json]');
+  if (!method) throw new Error('用法：wayne-herdr-mods ctl <method> [json]');
   const v = await controlCall(dataDir, method, JSON.parse(json), { timeoutMs: 40_000 });
   const offer = v?.pairing?.offer;
   if (offer) offer.qrSvg = await QRCode.toString(offer.link, { type: 'svg', margin: 1, errorCorrectionLevel: 'L' });
@@ -116,7 +120,7 @@ async function ctl() {
 async function pair() {
   if (args[0] !== '--here' && openInHerdr()) {
     await controlCall(dataDir, 'pair.start');
-    console.log('已在 Herdr.app 的「手机」窗口里显示二维码，扫码后在那里确认核对码。\n（在终端里配对：herdr-relay pair --here）');
+    console.log('已在 Herdr.app 的「手机」窗口里显示二维码，扫码后在那里确认核对码。\n（在终端里配对：wayne-herdr-mods pair --here）');
     return;
   }
   let v = await controlCall(dataDir, 'pair.start');
@@ -139,20 +143,20 @@ async function pair() {
       if (answer !== 'y' && answer !== 'yes') { console.log('已拒绝。'); break; }
       continue;
     }
-    if (!v.pairing.offer) { console.log('\n二维码已过期。重新运行 herdr-relay pair。'); break; }
+    if (!v.pairing.offer) { console.log('\n二维码已过期。重新运行 wayne-herdr-mods pair。'); break; }
   }
   rl.close();
 }
 
 async function devices() {
   if (args[0] === 'rm' || args[0] === 'remove') {
-    if (!args[1]) throw new Error('用法：herdr-relay devices rm <id 前几位>');
+    if (!args[1]) throw new Error('用法：wayne-herdr-mods devices rm <id 前几位>');
     await controlCall(dataDir, 'devices.remove', { id: args[1] });
     console.log('已移除。这台设备要重新扫码才能连接。');
     return;
   }
   const v = await controlCall(dataDir, 'status');
-  if (!v.devices.length) { console.log('还没有配对的设备。运行 herdr-relay pair。'); return; }
+  if (!v.devices.length) { console.log('还没有配对的设备。运行 wayne-herdr-mods pair。'); return; }
   for (const d of v.devices) {
     console.log(`${d.id.slice(0, 8)}  ${d.name.padEnd(16)}  ${d.online ? '在线' : '离线'}  推送${d.push ? '开' : '关'}  上次 ${fmtAgo(d.lastSeen)}`);
   }
@@ -174,22 +178,29 @@ async function status() {
 // ------------------------------------------------------------------ install ----
 const home = homedir();
 const installDir = join(home, '.local', 'share', 'herdr-relay');
-const binPath = join(home, '.local', 'bin', 'herdr-relay');
+const binDir = join(home, '.local', 'bin');
+const binPath = join(binDir, NAME);
+const binPaths = [binPath, join(binDir, 'herdr-relay')]; // the old name keeps working
+// The skill, where this Mac keeps skills (~/.agents/skills), linked from ~/.claude/skills.
+const skillDir = join(home, '.agents', 'skills', NAME);
+const skillLink = join(home, '.claude', 'skills', NAME);
+// eslint-disable-next-line no-undef
+const skillText = () => (typeof __SKILL__ !== 'undefined' ? __SKILL__ : readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'SKILL.md'), 'utf8'));
 const plistPath = join(home, 'Library', 'LaunchAgents', `${LABEL}.plist`);
 const logPath = join(home, 'Library', 'Logs', 'herdr-relay.log');
 const uid = process.getuid();
 
 function install() {
   const self = fileURLToPath(import.meta.url);
-  if (!/\.mjs$/.test(self) || !readFileSync(self, 'utf8').includes('herdr-relay bundle')) {
-    throw new Error('install 要从打包好的文件运行：npm run build && node dist/herdr-relay.mjs install');
+  if (!/\.mjs$/.test(self) || !readFileSync(self, 'utf8').includes('wayne-herdr-mods bundle')) {
+    throw new Error('install 要从打包好的文件运行：npm run build && node dist/wayne-herdr-mods.mjs install');
   }
   mkdirSync(installDir, { recursive: true, mode: 0o700 });
   const target = join(installDir, 'herdr-relay.mjs');
   copyFileSync(self, target);
-  mkdirSync(dirname(binPath), { recursive: true });
-  writeFileSync(binPath, `#!/bin/sh\nexec "${process.execPath}" "${target}" "$@"\n`);
-  chmodSync(binPath, 0o755);
+  mkdirSync(binDir, { recursive: true });
+  for (const p of binPaths) { writeFileSync(p, `#!/bin/sh\nexec "${process.execPath}" "${target}" "$@"\n`); chmodSync(p, 0o755); }
+  const skill = installSkill();
   mkdirSync(dirname(plistPath), { recursive: true });
   writeFileSync(plistPath, `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -212,13 +223,23 @@ function install() {
     catch (error) { if (i >= 20) throw error; execFileSync('/bin/sleep', ['0.3']); }
   }
   const mod = installMod();
-  const herdr = mod ? `\n  Herdr  ${mod}（布局 main-preview；「手机」窗口：标签栏右上角的手机图标，或 herdr-relay pair）` : '';
-  console.log(`已安装：\n  程序   ${target}\n  命令   ${binPath}\n  自启动 ${plistPath}\n  日志   ${logPath}${herdr}\n\n下一步：herdr-relay pair`);
+  const herdr = mod ? `\n  Herdr  ${mod}（布局 main-preview；「手机」窗口：标签栏右上角的手机图标，或 wayne-herdr-mods pair）` : '';
+  console.log(`已安装：\n  程序   ${target}\n  命令   ${binPath}\n  自启动 ${plistPath}\n  日志   ${logPath}${herdr}${skill ? `\n  Skill  ${skill}` : ''}\n\n下一步：wayne-herdr-mods pair`);
+}
+
+/** SKILL.md for agents: ~/.agents/skills/<name>/, and a link in ~/.claude/skills when that exists. */
+function installSkill() {
+  mkdirSync(skillDir, { recursive: true });
+  writeFileSync(join(skillDir, 'SKILL.md'), skillText());
+  if (existsSync(dirname(skillLink)) && !existsSync(skillLink)) symlinkSync(join('..', '..', '.agents', 'skills', NAME), skillLink);
+  return skillDir;
 }
 
 function uninstall() {
   try { execFileSync('launchctl', ['bootout', `gui/${uid}/${LABEL}`], { stdio: 'ignore' }); } catch {}
-  for (const p of [plistPath, binPath]) if (existsSync(p)) rmSync(p);
+  for (const p of [plistPath, ...binPaths]) if (existsSync(p)) rmSync(p);
+  rmSync(skillLink, { force: true });
+  rmSync(skillDir, { recursive: true, force: true });
   rmSync(installDir, { recursive: true, force: true });
   uninstallMod();
   console.log(`已停止并移除。密钥和已配对设备保留在 ${dataDir}（删除这个目录等于重置所有配对）。`);
@@ -239,13 +260,13 @@ async function voiceCmd() {
     key = String(key ?? '').trim();
     if (!key) throw new Error('没有输入 Key');
     await saveKey(key);
-    console.log('已存进钥匙串（herdr-relay.voice）。运行 herdr-relay voice test 试一次。');
+    console.log('已存进钥匙串（herdr-relay.voice）。运行 wayne-herdr-mods voice test 试一次。');
     return;
   }
   if (sub === 'off') { await deleteKey(); console.log('已删除 API Key。手机上不再显示麦克风键（重开网页后生效）。'); return; }
   if (sub === 'test') {
     const key = await readKey();
-    if (!key) throw new Error('还没有 Key：先运行 herdr-relay voice key');
+    if (!key) throw new Error('还没有 Key：先运行 wayne-herdr-mods voice key');
     const text = args.slice(1).join(' ') || '帮我把 phones.js 里的重连逻辑改一下，然后跑一遍 npm test，失败了就告诉我';
     const { mkdtemp, readFile, rm } = await import('node:fs/promises');
     const { tmpdir } = await import('node:os');
@@ -263,7 +284,7 @@ async function voiceCmd() {
     return;
   }
   const key = await readKey();
-  console.log(key ? `语音输入：已开启（Key 末 4 位 …${key.slice(-4)}）` : '语音输入：未开启。运行 herdr-relay voice key');
+  console.log(key ? `语音输入：已开启（Key 末 4 位 …${key.slice(-4)}）` : '语音输入：未开启。运行 wayne-herdr-mods voice key');
 }
 
 function readHidden() {
@@ -282,7 +303,7 @@ function readHidden() {
   });
 }
 
-const commands = { serve, pair, ctl, devices, status, install, uninstall, voice: voiceCmd };
+const commands = { serve, pair, ctl, devices, status, install, uninstall, voice: voiceCmd, '--skill': () => process.stdout.write(skillText()) };
 if (!commands[cmd]) {
   console.log(HELP);
   process.exit(cmd === 'help' || cmd === '--help' ? 0 : 1);

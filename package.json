@@ -1,10 +1,11 @@
 {
-  "name": "herdr-relay",
+  "name": "wayne-herdr-mods",
   "version": "0.1.3",
   "private": true,
   "type": "module",
-  "description": "Control Herdr.app terminals from a phone browser through an end-to-end encrypted Cloudflare relay",
+  "description": "Wayne's Herdr kit: Herdr.app terminals in a phone browser (end-to-end encrypted relay), and our layout and mods for Herdr.app",
   "bin": {
+    "wayne-herdr-mods": "host/main.js",
     "herdr-relay": "host/main.js"
   },
   "scripts": {
