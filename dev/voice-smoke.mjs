@@ -45,7 +45,7 @@ await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => b
 await page.waitForFunction(() => document.querySelectorAll('.trow').length >= 4, { timeout: 25_000 });
 await page.evaluate(() => document.querySelector('.group.needs .trow, .trow').click());
 await page.waitForSelector('.talk:not(.off)', { visible: true, timeout: 10_000 });
-await pause(800); // the conversation view settles the footer (its message box) first
+await pause(800); // the footer settles first
 const box = await (await page.$('.talk')).boundingBox();
 const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
 

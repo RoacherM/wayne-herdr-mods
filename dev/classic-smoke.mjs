@@ -14,7 +14,6 @@ page.on('pageerror', (e) => { console.log('[pageerror]', e.message); process.exi
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) process.exitCode = 1; };
 
-await page.evaluateOnNewDocument(() => { localStorage.setItem('herdr-relay.mode', 'term'); });
 await page.goto(link, { waitUntil: 'networkidle0' });
 await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => b.innerText.includes('开始配对')).click());
 await page.waitForFunction(() => document.querySelectorAll('.trow').length >= 2, { timeout: 25_000 });

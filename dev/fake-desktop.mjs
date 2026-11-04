@@ -4,7 +4,7 @@
 //   node dev/fake-desktop.mjs          # prints a pairing link; auto-approves the pairing
 // Ctrl-C stops the scratch core. Herdr.app's own core is never touched.
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openCore } from '../host/hc.js';
@@ -20,7 +20,7 @@ const b64 = (s) => Buffer.from(s).toString('base64');
 const mac = await openCore({ session: SESSION });
 const term = async (script, where, cwd = '/tmp') => (await mac.call('terminal.run', { argv: ['/bin/sh', '-c', script], cwd, labels: { where }, rm: true })).address;
 // A process named `claude` (a copied system shell is killed by macOS; a tiny compiled one is not),
-// so the host finds a "Claude Code" transcript for it in the made-up home below.
+// so the list shows it as Claude Code.
 const fakeBin = await mkdtemp(join(tmpdir(), 'herdr-relay-bin-'));
 await writeFile(join(fakeBin, 'claude.c'), '#include <stdlib.h>\nint main(int c, char **v) { return c > 1 ? system(v[1]) : 0; }\n');
 execFileSync('cc', ['-O1', '-o', join(fakeBin, 'claude'), join(fakeBin, 'claude.c')]);
@@ -41,39 +41,8 @@ await mac.call('doc.set', { name: 'herdr-app', version: doc.version, value: { sp
 // A Mac window viewing the claude terminal at a desktop size.
 for (const t of [claude, shell, codex, logs]) await mac.call('terminal.attach', { terminal: t, cols: 110, rows: 34 });
 
-// A made-up home with the claude terminal's transcript: 150 turns, so the conversation view pages.
-const home = await mkdtemp(join(tmpdir(), 'herdr-relay-home-'));
-let claudePid = null;
-for (let i = 0; i < 50 && !claudePid; i++) { const t = await mac.call('terminal.get', { terminal: claude }); if (t.foreground?.name === 'claude') claudePid = t.foreground.pid; else await new Promise((r) => setTimeout(r, 100)); }
-const sessionId = '0f0f0f0f-1111-2222-3333-444444444444';
-await mkdir(join(home, '.claude', 'sessions'), { recursive: true });
-await mkdir(join(home, '.claude', 'projects', '-tmp'), { recursive: true });
-await writeFile(join(home, '.claude', 'sessions', `${claudePid}.json`), JSON.stringify({ pid: claudePid, sessionId, cwd: '/tmp' }));
-const convFile = join(home, '.claude', 'projects', '-tmp', `${sessionId}.jsonl`);
-const line = (type, content) => JSON.stringify({ parentUuid: null, isSidechain: false, type, message: { role: type, content }, timestamp: new Date().toISOString() });
-const turns = [];
-for (let i = 1; i <= 150; i++) {
-  turns.push(line('user', `第 ${i} 个问题：host/phones.js 里的第 ${i} 处要怎么改？`));
-  turns.push(line('assistant', [{ type: 'thinking', thinking: 'hidden' }, { type: 'text', text: `先看一下第 ${i} 处。` }, { type: 'tool_use', id: `tu${i}`, name: 'Bash', input: { command: `grep -n "case ${i}" host/phones.js` } }]));
-  turns.push(line('user', [{ type: 'tool_result', tool_use_id: `tu${i}`, content: `${i}:  case ${i}: return x;` }]));
-  turns.push(line('assistant', [{ type: 'text', text: `**第 ${i} 处**改好了：\n\n- 去掉了重复的分支\n- 加了 \`return\`\n\n\`\`\`js\ncase ${i}: return y;\n\`\`\`` }]));
-}
-await writeFile(convFile, `${turns.join('\n')}\n`);
-// And a Codex session for the codex terminal (made after it started, in the same folder).
-const day = new Date(), pad = (n) => String(n).padStart(2, '0');
-const codexDir = join(home, '.codex', 'sessions', String(day.getFullYear()), pad(day.getMonth() + 1), pad(day.getDate()));
-await mkdir(codexDir, { recursive: true });
-const done = (item) => JSON.stringify({ timestamp: new Date().toISOString(), type: 'event_msg', payload: { type: 'item_completed', item } });
-await writeFile(join(codexDir, 'rollout-2026-01-01T00-00-00-0f0f0f0f.jsonl'), `${[
-  JSON.stringify({ timestamp: new Date().toISOString(), type: 'session_meta', payload: { cwd: '/tmp', timestamp: new Date().toISOString(), originator: 'codex-tui' } }),
-  JSON.stringify({ timestamp: new Date().toISOString(), type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '# AGENTS.md 注入的说明' }] } }),
-  done({ type: 'UserMessage', id: 'u1', content: [{ type: 'text', text: '跑一下 site 的测试' }] }),
-  done({ type: 'CommandExecution', id: 'c1', command: ['/bin/zsh', '-lc', 'npm test'], parsed_cmd: [{ type: 'unknown', cmd: 'npm test' }], aggregated_output: '30 passing', exit_code: 0, status: 'completed' }),
-  done({ type: 'AgentMessage', id: 'a1', phase: 'final_answer', content: [{ type: 'Text', text: 'Codex：测试全部通过。' }] }),
-].join('\n')}\n`);
-console.log(`CONV ${convFile}`);
 const dataDir = process.env.DATA_DIR ?? await mkdtemp(join(tmpdir(), 'herdr-relay-ui-'));
-const svc = await startService({ relayUrl: RELAY, dataDir, coreOptions: { session: SESSION }, log: (m) => console.error(m), home });
+const svc = await startService({ relayUrl: RELAY, dataDir, coreOptions: { session: SESSION }, log: (m) => console.error(m) });
 for (;;) { const v = await controlCall(dataDir, 'status'); if (v.relay === 'online' && v.core === 'online') break; await new Promise((res) => setTimeout(res, 200)); }
 const start = await controlCall(dataDir, 'pair.start');
 console.log(`LINK ${start.pairing.offer.link}`);

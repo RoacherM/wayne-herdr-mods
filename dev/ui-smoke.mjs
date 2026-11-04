@@ -21,8 +21,6 @@ const clickText = async (text) => {
 };
 const screenText = () => page.evaluate(() => document.querySelector('.xterm-rows')?.innerText ?? '');
 
-// These checks are about the terminal itself: agents open there, not in the conversation view.
-await page.evaluateOnNewDocument(() => localStorage.setItem('herdr-relay.mode', 'term'));
 await page.goto(link, { waitUntil: 'networkidle0' });
 await shot('1-welcome');
 await clickText('开始配对');

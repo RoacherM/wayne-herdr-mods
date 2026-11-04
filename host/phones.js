@@ -7,9 +7,8 @@
  *   {m, p}       a notification, no answer (term.input, term.ack: these are hot paths; term.coast:
  *                the coast after a flick, see shared/coast.js)
  * Host → phone:
- *   {ev, ...}    terminals (list changed), out (terminal bytes), closed (stream over), size,
- *                conv (a conversation's new items, a fresh page after `reset`, or `live`: the
- *                bottom of the agent's screen while it works)
+ *   {ev, ...}    terminals (list changed), out (terminal bytes), closed (stream over), size (the
+ *                terminal's new grid, in order with out: the repaint at that size follows)
  *
  * Only the methods below reach herdr-core. Nothing here forwards a raw RPC: herdr-core's socket
  * has no password, so `machine.exec`, `file.*`, `terminal.run`, `server.*` stay unreachable.
@@ -18,18 +17,17 @@ import { homedir, userInfo } from 'node:os';
 import { coastSteps } from '../shared/coast.js';
 import { desktopAccept } from '../shared/e2e.js';
 import { CREDIT, DATA, RESIZE, size, u32 } from './hc.js';
-import { programOf } from './terminals.js';
-import { createConversations } from './transcripts.js';
 import { createUploads } from './uploads.js';
 import { MAX_BYTES as MAX_VOICE_BYTES } from './voice.js';
 
 const MAX_STREAMS = 4; // per phone
 const HISTORY_LINES = 400; // scrollback sent with the first paint
+const OUT_MERGE_MS = 4; // terminal output merged this long into one message
 // One wheel step, as xterm reports it to a program: SGR, or the old X10 form.
 const WHEEL_RE = /^(?:\x1b\[<6[45];\d{1,4};\d{1,4}M|\x1b\[M[`a][\x20-\xff]{2})$/;
 const KEY_RE = /^(?:(?:ctrl|alt|shift|cmd|super|meta)\+)*(?:[a-z0-9]|enter|esc|escape|tab|backspace|space|delete|del|insert|home|end|pageup|pgup|pagedown|pgdn|up|down|left|right|f(?:[1-9]|1[0-2])|[-=[\]\\;',./`])$/i;
 
-export function createPhones({ state, pairing, push, terminals, voice, link: getLink, rtc, log = () => {}, onChange = () => {}, home }) {
+export function createPhones({ state, pairing, push, terminals, voice, link: getLink, rtc, log = () => {}, onChange = () => {} }) {
   const peers = new Map(); // cid → peer
   let nextStream = 1;
 
@@ -43,7 +41,6 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
 
   function open(cid) {
     const peer = { cid, stage: 'hello', cipher: null, device: null, streams: new Map(), uploads: createUploads(), recognizing: false };
-    peer.convs = createConversations({ home, find: findAgent, peek, emit: (c, payload) => event(peer, 'conv', { c, ...payload }) });
     peers.set(cid, peer);
   }
 
@@ -51,8 +48,7 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
     const peer = peers.get(cid);
     if (!peer) return;
     peers.delete(cid);
-    for (const stream of peer.streams.values()) stream.stop();
-    peer.convs.closeAll();
+    for (const stream of [...peer.streams.values()]) stream.stop('dropped');
     pairing.dropped(cid);
     if (peer.device) onChange();
   }
@@ -120,13 +116,22 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
 
   // ------------------------------------------------------------------ streams ----
   /**
-   * One phone viewer of one terminal. It attaches as a non-observe viewer with `resumed: true`
-   * at the terminal's current size: herdr-core then never lets it lead the size until it types.
-   * Before each burst of input it re-states the terminal's *current* size, so typing on the phone
-   * never shrinks the Mac windows (DESIGN.md「多个窗口怎么同步」). The phone shows the Mac's size
-   * and pans across it.
+   * One phone viewer of one terminal, made of two herdr-core viewers:
+   *  - the view: `observe` with `resize_notifications`. What the phone shows. herdr-core sends RESIZE
+   *    on this channel before the repaint at the new size, so the phone changes its grid in step
+   *    with the bytes (forwarded as `size`). It never sets the size.
+   *  - the typer: a typing viewer. Its own bytes are dropped (credited at once). Two ways:
+   *    - with `fit` (the phone's own grid; DESIGN.md「手机布局」): attached at once at that size, not
+   *      resumed, so it leads: the program redraws for the phone. Each burst re-states the size, so
+   *      the device used last leads (typing on the Mac takes the Mac's size back; herdr-core
+   *      viewers.rs `touch`). `term.fit` with no size (the phone left the page or locked) detaches
+   *      it, and the Mac windows lead again at once.
+   *    - without (an older phone page): opened at the first input with `resumed: true` at the size
+   *      the view last saw, so herdr-core never lets it lead; each burst re-states that size, and
+   *      typing on the phone never changes the Mac windows.
+   * Output is merged for OUT_MERGE_MS: a repaint comes in 16 KB frames, and reaches the phone whole.
    */
-  async function openStream(peer, address) {
+  async function openStream(peer, address, fit = null, lead = true) {
     if (peer.streams.size >= MAX_STREAMS) {
       const oldest = peer.streams.values().next().value;
       oldest.stop('replaced');
@@ -136,36 +141,71 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
     const t = terminals.get(address);
     if (!t || t.state !== 'live') throw new Error(`没有正在运行的终端 ${address}`);
     const id = nextStream++;
-    const stream = { id, address, core, channel: null, stopped: false };
+    const stream = { id, address, core, device: peer.device?.id, channel: null, typer: null, fit, sized: false, cols: t.cols, rows: t.rows, out: [], outTimer: null, stopped: false };
+    stream.flush = () => {
+      clearTimeout(stream.outTimer);
+      stream.outTimer = null;
+      if (!stream.out.length || stream.stopped) { stream.out = []; return; }
+      const bytes = stream.out.length === 1 ? stream.out[0] : Buffer.concat(stream.out);
+      stream.out = [];
+      event(peer, 'out', { s: id, d: bytes.toString('base64') });
+    };
     stream.stop = (reason = 'closed') => {
       if (stream.stopped) return;
       stream.stopped = true;
       stopCoast(stream);
+      clearTimeout(stream.outTimer);
       peer.streams.delete(id);
       if (stream.channel !== null) core.release(stream.channel);
+      dropTyper(stream, reason === 'moved' || reason === 'dropped');
       event(peer, 'closed', { s: id, reason });
     };
+    // The same terminal opened again on this connection (the page reopened it): the new stream
+    // replaces the old, and takes over its typer (no second resize).
+    const same = [...peer.streams.values()].filter((x) => x.address === address);
+    for (const old of same) old.stop('moved');
+    await Promise.all(same.map((old) => old.parking));
     peer.streams.set(id, stream);
+    // With `fit`, the typer leads before the view attaches: the first paint is at the phone's size.
+    // `lead: false` (opened again after a reconnect, while a Mac window led): at the first input.
+    if (fit && lead) await typer(stream);
     let reply;
     try {
-      reply = await core.call('terminal.attach', { terminal: address, cols: t.cols, rows: t.rows, history: HISTORY_LINES, resumed: true });
+      reply = await core.call('terminal.attach', { terminal: address, cols: t.cols, rows: t.rows, history: HISTORY_LINES, observe: true, resize_notifications: true });
     } catch (error) {
+      stream.stopped = true;
       peer.streams.delete(id);
+      dropTyper(stream, false);
       throw error;
     }
     if (stream.stopped) { core.release(reply.channel); return { s: id }; }
     stream.channel = reply.channel;
+    stream.sized = reply.resize_notifications === true;
     core.on(reply.channel, {
-      onData: (bytes) => event(peer, 'out', { s: id, d: bytes.toString('base64') }),
+      onData: (bytes) => {
+        stream.out.push(bytes);
+        stream.outTimer ??= setTimeout(stream.flush, OUT_MERGE_MS);
+      },
+      onResize: (cols, rows) => {
+        stream.flush(); // the bytes before it were drawn for the old size
+        stream.cols = cols;
+        stream.rows = rows;
+        event(peer, 'size', { s: id, cols, rows });
+      },
       onClose: (reason) => {
         if (stream.stopped) return;
+        stream.flush();
         stream.stopped = true;
+        clearTimeout(stream.outTimer);
         peer.streams.delete(id);
+        dropTyper(stream, false);
         event(peer, 'closed', { s: id, reason: reason?.reason ?? 'closed', exitCode: reason?.exit_code ?? null });
       },
     });
     const now = reply.terminal ?? t;
-    return { s: id, cols: now.cols, rows: now.rows };
+    if (!stream.sized) { stream.cols = now.cols; stream.rows = now.rows; }
+    if (fit && !stream.sized) refit(stream, null, true); // an older core cannot tell the view its size in step
+    return { s: id, cols: now.cols, rows: now.rows, sized: stream.sized };
   }
 
   function streamOf(peer, s) {
@@ -174,12 +214,80 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
     return stream;
   }
 
+  /** The terminal's size now: what the view's RESIZE said (in step with its bytes), else the events'. */
+  function sizeOf(stream) {
+    if (stream.sized) return [stream.cols, stream.rows];
+    const t = terminals.get(stream.address);
+    return t ? [t.cols, t.rows] : [stream.cols, stream.rows];
+  }
+
+  /**
+   * A phone's typer outlives its stream for a moment when the connection moved (relay ↔ direct) or
+   * dropped: the stream opened again on the new connection takes it over. Released at once, the Mac
+   * windows would lead until the new one attached, and the program would redraw twice (flicker).
+   */
+  const PARK_MS = 4000;
+  const parked = new Map(); // `${device}|${address}` → { channel, core, timer }
+  function dropTyper(stream, keep) {
+    const pending = stream.typer;
+    stream.typer = null;
+    stream.parking = pending?.then((ch) => {
+      if (ch === null) return;
+      const key = `${stream.device}|${stream.address}`;
+      if (!keep || !stream.fit || !stream.device || parked.has(key)) { stream.core.release(ch); return; }
+      parked.set(key, { channel: ch, core: stream.core, timer: setTimeout(() => { parked.delete(key); stream.core.release(ch); }, PARK_MS) });
+    });
+  }
+  function unpark(stream) {
+    const key = `${stream.device}|${stream.address}`, p = parked.get(key);
+    if (!p) return null;
+    parked.delete(key);
+    clearTimeout(p.timer);
+    if (p.core !== stream.core) { p.core.release(p.channel); return null; }
+    return p.channel;
+  }
+  /** Handlers of a typer channel: its own output is not wanted (credited at once). */
+  function ownTyper(stream, channel) {
+    stream.core.on(channel, {
+      onData: (bytes) => stream.core.send(channel, CREDIT, u32(bytes.length)),
+      onClose: () => { if (!stream.stopped && stream.typer) stream.typer = null; },
+    });
+  }
+
+  /** The size the typer states: the phone's own, or the one the Mac windows set. */
+  const typerSize = (stream) => stream.fit ?? sizeOf(stream);
+
+  /** The typing viewer's channel, attached when first needed; null if it could not be. */
+  function typer(stream) {
+    if (!stream.typer) {
+      const [cols, rows] = typerSize(stream);
+      const kept = stream.fit ? unpark(stream) : null;
+      if (kept !== null) {
+        ownTyper(stream, kept);
+        stream.core.send(kept, RESIZE, size(cols, rows)); // leads again (the phone may have turned)
+        stream.typer = Promise.resolve(kept);
+        return stream.typer;
+      }
+      stream.typer = stream.core.call('terminal.attach', { terminal: stream.address, cols, rows, history: 0, resumed: !stream.fit }).then((r) => {
+        if (stream.stopped) { stream.core.release(r.channel); return null; }
+        ownTyper(stream, r.channel);
+        return r.channel;
+      }, () => { stream.typer = null; return null; });
+    }
+    return stream.typer;
+  }
+
   function input(stream, text) {
     if (typeof text !== 'string' || !text || text.length > 64 * 1024) return;
-    const t = terminals.get(stream.address);
-    // Follow the size the Mac windows set.
-    if (t) stream.core.send(stream.channel, RESIZE, size(t.cols, t.rows));
-    stream.core.send(stream.channel, DATA, Buffer.from(text, 'utf8'));
+    const bytes = Buffer.from(text, 'utf8');
+    // In order, also while the typer is still attaching.
+    stream.inputs = (stream.inputs ?? Promise.resolve()).then(async () => {
+      const channel = await typer(stream);
+      if (channel === null || stream.stopped) return;
+      const [cols, rows] = typerSize(stream); // the device used last leads
+      stream.core.send(channel, RESIZE, size(cols, rows));
+      stream.core.send(channel, DATA, bytes);
+    });
   }
 
   /**
@@ -206,10 +314,33 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
   }
   function stopCoast(stream) { clearTimeout(stream.coast); stream.coast = null; }
 
+  /**
+   * The phone's grid changed (it turned), or the phone left (`fit` null: back, locked, in the
+   * background). In order with the input, so a burst never goes out at a stale size.
+   */
+  function refit(stream, fit, force = false) {
+    if (!stream.sized && !force) return;
+    const next = fitOf(fit);
+    stream.inputs = (stream.inputs ?? Promise.resolve()).then(async () => {
+      if (stream.stopped) return;
+      stream.fit = next;
+      if (!next) {
+        const ch = stream.typer && await stream.typer;
+        stream.typer = null;
+        if (ch !== null && ch !== undefined) stream.core.release(ch); // the Mac windows lead again
+        return;
+      }
+      const had = stream.typer;
+      const channel = await typer(stream);
+      if (had && channel !== null && !stream.stopped) stream.core.send(channel, RESIZE, size(...next));
+    });
+  }
+
   function notify(peer, { m, p = {} }) {
     try {
       if (m === 'term.input') { const stream = streamOf(peer, p.s); stopCoast(stream); input(stream, p.d); }
       else if (m === 'term.coast') coast(streamOf(peer, p.s), p);
+      else if (m === 'term.fit') refit(streamOf(peer, p.s), p.fit);
       else if (m === 'term.ack') {
         const stream = streamOf(peer, p.s);
         stream.core.send(stream.channel, CREDIT, u32(Math.max(0, Math.min(Number(p.n) || 0, 16 << 20))));
@@ -217,30 +348,16 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
     } catch {}
   }
 
-  /** The agent's screen now (no history), for the live part of its conversation. */
-  async function peek(address) {
-    const core = terminals.core();
-    if (!core) return '';
-    return (await core.call('terminal.read', { terminal: address, lines: 0 })).text ?? '';
-  }
-
-  /** A terminal's foreground program, for its transcript (transcripts.js); argv stays on the Mac. */
-  function findAgent(address) {
-    const t = terminals.get(address);
-    const fg = t?.foreground;
-    const program = programOf(fg);
-    if (!program) return null;
-    const others = terminals.raw()
-      .filter((o) => o.address !== address && o.foreground?.cwd === fg.cwd && programOf(o.foreground) === program)
-      .map((o) => o.foreground);
-    return { fg, program, others };
-  }
-
   // ------------------------------------------------------------------ RPC --------
   const call = async (method, params) => {
     const core = terminals.core();
     if (!core) throw new Error('herdr-core 未运行');
     return core.call(method, params);
+  };
+  /** The phone's grid, [cols, rows], or null. */
+  const fitOf = (f) => {
+    const cols = Math.trunc(Number(f?.cols)), rows = Math.trunc(Number(f?.rows));
+    return cols >= 20 && cols <= 500 && rows >= 5 && rows <= 300 ? [cols, rows] : null;
   };
   const addressOf = (p) => {
     const address = String(p.address ?? '');
@@ -250,21 +367,16 @@ export function createPhones({ state, pairing, push, terminals, voice, link: get
 
   const methods = {
     'terminals.list': () => ({ core: terminals.state(), terminals: terminals.list(), layout: terminals.layout() }),
-    'term.open': (peer, p) => openStream(peer, addressOf(p)),
+    'term.open': (peer, p) => openStream(peer, addressOf(p), fitOf(p.fit), p.lead !== false),
     'term.close': (peer, p) => { peer.streams.get(Number(p.s))?.stop(); return {}; },
-    // A coding agent's conversation from its transcript (transcripts.js): the phone names the terminal only.
     // Direct link (rtc-link.js): the phone's WebRTC offer → our answer. The channel then gets its
     // own handshake and auth like any connection; this only introduces the two sides.
     'rtc.offer': (peer, p) => { if (!rtc) throw new Error('不支持直连'); return rtc.answer(p.sdp); },
     // The phone moved to its other connection: this one stays as the spare, with nothing open.
     'link.idle': (peer) => {
       for (const stream of [...peer.streams.values()]) stream.stop('moved');
-      peer.convs.closeAll();
       return {};
     },
-    'conv.open': (peer, p) => peer.convs.open(addressOf(p)),
-    'conv.older': (peer, p) => peer.convs.older(p.c, p.before),
-    'conv.close': (peer, p) => { peer.convs.close(p.c); return {}; },
     'term.send': async (peer, p) => {
       const text = String(p.text ?? '').trim();
       if (!text) throw new Error('消息不能为空');

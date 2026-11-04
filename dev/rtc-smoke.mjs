@@ -24,7 +24,6 @@ const rtt = (over) => page.evaluate(async (over) => {
   return { p50: times[15], p90: times[27] };
 }, over);
 
-await page.evaluateOnNewDocument(() => localStorage.setItem('herdr-relay.mode', 'term'));
 await page.goto(link, { waitUntil: 'networkidle0' });
 await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => b.innerText.includes('开始配对')).click());
 await page.waitForFunction(() => document.querySelectorAll('.trow').length >= 4, { timeout: 25_000 });

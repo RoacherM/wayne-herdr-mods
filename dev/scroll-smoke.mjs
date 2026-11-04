@@ -9,6 +9,8 @@ import puppeteer from 'puppeteer-core';
 const link = process.argv[2];
 const browser = await puppeteer.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new', args: ['--no-sandbox'] });
 const page = await browser.newPage();
+// The Mac-size view (a Mac window leads), panned: the page asks for no grid of its own (DESIGN.md「手机布局」).
+await page.evaluateOnNewDocument(() => { globalThis.__herdrPan = true; });
 await page.emulate({ viewport: { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true },
   userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1' });
 page.on('pageerror', (e) => console.log('[pageerror]', e.message));

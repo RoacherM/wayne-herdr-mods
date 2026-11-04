@@ -13,6 +13,8 @@ const where = (w) => hc('ls').terminals.find((t) => t.where === w).address;
 const size = (w) => { const t = hc('get', where(w)); return `${t.cols}x${t.rows}`; };
 const browser = await puppeteer.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new', args: ['--no-sandbox'] });
 const page = await browser.newPage();
+// The Mac-size view (a Mac window leads), panned: the page asks for no grid of its own (DESIGN.md「手机布局」).
+await page.evaluateOnNewDocument(() => { globalThis.__herdrPan = true; });
 await page.emulate({ viewport: { width: 430, height: 932, deviceScaleFactor: 2, isMobile: true, hasTouch: true },
   userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1' });
 page.on('pageerror', (e) => { console.log('[pageerror]', e.message); process.exitCode = 1; });
@@ -25,8 +27,6 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 const until = async (what, fn, ms = 10_000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return check(true, what); await pause(150); } check(false, what); };
 const clickText = (sel, t) => page.evaluate((s, x) => [...document.querySelectorAll(s)].find((b) => b.innerText.trim() === x)?.click(), sel, t);
 
-// These checks are about the terminal itself: agents open there, not in the conversation view.
-await page.evaluateOnNewDocument(() => localStorage.setItem('herdr-relay.mode', 'term'));
 await page.goto(link, { waitUntil: 'networkidle0' });
 await clickText('button', '开始配对');
 await page.waitForFunction(() => document.querySelectorAll('.trow').length >= 4, { timeout: 25_000 });

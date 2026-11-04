@@ -148,8 +148,27 @@ test('pair, list, stream, type, send, keys — through the relay', { timeout: 12
   // --- methods outside the whitelist never reach herdr-core
   await assert.rejects(rpc('machine.exec', { argv: ['id'] }), /未知方法/);
 
-  // --- the phone never sets the size: there is no method for it
-  await assert.rejects(rpc('term.fit', { s, fit: { cols: 44, rows: 20 } }), /未知方法/);
+  // --- the phone's own grid (DESIGN.md「手机布局」): opened with `fit`, the terminal takes it; the
+  // phone away (`term.fit` with none), the Mac window leads again; typed on the phone, the phone's.
+  const sizeNow = async () => { const g = await mac.call('terminal.get', { terminal: address }); return `${g.cols}x${g.rows}`; };
+  const sizeIs = (want) => until(`size ${want}`, async () => (await sizeNow()) === want, 3000);
+  const fitted = await rpc('term.open', { address, fit: { cols: 44, rows: 20 } });
+  await sizeIs('44x20');
+  notify('term.fit', { s: fitted.s, fit: null });
+  await sizeIs('120x40');
+  notify('term.fit', { s: fitted.s, fit: { cols: 44, rows: 20 } }); // back on the page
+  await sizeIs('44x20');
+  mac.send(macView.channel, 0, Buffer.from(' \x7f')); // DATA: the Mac types: the Mac leads
+  await sizeIs('120x40');
+  notify('term.input', { s: fitted.s, d: ' \x7f' }); // the phone types: the phone leads
+  await sizeIs('44x20');
+  notify('term.fit', { s: fitted.s, fit: { cols: 50, rows: 22 } }); // the phone turned
+  await sizeIs('50x22');
+  notify('term.fit', { s: fitted.s, fit: { cols: 5000, rows: 22 } }); // nonsense: the phone gives way
+  await sizeIs('120x40');
+  await rpc('term.close', { s: fitted.s });
+  assert.equal(await sizeNow(), '120x40');
+  await assert.rejects(rpc('term.fit', { s, fit: { cols: 44, rows: 20 } }), /未知方法/); // a notification only
 
   // --- close
   await rpc('term.close', { s });
