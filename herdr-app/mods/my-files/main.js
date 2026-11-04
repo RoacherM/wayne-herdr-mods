@@ -7,12 +7,39 @@
 //   - a pane of its own:
 //     herdr-app do pane.split '{"direction":"right","mod":"my-files","props":{"file":"/abs/path.md"}}'
 import { View, div, svg, image } from "gpui-kit";
-import { v_flex, h_flex, Editor, EditorState, TextView } from "gpui-base";
+import { v_flex, h_flex, Editor, EditorState, TextView, set_theme } from "gpui-base";
 import { spaces, panes, focused, props, exec, readTextFile, writeTextFile, watchFolder, theme, settings, window, appHome, openOverlay, closeOverlay, notify } from "herdr";
 
 const MOD = "mods/my-files";
 const CACHE = `${MOD}/.cache`;
 const PER_FOLDER = 500, TOTAL = 5000;
+let appliedSelection = null, syncingSelection = false;
+
+function selectionOverlayColor(bg, sel) {
+  if (!bg || !sel || bg.length < 7 || sel.length < 7) return "#6087b359";
+  const a = 0x59 / 255;
+  const ch = (hex, i) => parseInt(hex.slice(i, i + 2), 16);
+  const unblend = (i) => {
+    const v = Math.round((ch(sel, i) - (1 - a) * ch(bg, i)) / a);
+    return Math.max(0, Math.min(255, v)).toString(16).padStart(2, "0");
+  };
+  return `#${unblend(1)}${unblend(3)}${unblend(5)}59`;
+}
+
+function syncSelectionTheme(t, cx) {
+  const key = `${t.background}:${t.selection}:${cx.theme()?.colors?.selection}`;
+  if (syncingSelection || key === appliedSelection) return;
+  syncingSelection = true;
+  const selection = selectionOverlayColor(t.background, t.selection);
+  cx.spawn(async (cx) => {
+    try {
+      set_theme({ colors: { selection } });
+      appliedSelection = `${t.background}:${t.selection}:${cx.theme()?.colors?.selection}`;
+    } finally {
+      syncingSelection = false;
+    }
+  });
+}
 
 // md: rendered as text. image: shown as-is. look: whatever the system can render.
 const PREVIEW = {
@@ -462,6 +489,7 @@ export default class MyFiles extends View {
 
   render(cx) {
     const t = theme(), menu = props()?.menu;
+    syncSelectionTheme(t, cx);
     if (menu) return this.menuView(menu, t);
     if (key() !== this.context?.key) this.refresh(cx);
     const panel = !props()?.file;
