@@ -3,7 +3,8 @@
  * herdr-relay — control Herdr.app terminals from a phone browser.
  *
  *   herdr-relay serve       run the host in the foreground (what the LaunchAgent runs)
- *   herdr-relay pair        show a pairing QR, confirm the phone's 6-digit code here
+ *   herdr-relay pair        pair a phone: in Herdr.app's 手机 dialog when it runs, else a QR here
+ *   herdr-relay ctl <m> [json]  one control call, JSON out (what the Herdr.app mod uses)
  *   herdr-relay devices     list paired devices;  devices rm <id>  removes one
  *   herdr-relay status      relay / herdr-core / phones at a glance
  *   herdr-relay install     copy this build to ~/.local/share/herdr-relay and start it at login
@@ -17,6 +18,7 @@ import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import QRCode from 'qrcode';
 import { controlCall, DEFAULT_RELAY, startService, voiceWords } from './service.js';
+import { readHerdrFiles } from './herdr-files.js';
 import { defaultDataDir } from './state.js';
 import { deleteKey, readKey, recognize, saveKey, toWav } from './voice.js';
 
@@ -24,7 +26,7 @@ const LABEL = 'com.roacherm.herdr-relay';
 const HELP = `herdr-relay — 在手机浏览器里操作 Herdr.app 的终端
 
   herdr-relay serve       前台运行（LaunchAgent 跑的就是它）
-  herdr-relay pair        显示配对二维码，在这里确认手机上的 6 位核对码
+  herdr-relay pair        配对手机：Herdr.app 开着就在它的「手机」窗口里，否则在这里显示二维码
   herdr-relay devices     列出已配对设备；devices rm <id> 移除一台
   herdr-relay status      中继、herdr-core、手机连接状态
   herdr-relay install     复制到 ~/.local/share/herdr-relay 并开机自启
@@ -52,7 +54,71 @@ async function serve() {
   process.on('SIGTERM', stop);
 }
 
+// ------------------------------------------------------------------ Herdr.app ---
+// Our part of Herdr.app lives in the repo's herdr-app/ (DESIGN.md「Herdr.app 里的界面」): the layout
+// main-preview, its tab bar my-tabs (with the phone icon) and file panel my-files, and the 手机
+// dialog, the mod herdr-relay. `install` writes it into ~/.config/herdr-app; the repo is where to edit.
+// `uninstall` takes the dialog away and leaves the layout. No key: an older install's ⌘⇧M goes away.
+const MOD = 'herdr-relay';
+const herdrHome = () => process.env.HERDR_APP_HOME || join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'herdr-app');
+// eslint-disable-next-line no-undef
+const herdrFiles = () => (typeof __HERDR_APP__ !== 'undefined' ? __HERDR_APP__ : readHerdrFiles(join(dirname(fileURLToPath(import.meta.url)), '..', 'herdr-app')));
+
+function dropOldKey(appDir) {
+  const keysPath = join(appDir, 'keys.json');
+  try {
+    const keys = JSON.parse(readFileSync(keysPath, 'utf8'));
+    if (keys.global?.['cmd-shift-m'] === `mod.open:${MOD}`) { delete keys.global['cmd-shift-m']; writeFileSync(keysPath, `${JSON.stringify(keys, null, 2)}\n`); }
+  } catch {} // no keys.json, or one we cannot read: leave it alone
+}
+
+function installMod() {
+  const appDir = herdrHome();
+  if (!existsSync(appDir)) return null; // no Herdr.app here
+  const files = herdrFiles();
+  // Only what changed: writing a mod's file reloads it in Herdr.app.
+  for (const [rel, text] of Object.entries(files)) {
+    const p = join(appDir, rel);
+    if (existsSync(p) && readFileSync(p, 'utf8') === text) continue;
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, text);
+  }
+  dropOldKey(appDir);
+  return appDir;
+}
+
+function uninstallMod() {
+  const appDir = herdrHome();
+  rmSync(join(appDir, 'mods', MOD), { recursive: true, force: true });
+  dropOldKey(appDir);
+}
+
+/** Herdr.app is running with the mod: open its 手机 dialog (unless it is open already). */
+function openInHerdr() {
+  if (!existsSync(join(herdrHome(), 'mods', MOD, 'main.js'))) return false;
+  try {
+    const st = JSON.parse(execFileSync('herdr-app', ['status'], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }));
+    if (!JSON.stringify(st.overlays ?? []).includes(MOD)) execFileSync('herdr-app', ['do', 'mod.open', '--name', MOD], { timeout: 5000, stdio: 'ignore' });
+    return true;
+  } catch { return false; }
+}
+
+/** One control call for the mod: JSON out. A pairing offer carries its QR as SVG. */
+async function ctl() {
+  const [method, json = '{}'] = args;
+  if (!method) throw new Error('用法：herdr-relay ctl <method> [json]');
+  const v = await controlCall(dataDir, method, JSON.parse(json), { timeoutMs: 40_000 });
+  const offer = v?.pairing?.offer;
+  if (offer) offer.qrSvg = await QRCode.toString(offer.link, { type: 'svg', margin: 1, errorCorrectionLevel: 'L' });
+  process.stdout.write(`${JSON.stringify(v)}\n`);
+}
+
 async function pair() {
+  if (args[0] !== '--here' && openInHerdr()) {
+    await controlCall(dataDir, 'pair.start');
+    console.log('已在 Herdr.app 的「手机」窗口里显示二维码，扫码后在那里确认核对码。\n（在终端里配对：herdr-relay pair --here）');
+    return;
+  }
   let v = await controlCall(dataDir, 'pair.start');
   const link = v.pairing.offer.link;
   console.log(await QRCode.toString(link, { type: 'terminal', small: true }));
@@ -145,13 +211,16 @@ function install() {
     try { execFileSync('launchctl', ['bootstrap', `gui/${uid}`, plistPath], { stdio: 'pipe' }); break; }
     catch (error) { if (i >= 20) throw error; execFileSync('/bin/sleep', ['0.3']); }
   }
-  console.log(`已安装：\n  程序   ${target}\n  命令   ${binPath}\n  自启动 ${plistPath}\n  日志   ${logPath}\n\n下一步：herdr-relay pair`);
+  const mod = installMod();
+  const herdr = mod ? `\n  Herdr  ${mod}（布局 main-preview；「手机」窗口：标签栏右上角的手机图标，或 herdr-relay pair）` : '';
+  console.log(`已安装：\n  程序   ${target}\n  命令   ${binPath}\n  自启动 ${plistPath}\n  日志   ${logPath}${herdr}\n\n下一步：herdr-relay pair`);
 }
 
 function uninstall() {
   try { execFileSync('launchctl', ['bootout', `gui/${uid}/${LABEL}`], { stdio: 'ignore' }); } catch {}
   for (const p of [plistPath, binPath]) if (existsSync(p)) rmSync(p);
   rmSync(installDir, { recursive: true, force: true });
+  uninstallMod();
   console.log(`已停止并移除。密钥和已配对设备保留在 ${dataDir}（删除这个目录等于重置所有配对）。`);
 }
 
@@ -213,7 +282,7 @@ function readHidden() {
   });
 }
 
-const commands = { serve, pair, devices, status, install, uninstall, voice: voiceCmd };
+const commands = { serve, pair, ctl, devices, status, install, uninstall, voice: voiceCmd };
 if (!commands[cmd]) {
   console.log(HELP);
   process.exit(cmd === 'help' || cmd === '--help' ? 0 : 1);

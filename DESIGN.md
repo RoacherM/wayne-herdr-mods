@@ -94,14 +94,36 @@ iPhone 浏览器 / PWA ──wss /v1/client/<id>──▶ Cloudflare Worker + DO
 
 ## 电脑上的确认
 
-`dsh-pair` 在 DSH 侧栏里确认配对。这里没有插件界面可用，第一版用命令行：
+两个入口，做的事一样：发二维码、显示核对码、允许或拒绝、移除设备。
 
-```
-herdr-relay pair     # 打印二维码和链接，显示核对码，等你按 y
-herdr-relay devices  # 列出、移除设备
-```
+| 入口 | 怎么打开 | 说明 |
+|---|---|---|
+| Herdr.app 的「手机」窗口（2026-11-04） | 标签栏右上角的手机图标；或在 Herdr 的终端里运行 `herdr-relay pair` | 列出配对的手机（在线、上次连接、推送），「配对新手机」显示二维码，手机来了显示核对码和「允许 / 拒绝」，「移除」点两次才删。关掉窗口时，还没人扫的二维码作废。 |
+| 命令行 | `herdr-relay pair --here`；`herdr-relay devices` | 在终端里打印二维码，按 y 允许。Herdr.app 不在时 `pair` 也走这里。 |
 
-以后可以做成 Herdr 的插件面板（herdr-core 有 `plugin.pane.open`），第一版不做。
+「手机」窗口是一个 Herdr.app mod（插件），叫 `herdr-relay`，在 `herdr-app/mods/herdr-relay/`。它是下面「Herdr.app 里的界面」的一部分。
+
+- 它不直接连后台服务，只运行 `herdr-relay ctl <方法> <json>`。`ctl` 走后台服务的控制 socket：`status`、`pair.start`、`pair.cancel`、`pair.decide`、`devices.remove`、`watch`。`watch` 在有变化时返回，最多等 20 秒，所以窗口跟着手机上线、下线、来配对。有二维码时 `ctl` 顺带给出 `qrSvg`。
+- 二维码写成 `~/.config/herdr-app/data/herdr-relay/qr-<到期时间>.svg` 再显示（`image()` 只读文件）。不写进 mod 目录：那里的文件一变 mod 就重新加载。
+- 为什么不放进「设置」：Herdr.app 的设置页只有固定的几节，每次启动重写，mod 加不进去；要加只能改 Herdr.app 本身。所以入口是标签栏上的图标。
+
+## Herdr.app 里的界面（2026-11-04）
+
+手机网页和 Mac 上的 Herdr.app 是同一套东西。我们在 Herdr.app 里改的界面也放在这个仓库，`herdr-app/` 的目录结构和 `~/.config/herdr-app/` 一样：
+
+| 文件 | 是什么 | 从哪来 |
+|---|---|---|
+| `layouts/main-preview.json`、`.svg` | 窗口布局：在 Herdr 自带的 `main` 上换了标签栏和文件面板 | 复制自 `main` |
+| `mods/my-tabs/` | 标签栏：右上角只留「+」、手机图标、一个面板按钮 | 复制自 `tabs` 0.1.12 |
+| `mods/my-files/` | 文件面板 | 复制自 `files` 0.1.12 |
+| `mods/herdr-relay/` | 「手机」窗口和它的图标 `phone.svg` | 新写 |
+
+- 改界面就改仓库里的文件，再运行 `herdr-relay install`。install 把 `herdr-app/` 打进 `herdr-relay.mjs`，写进 `~/.config/herdr-app/`，内容没变的文件不写（写了 Herdr 会重新加载那个 mod）。在 Herdr.app 里直接改的文件，下次 install 会被覆盖，要先复制回仓库。
+- install 不切换布局。换一台 Mac，要在 Herdr 里选一次 `main-preview`（`herdr-app do layout.switch --name main-preview`）。
+- 不放进来的：Herdr 自带的布局和 mod（每次启动重写），Herdr 自己写的 `gpui-kit.d.ts`、`jsconfig.json`，个人设置 `settings.json`、`keys.json`。
+- 不加快捷键；早先版本加在 `keys.json` 的 ⌘⇧M，install 和 uninstall 都会删掉。
+- `herdr-relay uninstall` 只删「手机」窗口，布局和标签栏留着（那时标签栏的手机图标点了没反应）。
+- 复制来的 mod 不跟着 Herdr 更新。Herdr 改了 `tabs` 或 `files`，要自己对比 `cloned_from` 的版本再合进来。
 
 ## 地址和域名
 
@@ -155,6 +177,7 @@ shared/pieces.js     直连数据通道上的分片
 relay/               从 dsh-pair 复制：Worker + DO + 静态网页
 host/                新写：中继连接、配对、hc 适配、推送、命令行
 app/                 新写：手机网页（终端列表 + xterm.js 终端页），build 到 relay/public
+herdr-app/           Herdr.app 里我们的界面：布局 main-preview、标签栏、文件面板、「手机」窗口；build 时打进 herdr-relay.mjs
 probe/               hc.mjs（分帧客户端）、sync.mjs（多窗口同步 probe）
 test/                e2e.test.mjs（加密）、host.live.test.mjs（全链路）
 dev/                 fake-desktop.mjs（假 Mac）、ui-smoke.mjs（无头 iPhone 截图）

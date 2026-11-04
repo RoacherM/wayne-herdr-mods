@@ -22,7 +22,7 @@ npm install
 npm run relay:deploy                 # 部署中继到你的 Cloudflare 账号（改 relay/wrangler.jsonc 和 host/service.js 里的地址）
 npm run build
 node dist/herdr-relay.mjs install    # 复制到 ~/.local/share/herdr-relay，装 LaunchAgent
-herdr-relay pair                     # 手机扫码，核对 6 位数字
+herdr-relay pair                     # 手机扫码，核对 6 位数字（Herdr.app 里也可以在「手机」窗口里配对和管理）
 herdr-relay voice key                # 可选：火山「录音文件识别 2.0 标准版」的 API Key，存进钥匙串
 ```
 
