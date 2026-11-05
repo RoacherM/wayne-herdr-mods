@@ -17,8 +17,18 @@ function pickMime() {
   return '';
 }
 
+/**
+ * A stream that still records. Back from the background, iOS often leaves the old one `live` but
+ * muted (its capture was interrupted): a recorder on it gives 0 bytes, so it is not reused.
+ */
 function isLive(stream) {
-  return Boolean(stream) && stream.getTracks().some((t) => t.readyState === 'live');
+  return Boolean(stream) && stream.getTracks().some((t) => t.readyState === 'live' && !t.muted);
+}
+
+/** Give the warm stream up: the next recording asks the system for a new one. */
+function dropStream() {
+  warmStream?.getTracks().forEach((t) => { try { t.stop(); } catch {} });
+  warmStream = null;
 }
 
 /**
@@ -27,6 +37,7 @@ function isLive(stream) {
  */
 async function acquireStream() {
   if (!isLive(warmStream)) {
+    dropStream();
     warmStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
   }
   warmStream.getTracks().forEach((t) => { t.enabled = true; });
@@ -80,11 +91,19 @@ export async function startRecording() {
   const buf = new Uint8Array(128);
   const release = () => { stream.getTracks().forEach((t) => { t.enabled = false; }); ctx?.close().catch(() => {}); };
   const blobType = rec.mimeType || mime || 'audio/mp4';
-  const done = new Promise((resolve) => { rec.onstop = () => { release(); resolve(new Blob(parts, { type: blobType })); }; });
+  const done = new Promise((resolve) => {
+    rec.onstop = () => {
+      release();
+      const blob = new Blob(parts, { type: blobType });
+      if (!blob.size) dropStream(); // the stream gave nothing: never reuse it
+      resolve(blob);
+    };
+  });
   rec.start(250);
   const started = Date.now();
   return {
     started,
+    muted: stream.getTracks().some((t) => t.muted),
     stop() { stopRecorder(rec); return done; },
     cancel() { parts.length = 0; stopRecorder(rec, release); },
     level: () => computeLevel(analyser, buf),
@@ -94,6 +113,7 @@ export async function startRecording() {
 /** Send a blob to the Mac in chunks over the E2E link. Returns the upload id. */
 export async function upload(link, blob, onProgress = () => {}) {
   const bytes = new Uint8Array(await blob.arrayBuffer());
+  if (!bytes.length) throw new Error('文件是空的'); // an id of null would read as「上传已过期」on the Mac
   let id = null;
   for (let offset = 0; offset < bytes.length; offset += CHUNK) {
     const r = await link.rpc('upload.put', { id, offset, total: bytes.length, mime: blob.type, data: b64(bytes.subarray(offset, offset + CHUNK)) });
@@ -104,7 +124,9 @@ export async function upload(link, blob, onProgress = () => {}) {
 }
 
 /** Upload, then ask the Mac to recognize. Returns { text, ms }. */
+export const NO_SOUND = '没录到声音：麦克风被系统打断了，请再按住说一次';
 export async function transcribe(link, blob, { address } = {}) {
+  if (!blob.size) throw new Error(NO_SOUND);
   return link.rpc('voice.done', { id: await upload(link, blob), address }, 70_000);
 }
 

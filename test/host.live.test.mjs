@@ -77,10 +77,11 @@ test('pair, list, stream, type, send, keys — through the relay', { timeout: 12
   let phoneOut = '';
   let unacked = 0;
   let s;
+  let freshPaints = 0, phoneBytes = 0;
   const pump = () => {
     for (let i = 0; i < events.length; i++) {
       const e = events[i];
-      if (e.ev === 'out' && e.s === s) { const b = Buffer.from(e.d, 'base64'); phoneOut += b.toString(); unacked += b.length; events.splice(i--, 1); }
+      if (e.ev === 'out' && e.s === s) { const b = Buffer.from(e.d, 'base64'); phoneOut += b.toString(); unacked += b.length; phoneBytes += b.length; if (e.fresh) freshPaints++; events.splice(i--, 1); }
     }
     if (unacked) { notify('term.ack', { s, n: unacked }); unacked = 0; }
   };
@@ -112,6 +113,33 @@ test('pair, list, stream, type, send, keys — through the relay', { timeout: 12
   // --- a lot of output: credit keeps flowing (more than the 256 KiB initial window)
   notify('term.input', { s, d: 'yes 0123456789abcdef0123456789abcdef | head -n 20000; echo BULK_DONE\r' });
   await until('bulk output arrives', () => { pump(); return strip(phoneOut).includes('BULK_DONE'); }, 30_000);
+
+  // --- a program that reprints its whole history (DESIGN.md「重印整段对话」): a short one (`clear`)
+  // reaches the phone as it is; a long one does not: a fresh paint of its end comes in its place.
+  await until('bulk output done', () => { pump(); return /\nBULK_DONE\r?\n/.test(strip(phoneOut)); }, 30_000);
+  notify('term.input', { s, d: 'clear; echo SMALL_$((3+4))\r' });
+  await until('small reprint as it is', () => { pump(); return strip(phoneOut).includes('SMALL_7'); });
+  assert.equal(freshPaints, 0, 'a short reprint needs no fresh paint');
+  phoneOut = ''; phoneBytes = 0;
+  notify('term.input', { s, d: "printf '\\033[H\\033[2J\\033[3J'; seq -f 'line %05g' 0 19999; echo REPRINT_$((5+6))\r" });
+  await until('fresh paint after a long reprint', () => { pump(); return freshPaints === 1 && strip(phoneOut).includes('REPRINT_11'); }, 15_000);
+  const seen = strip(phoneOut);
+  assert.ok(seen.includes('line 19999'), 'the end of the reprint is there');
+  assert.ok(!seen.includes('line 00000'), 'its start is not sent');
+  assert.ok(phoneBytes < 120 * 1024, `sent ${phoneBytes} bytes, not the 260 KB reprint`);
+  await sleep(300); pump();
+  assert.equal(freshPaints, 1);
+  // …and it is in the experience records (DESIGN.md「体验记录」), with its size.
+  const recs = await until('reprint record', async () => {
+    const day = (await import('node:fs/promises')).readdir(join(dataDir, 'metrics')).catch(() => []);
+    const rows = [];
+    for (const f of await day) if (f.endsWith('.jsonl')) rows.push(...(await readFile(join(dataDir, 'metrics', f), 'utf8')).split('\n').filter(Boolean).map((l) => JSON.parse(l)));
+    const r = rows.filter((x) => x.ev === 'reprint');
+    return r.length ? r : null;
+  });
+  assert.equal(recs.length, 1, 'the short `clear` is not recorded');
+  assert.equal(recs[0].fresh, true);
+  assert.ok(recs[0].kb > 64 && recs[0].src === 'mac', JSON.stringify(recs[0]));
 
   // --- message box path (terminal.send) and keys
   await rpc('term.send', { address, text: 'echo VIA_SEND' });
@@ -170,6 +198,9 @@ test('pair, list, stream, type, send, keys — through the relay', { timeout: 12
   assert.equal(await sizeNow(), '120x40');
   await assert.rejects(rpc('term.fit', { s, fit: { cols: 44, rows: 20 } }), /未知方法/); // a notification only
 
+  // --- an upload whose pieces went on this connection, used on the next (relay ↔ direct, a reconnect)
+  const carried = await rpc('upload.put', { id: null, offset: 0, total: png.length, mime: 'image/png', data: png.toString('base64') });
+
   // --- close
   await rpc('term.close', { s });
   await until('closed event', () => events.some((e) => e.ev === 'closed' && e.s === s));
@@ -194,4 +225,9 @@ test('pair, list, stream, type, send, keys — through the relay', { timeout: 12
   await until('online after auth', onlineNow);
   ws2.send(c2.seal({ id: 99, m: 'terminals.list', p: {} }));
   assert.equal(c2.open(await next(ws2)).id, 99);
+  ws2.send(c2.seal({ id: 100, m: 'image.put', p: { id: carried.id, address, name: 'carried.png' } }));
+  let moved;
+  do moved = c2.open(await next(ws2)); while (moved.id !== 100);
+  assert.ok(moved.ok, `the upload survives the new connection: ${moved.e}`);
+  assert.deepEqual(await readFile(moved.r.path), png);
 });

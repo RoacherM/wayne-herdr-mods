@@ -25,6 +25,15 @@ import { MAX_BYTES as MAX_VOICE_BYTES } from './voice.js';
 const MAX_STREAMS = 4; // per phone
 const HISTORY_LINES = 400; // scrollback sent with the first paint
 const OUT_MERGE_MS = 4; // terminal output merged this long into one message
+// A program printing its whole history again (reprint()): up to this, sent as it is; beyond, the
+// view attaches again for a fresh paint once the program has been quiet this long (at most MAX).
+const REPRINT_SMALL = 64 * 1024;
+const REPRINT_QUIET_MS = 100;
+const REPRINT_MAX_MS = 1000;
+const REPRINT_NOTE = 16 * 1024; // recorded from this size (a shell's `clear` is not)
+const CLEAR_SCROLLBACK = Buffer.from('\x1b[3J');
+const SCREEN_CLEARS = [Buffer.from('\x1b[2J'), Buffer.from('\x1b[H')];
+const EMPTY = Buffer.alloc(0);
 // Wheel steps wait while more than this is on its way to the phone (sent, not yet drawn there), then
 // go to the program together: one redraw for many steps, so redraws never queue up on a slow
 // network (DESIGN.md「滑动延迟」).
@@ -38,6 +47,13 @@ const KEY_RE = /^(?:(?:ctrl|alt|shift|cmd|super|meta)\+)*(?:[a-z0-9]|enter|esc|e
 export function createPhones({ state, pairing, push, terminals, voice, metrics, link: getLink, rtc, log = () => {}, onChange = () => {} }) {
   const peers = new Map(); // cid → peer
   let nextStream = 1;
+  // Uploads per phone, not per connection: the phone can move between relay and direct (or
+  // reconnect) between an upload's pieces and its `voice.done` / `image.put`.
+  const uploadsByDevice = new Map(); // device id → uploads
+  const uploadsOf = (device) => {
+    if (!uploadsByDevice.has(device.id)) uploadsByDevice.set(device.id, createUploads());
+    return uploadsByDevice.get(device.id);
+  };
 
   const online = (deviceId) => [...peers.values()].some((peer) => peer.device?.id === deviceId && peer.stage === 'ready');
 
@@ -48,7 +64,7 @@ export function createPhones({ state, pairing, push, terminals, voice, metrics, 
   const broadcast = (ev, payload) => { for (const peer of peers.values()) event(peer, ev, payload); };
 
   function open(cid) {
-    const peer = { cid, stage: 'hello', cipher: null, device: null, streams: new Map(), uploads: createUploads(), recognizing: false };
+    const peer = { cid, stage: 'hello', cipher: null, device: null, streams: new Map(), uploads: null, recognizing: false };
     peers.set(cid, peer);
   }
 
@@ -120,6 +136,7 @@ export function createPhones({ state, pairing, push, terminals, voice, metrics, 
 
   async function ready(peer, device, paired = false, tell = true) {
     peer.device = device;
+    peer.uploads = uploadsOf(device);
     peer.stage = 'ready';
     await state.updateDevice(device.id, { lastSeen: Date.now() });
     if (!peers.has(peer.cid)) return;
@@ -166,7 +183,8 @@ export function createPhones({ state, pairing, push, terminals, voice, metrics, 
     const stream = { id, address, core, device: peer.device?.id, channel: null, typer: null, fit, sized: false, cols: t.cols, rows: t.rows, out: [], outW: null, outTimer: null, stopped: false };
     // Scrolling, as the Mac sees it (scroll-watch.js), to the same records as the phone's.
     const via = String(peer.cid).startsWith('rtc:') ? 'direct' : 'relay';
-    stream.watch = scrollWatch({ record: (e) => metrics?.put(peer.device, { ctx: { src: 'mac' }, events: [{ t: Date.now(), via, ...e }] }).catch(() => {}) });
+    stream.record = (e) => metrics?.put(peer.device, { ctx: { src: 'mac' }, events: [{ t: Date.now(), via, ...e }] }).catch(() => {});
+    stream.watch = scrollWatch({ record: stream.record });
     stream.flush = () => {
       clearTimeout(stream.outTimer);
       stream.outTimer = null;
@@ -174,8 +192,10 @@ export function createPhones({ state, pairing, push, terminals, voice, metrics, 
       const bytes = stream.out.length === 1 ? stream.out[0] : Buffer.concat(stream.out);
       stream.out = [];
       // w: the phone's wheel steps the program had when these bytes began (the phone's lag, DESIGN.md「滑动延迟」).
-      event(peer, 'out', { s: id, d: bytes.toString('base64'), w: stream.outW });
+      // fresh: a new view's first paint (reprint()); the phone drops its history before it.
+      event(peer, 'out', { s: id, d: bytes.toString('base64'), w: stream.outW, ...(stream.fresh ? { fresh: true } : {}) });
       stream.outW = null;
+      stream.fresh = false;
       stream.watch.sent(bytes.length);
     };
     stream.stop = (reason = 'closed') => {
@@ -184,6 +204,7 @@ export function createPhones({ state, pairing, push, terminals, voice, metrics, 
       stopCoast(stream);
       stream.watch.stop();
       clearTimeout(stream.outTimer);
+      clearTimeout(stream.reprint?.timer);
       peer.streams.delete(id);
       if (stream.channel !== null) core.release(stream.channel);
       dropTyper(stream, reason === 'moved' || reason === 'dropped');
@@ -210,30 +231,7 @@ export function createPhones({ state, pairing, push, terminals, voice, metrics, 
     if (stream.stopped) { core.release(reply.channel); return { s: id }; }
     stream.channel = reply.channel;
     stream.sized = reply.resize_notifications === true;
-    core.on(reply.channel, {
-      onData: (bytes) => {
-        stream.watch.output(bytes.length);
-        stream.outW ??= stream.watch.w;
-        stream.out.push(bytes);
-        stream.outTimer ??= setTimeout(stream.flush, OUT_MERGE_MS);
-      },
-      onResize: (cols, rows) => {
-        stream.flush(); // the bytes before it were drawn for the old size
-        stream.cols = cols;
-        stream.rows = rows;
-        event(peer, 'size', { s: id, cols, rows });
-      },
-      onClose: (reason) => {
-        if (stream.stopped) return;
-        stream.flush();
-        stream.stopped = true;
-        stream.watch.stop();
-        clearTimeout(stream.outTimer);
-        peer.streams.delete(id);
-        dropTyper(stream, false);
-        event(peer, 'closed', { s: id, reason: reason?.reason ?? 'closed', exitCode: reason?.exit_code ?? null });
-      },
-    });
+    listen(peer, stream, reply.channel);
     const now = reply.terminal ?? t;
     if (t.status?.state === 'done' && (t.turn ?? 0) > Number(t.labels?.['herdr.seen'] ?? -1)) {
       core.call('terminal.label', { terminal: address, labels: { 'herdr.seen': String(t.turn ?? 0) } }).catch(() => {});
@@ -241,6 +239,111 @@ export function createPhones({ state, pairing, push, terminals, voice, metrics, 
     if (!stream.sized) { stream.cols = now.cols; stream.rows = now.rows; }
     if (fit && !stream.sized) refit(stream, null, true); // an older core cannot tell the view its size in step
     return { s: id, cols: now.cols, rows: now.rows, sized: stream.sized };
+  }
+
+  /** The view's channel: its bytes and grid to the phone. A channel the stream left (reprint()) is ignored. */
+  function listen(peer, stream, channel) {
+    const { core, id } = stream;
+    core.on(channel, {
+      onData: (bytes) => {
+        if (stream.channel !== channel) return;
+        stream.watch.output(bytes.length);
+        if (reprint(peer, stream, bytes)) return;
+        stream.outW ??= stream.watch.w;
+        stream.out.push(bytes);
+        stream.outTimer ??= setTimeout(stream.flush, OUT_MERGE_MS);
+      },
+      onResize: (cols, rows) => {
+        if (stream.channel !== channel) return;
+        if (stream.reprint && !stream.reprint.dropping) endReprint(peer, stream); // held bytes were for the old grid
+        stream.flush(); // the bytes before it were drawn for the old size
+        stream.cols = cols;
+        stream.rows = rows;
+        event(peer, 'size', { s: id, cols, rows });
+      },
+      onClose: (reason) => {
+        if (stream.stopped || stream.channel !== channel) return;
+        stream.flush();
+        stream.stopped = true;
+        stream.watch.stop();
+        clearTimeout(stream.outTimer);
+        clearTimeout(stream.reprint?.timer);
+        peer.streams.delete(id);
+        dropTyper(stream, false);
+        event(peer, 'closed', { s: id, reason: reason?.reason ?? 'closed', exitCode: reason?.exit_code ?? null });
+      },
+    });
+  }
+
+  /**
+   * A program that prints its whole history again (DESIGN.md「重印整段对话」): a main-screen agent
+   * (Antigravity, Codex, …) clears the scrollback (ESC[3J) after a resize and reprints the whole
+   * conversation from the top, MBs for a long one. Sent as it comes, the phone would draw it from
+   * the top for seconds (xterm waits for a synchronized update 1 s at most) before the input box.
+   *
+   * So from the clear, the bytes are held. Once the program is quiet: up to REPRINT_SMALL they go
+   * to the phone as they are; a longer one is dropped, and the view attaches again. herdr-core's
+   * fresh paint is what the reprint ends with: the screen and HISTORY_LINES lines, in one frame.
+   * herdr-core's own paints never clear the scrollback. Returns true when it took the bytes.
+   */
+  function reprint(peer, stream, bytes) {
+    const tail = stream.tail ?? EMPTY;
+    stream.tail = bytes.subarray(Math.max(0, bytes.length - CLEAR_SCROLLBACK.length + 1));
+    let r = stream.reprint;
+    if (!r) {
+      if (!stream.sized) return false; // an older core: no fresh paint to rely on
+      const found = (tail.length ? Buffer.concat([tail, bytes]) : bytes).indexOf(CLEAR_SCROLLBACK);
+      if (found < 0) return false;
+      // From the clear of the screen before it (ESC[H ESC[2J ESC[3J): the old screen stays until the end.
+      let at = Math.max(0, found - tail.length);
+      for (const p of SCREEN_CLEARS) if (at >= p.length && bytes.subarray(at - p.length, at).equals(p)) at -= p.length;
+      if (at > 0) { stream.outW ??= stream.watch.w; stream.out.push(bytes.subarray(0, at)); }
+      stream.flush();
+      r = stream.reprint = { held: [], n: 0, t0: Date.now(), timer: null, dropping: false, w: stream.watch.w };
+      bytes = bytes.subarray(at);
+    }
+    r.n += bytes.length;
+    if (r.dropping) stream.core.credit(stream.channel, bytes.length);
+    else if (r.n > REPRINT_SMALL) {
+      r.dropping = true;
+      r.held = [];
+      stream.core.credit(stream.channel, r.n); // never sent: the phone will not credit them
+    } else r.held.push(bytes);
+    if (!r.reattaching) {
+      clearTimeout(r.timer);
+      r.timer = setTimeout(() => endReprint(peer, stream), Math.max(0, Math.min(REPRINT_QUIET_MS, r.t0 + REPRINT_MAX_MS - Date.now())));
+    }
+    return true;
+  }
+
+  async function endReprint(peer, stream) {
+    const r = stream.reprint;
+    if (!r || r.reattaching || stream.stopped) return;
+    clearTimeout(r.timer);
+    // To the experience records (DESIGN.md「体验记录」): reprints longer than a screen or so.
+    const note = (fresh) => { if (r.n >= REPRINT_NOTE) stream.record({ ev: 'reprint', kb: Math.round(r.n / 1024), fresh, ms: Date.now() - r.t0 }); };
+    if (!r.dropping) {
+      stream.reprint = null;
+      note(false);
+      if (r.held.length) { stream.outW ??= r.w; stream.out.push(...r.held); stream.flush(); }
+      return;
+    }
+    r.reattaching = true; // the old channel's bytes are still dropped meanwhile
+    const old = stream.channel;
+    let reply = null;
+    try {
+      reply = await stream.core.call('terminal.attach', { terminal: stream.address, cols: stream.cols, rows: stream.rows, history: HISTORY_LINES, observe: true, resize_notifications: true });
+    } catch {}
+    if (stream.stopped) { if (reply) stream.core.release(reply.channel); return; }
+    stream.reprint = null;
+    if (!reply) { stream.stop('closed'); return; } // the terminal is gone: the phone opens it again or says so
+    stream.channel = reply.channel;
+    stream.sized = reply.resize_notifications === true;
+    stream.tail = null;
+    stream.fresh = true;
+    stream.core.release(old);
+    listen(peer, stream, reply.channel);
+    note(true);
   }
 
   function streamOf(peer, s) {

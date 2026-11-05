@@ -102,3 +102,46 @@ test('startRecording reuses one live MediaStream across recordings and windows w
   assert.equal(gumCalls, 2);
   r3.cancel();
 });
+
+test('a muted stream (back from the background) is not reused; an empty recording is never uploaded', async () => {
+  let gumCalls = 0, track = null;
+  globalThis.window = {};
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { mediaDevices: { async getUserMedia() { gumCalls++; track = { readyState: 'live', muted: false, enabled: true, stop() { this.readyState = 'ended'; } }; return { getTracks: () => [track] }; } } },
+  });
+  let give = 'abc'; // what the next recorder hands back
+  globalThis.MediaRecorder = class {
+    static isTypeSupported() { return true; }
+    constructor(stream) { this.stream = stream; this.state = 'inactive'; this.mimeType = 'audio/mp4'; track = stream.getTracks()[0]; }
+    start() { this.state = 'recording'; }
+    stop() { this.state = 'inactive'; if (give) this.ondataavailable?.({ data: new Blob([give]) }); this.onstop?.(); }
+  };
+  const { transcribe, NO_SOUND } = await import('../app/src/voice.js');
+
+  const r1 = await startRecording();
+  const calls0 = gumCalls;
+  assert.equal((await r1.stop()).size, 3);
+
+  // iOS interrupted the capture in the background: still `live`, but muted
+  const old = track;
+  old.muted = true;
+  const r2 = await startRecording();
+  assert.equal(gumCalls, calls0 + 1, 'a muted stream is replaced');
+  assert.equal(old.readyState, 'ended', 'the muted one is let go');
+  assert.equal(r2.muted, false);
+  await r2.stop();
+
+  // A recorder that gave nothing: no upload (it read as「上传已过期」), and the stream is not reused
+  give = '';
+  const r3 = await startRecording();
+  const empty = await r3.stop();
+  assert.equal(empty.size, 0);
+  const rpcs = [];
+  await assert.rejects(transcribe({ rpc: async (m) => { rpcs.push(m); return {}; } }, empty), (e) => e.message === NO_SOUND);
+  assert.deepEqual(rpcs, []);
+  give = 'abc';
+  const before = gumCalls;
+  (await startRecording()).cancel();
+  assert.equal(gumCalls, before + 1, 'a new stream after an empty recording');
+});

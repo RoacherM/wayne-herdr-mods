@@ -681,7 +681,11 @@ function openTerm(address) {
     // The first paint can arrive before term.open's reply: hold it until we know our stream id.
     if (page.s === null && page.opening) { page.early.push(msg); return; }
     if (msg.s !== page.s) return;
-    if (msg.ev === 'out') write(msg.d, msg.w);
+    if (msg.ev === 'out') {
+      // A fresh paint in place of a program's reprint (host/phones.js reprint()): it brings the history again.
+      if (msg.fresh) page.clearHistory = true;
+      write(msg.d, msg.w);
+    }
     else if (msg.ev === 'size') {
       // In order with the bytes: those before were drawn for the old grid, the repaint after for
       // this one. Nothing is drawn from here until that repaint is done (sync on, see write()).
@@ -899,10 +903,14 @@ function openTerm(address) {
       const blob = await r.stop();
       talkBtn.disabled = true;
       show('识别中…', 'busy');
+      // To the experience records: how big, how long, and what went wrong (no words, no audio).
+      const note = (err) => metrics.mark('voice', { kb: Math.round(blob.size / 1024), ms: Date.now() - r.started, muted: r.muted, err });
       try {
         const { text } = await transcribe(app.link, blob, { address });
+        note(text ? null : 'silence');
         if (text) { insert(text); vibrate(10); } else toast('没听清，请再说一次');
       } catch (error) {
+        note(!blob.size ? 'empty' : /过期/.test(error.message) ? 'expired' : /超时/.test(error.message) ? 'timeout' : /断开|离线|连接/.test(error.message) ? 'link' : 'other');
         toast(error.message, 'err');
       } finally { talkBtn.disabled = false; show(null); }
     };

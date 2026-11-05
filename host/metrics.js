@@ -22,7 +22,9 @@ const FIELDS = {
   frames: { ms: 'n', n: 'n', p95: 'n', long: 'n' }, // before 2026-11-04 evening: now part of scroll
   scroll: { mode: 's', ms: 'n', n: 'n', p95: 'n', long: 'n', steps: 'n', coast: 'n', lag: 'n?', lagMax: 'n?', answered: 'n', kb: 'n' },
   macscroll: { steps: 'n', coast: 'n', prog: 'n?', progMax: 'n?', kb: 'n', behind: 'n', ms: 'n' },
+  reprint: { kb: 'n', fresh: 'b', ms: 'n' }, // the Mac: a program printed its whole history again (phones.js reprint())
   op: { op: 's', key: 's?' },
+  voice: { kb: 'n', ms: 'n', muted: 'b', err: 's?' }, // one recording: size, length, mic muted at start, what failed (null: words came)
 };
 const CTX = { src: 's', ver: 's', os: 's', browser: 's', standalone: 'b', w: 'n', h: 'n' };
 
@@ -38,6 +40,8 @@ export const MEASURES = [
   ['scroll.lag', '滑动到画面跟上', '全屏程序里手指动一行，到程序回应这一步的画面画出来（一次滑动的中位数）'],
   ['scroll.lagMax', '滑动时最大的落后', '一次滑动里画面落后手指最多的那一下'],
   ['macscroll.prog', '程序回应滚轮', 'Mac 上：滚轮写给程序，到程序第一段输出（不含网络）'],
+  ['reprint.kb', '程序重印', 'Mac 上：程序清掉历史、把整段对话重印一遍的大小（超过 64 KB 不发，换成新首屏）', 'KB'],
+  ['reprint.ms', '重印到新画面', 'Mac 上：程序开始重印，到发给手机的是新画面（原样发出或新首屏）'],
   ['macscroll.behind', '在路上的数据', 'Mac 上：一次滑动里发出去但手机还没画完的最多字节数', 'KB'],
   ['scroll.p95', '滑动的慢帧', '一次滑动里最慢 5% 的帧间隔'],
 ];
