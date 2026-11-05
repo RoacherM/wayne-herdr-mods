@@ -121,9 +121,18 @@ iPhone 浏览器 / PWA ──wss /v1/client/<id>──▶ Cloudflare Worker + DO
 | 文件 | 是什么 | 从哪来 |
 |---|---|---|
 | `layouts/main-preview.json`、`.svg` | 窗口布局：在 Herdr 自带的 `main` 上换了标签栏和文件面板 | 复制自 `main` |
-| `mods/my-tabs/` | 标签栏：右上角只留「+」、手机图标、一个面板按钮。标签的图标是你在这个标签里最后点进的 agent（2026-11-05 改：原来是标签里第一个 agent，一个标签里有 Claude Code 和 agy 时会显示错）。只有窗口当前的窗格有 `focused`，所以每个标签自己记住 | 复制自 `tabs` 0.1.12 |
+| `mods/my-tabs/` | 标签栏：右上角只留「+」、手机图标、一个面板按钮。标签的图标是你在这个标签里最后点进的 agent（2026-11-05 改：原来是标签里第一个 agent，一个标签里有 Claude Code 和 agy 时会显示错）。只有窗口当前的窗格有 `focused`，所以每个标签自己记住。agent 退出后前台回到 shell，图标就是终端（2026-11-05 改，见「agent 退出后的图标」） | 复制自 `tabs` 0.1.12 |
 | `mods/my-files/` | 文件面板：支持文件树悬停/右键菜单与预览顶栏一键复制绝对路径或文件全文；`TextView.markdown` 的选区色绘制在文字上层，必须用带透明度的 `#rrggbb59`（约 35% alpha），否则实色选区会盖死选中的文字 | 复制自 `files` 0.1.12 |
 | `mods/wayne-phones/` | 「手机」窗口和它的图标 `phone.svg` | 新写 |
+
+### agent 退出后的图标（2026-11-05）
+
+- 现象：epi 退出后，标签栏和手机列表仍显示 epi 的图标。
+- 原因（`herdr-core` / Herdr.app，2026-11-05 实测）：agent 用 OSC 7501 报的状态在它退出后还留着。t25 前台是 `zsh`，状态仍是 `app=epi state=done`；Herdr.app 的 `panes()` 也仍给 `program.key=epi, agent=true`。
+- 规则：前台进程是 shell（`zsh`、`bash`、`fish`、`sh` 等）时，agent 已经退出，忽略它留下的 `app`。
+  - 标签栏 `my-tabs`：用 `terminals()` 的 `foreground.name` 判断；这样的窗格显示 `icons/shell.svg` 和 shell 的名字。
+  - 手机列表 `host/terminals.js` 的 `project()`：`app` 为 `null`，图标是 `shell`。状态点不变。
+- 活着的 agent 前台都是自己（`claude`、`agy`、`node …/epi`），不受影响。`dev/fake-desktop.mjs` 的假 agy 因此改用编译出的 `agy` 程序跑，不再用 `/bin/sh`。
 
 - 改界面就改仓库里的文件，再运行 `node dist/wayne-herdr-mods.mjs install`。install 把 `herdr-app/` 打进 `wayne-herdr-mods.mjs`，写进 `~/.config/herdr-app/`，内容没变的文件不写（写了 Herdr 会重新加载那个 mod）。在 Herdr.app 里直接改的文件，下次 install 会被覆盖，要先复制回仓库。
 - install 不切换布局。换一台 Mac，要在 Herdr 里选一次 `main-preview`（`herdr-app do layout.switch --name main-preview`）。
@@ -433,6 +442,11 @@ A 部分在 `HC_SESSION=relay-probe` 的独立 core 里自己开一个 `/bin/sh`
 
 ## 原生 App（nsh）：评估 + 第 0 步原型（`ios/`）
 
+> 2026-11-06 改：新的方向见 [docs/native-app.html](docs/native-app.html)（I-004）。
+> - 推送：设备一直「推送关」，因为手机页只在 Chrome 标签页里用（7 天 1790 条指标全是 `standalone: false`）。iOS 只给主屏幕 Web App 推送。先用主屏幕 Web App + 现有 Web Push（0 元）。
+> - App：免费 Apple 账号不能推送、7 天失效，不做。要做就付费，做「薄壳」：WKWebView 跑现在的手机页，Swift 只管 APNs、锁屏按钮、Face ID、钥匙串。不再用 nsh 重写界面。
+> - 下面是 2026-11-02 的评估和原型记录，留作参考。
+
 nsh（Native Shell，https://nsh.dev ，Longbridge 开源，Apache-2.0）：用 Rust 或 TSX 写界面，iOS 上画的是 UIKit 原生控件，不是 WebView。TSX 在 QuickJS（一个小型 JS 引擎）里运行。
 
 2026-11-02 查到的事实：
@@ -502,16 +516,32 @@ npm run ios:dev                        # Mac 上的 iPhone 尺寸窗口（Cataly
 
 顶栏压缩（返回、标题）。底部：一排快捷键，下面是输入行：左边「+」加图，中间「按住 说话」，右边键盘。
 
-快捷键（2026-11-04 改）：最常用的放前面，不滑动就能看到前 7 个。
+### 键盘栏的顺序（2026-11-05 改）
+
+从手机上做 vibe coding 时，要打的字靠语音或键盘输入。键盘栏只做两件事：回答 agent 的问题，和打断 agent。所以顺序是：
+
+```
+ ┌ 一屏能看到（393 px 宽的手机上也是前 7 个）────┐  往右滑
+ Esc  ←  ↑  ↓  →  ⏎  ⇧Tab  ^C  │  Tab 粘贴 换行 1 2 3 y n ^D ^R ^L
+ └─ 打断 ┘└──── 回答菜单 ────┘ └ 模式 ┘
+```
+
+依据：手机两天的记录（`op` 里的 `key`，2026-11-04 到 11-05），共 53 次按键。⏎ 31 次，n 7 次（其中 5 次是同一秒里连按，那次键已经发出，只是网慢没看到变化），↓ 4 次，Esc 4 次，↑ 3 次，← → 各 2 次。粘贴、⇧Tab、^C、Tab、换行、1 2 3、y、^D ^R ^L 都是 0 次。旧的顺序把粘贴、⇧Tab、^C 放在最前面，← → 却要滑动才能看到。同期语音输入 76 次。
+
+- **Esc 在最左**：打断正在跑的 agent（Claude Code、Codex、epi 都用 Esc），也用来取消问题。
+- **← ↑ ↓ → ⏎ 挨在一起**：回答菜单就是「↓ ↓ ⏎」，手指一路往右按。
+- **⇧Tab 留在一屏内**：数据是 0 次，但它是 Claude Code 切换计划模式唯一的入口。
+- **^C 在一屏的边上**：在 Claude Code 里按两次会退出，放远一点不容易误按。
+- 数据只有两天，以后按 `wayne-herdr-mods metrics` 报告页里的「键」统计再调整。
 
 | 键 | 发什么 | 用途 |
 |---|---|---|
-| 粘贴 | 手机剪贴板里的文字，作为一次 bracketed paste（`ESC[200~ … ESC[201~`）；剪贴板里是图片（截图）就按「+」的路上传 | 和 Mac 上 ⌘V 一样，Claude Code 把长文字显示成 [Pasted text]。iOS 会先弹一个小的「粘贴」气泡，点一下才读 |
 | Esc、⇧Tab、^C | `ESC`、`ESC[Z`、`0x03` | 打断、Claude Code 切换模式、中断 |
-| ↑ ↓ ← → | 程序开了应用光标模式（vim、less）发 `ESC O A`，否则 `ESC [ A` | 按住不动 0.38 秒后连发，每 70 ms 一次。手指横向滑动快捷键栏是滚动，不发键 |
+| ← ↑ ↓ → | 程序开了应用光标模式（vim、less）发 `ESC O A`，否则 `ESC [ A` | 按住不动 0.38 秒后连发，每 70 ms 一次。手指横向滑动快捷键栏是滚动，不发键 |
 | ⏎、Tab | `\r`、`\t` | |
+| 粘贴 | 手机剪贴板里的文字，作为一次 bracketed paste（`ESC[200~ … ESC[201~`）；剪贴板里是图片（截图）就按「+」的路上传 | 和 Mac 上 ⌘V 一样，Claude Code 把长文字显示成 [Pasted text]。iOS 会先弹一个小的「粘贴」气泡，点一下才读 |
 | 换行 | 一个粘贴的换行 | Claude Code / Codex 里换行，不发送 |
-| 1 2 3 y n | 字符本身 | 回答菜单（程序在问时变蓝） |
+| 1 2 3 y n | 字符本身 | 回答菜单 |
 | ^D、^R、^L | `0x04`、`0x12`、`0x0c` | 退出、搜历史、清屏 |
 
 测法：`dev/keys-smoke.mjs`（终端里跑一个 raw 模式读取器，原样打印收到的字节）。
@@ -527,7 +557,7 @@ npm run ios:dev                        # Mac 上的 iPhone 尺寸窗口（Cataly
 | 程序报告 | 光标 | 打的字 |
 |---|---|---|
 | 不是 `blocked` | — | 马上进去 |
-| `blocked` | 显示（程序在自己的输入行等字） | 马上进去，快捷键照样变蓝 |
+| `blocked` | 显示（程序在自己的输入行等字） | 马上进去 |
 | `blocked` | 隐藏（菜单；Claude Code 一直隐藏） | 等着。点气泡「点这里照样打字」就进去，直到这次提问结束 |
 
 依据：2026-11-05 本机 19 个终端里，菜单和 Claude Code、epi 的界面都隐藏光标；Antigravity 的输入行、shell 都显示光标。这是观察，不是程序的约定，所以留了点气泡这条退路，什么情况都不会卡死。
@@ -536,7 +566,9 @@ npm run ios:dev                        # Mac 上的 iPhone 尺寸窗口（Cataly
 
 ### 在手机上回答程序的问题（2026-11-05）
 
-程序问你时，在手机上用底部的键回答：↑↓ 换选项，←→ 换题（Claude Code 一次问好几题时），⏎ 选中，Esc 取消。程序在问时，这些键是蓝色的。
+程序问你时，在手机上用底部的键回答：↑↓ 换选项，←→ 换题（Claude Code 一次问好几题时），⏎ 选中，Esc 取消。
+
+**试过又去掉的：程序在问时把这些键变蓝（0.1.7 加，2026-11-06 去掉）。** 蓝色跟着程序报告的 `blocked` 走，但 `blocked` 不一定是菜单：Antigravity 每写好一份计划（artifact）就报 `blocked kind=permission msg="Approve plan"`（2026-11-06 本机 t2w 实测，`asks/` 里 23:53、00:07、00:30 三份样本），屏幕上只是它的输入行和 agent 用文字列的 1. 2. 3.。用户以为手机「认出了一个提问」，其实手机只是在照搬报告。现在键盘栏永远一个样子，屏幕原样同步，怎么答由你看屏幕决定。按下的键仍亮一圈黄框，直到程序画出东西（网络慢时知道键发出去了）。测法：`dev/term-smoke.mjs` 的「no key turns blue」两项，旧代码失败。
 
 **试过又去掉的：选项按钮面板。** 手机读屏幕上的菜单（标记 `❯ › →`、同列的选项、下面的按键提示），在终端下半部画成一排按钮，点一个按钮，手机替你按方向键和 ⏎。真机上它回答了 6 次，都成功了。但用户不要它：选项一长，面板就挡住、也滑不动；而且原来的终端样式就够用。2026-11-05 去掉。
 

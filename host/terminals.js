@@ -268,7 +268,8 @@ function createIconLoader(appDir) {
 export function project(t) {
   const status = t.status ?? null;
   const program = programOf(t.foreground);
-  const app = status?.app || null;
+  // An agent's last report outlives it: with a shell back in front, the agent has exited.
+  const app = SHELLS.has(program) ? null : status?.app || null;
   return {
     address: t.address,
     name: t.name ?? null,

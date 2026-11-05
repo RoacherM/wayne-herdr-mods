@@ -95,11 +95,11 @@ await until('full height again after the keyboard goes', () => page.evaluate(() 
 await page.evaluate(() => document.querySelector('.icon-btn[aria-label="返回"]')?.click());
 check(size('herdr-relay · shell') === before, 'the Mac size never changed');
 
-// --- claude, blocked: typing waits, the answer keys are blue
+// --- claude, blocked: typing waits; the key bar looks the same as always (2026-11-06: a blocked report is not always a menu)
 await openRow('herdr-relay · claude');
 await until('blocked prompt shows', async () => (await screen()).includes('npm test'));
 await until('bubble says the terminal asks', async () => (await bubble()).includes('终端在问你'));
-check(await page.evaluate(() => [...document.querySelectorAll('.key.answer')].map((b) => b.innerText).join(' ')) === 'Esc ↑ ↓ ⏎ ← → 1 2 3 y n', 'answer keys are blue (arrows too)');
+check(await page.evaluate(() => document.querySelector('.key.answer') === null), 'no key turns blue while the program asks');
 await page.focus('.term-keys');
 await page.keyboard.type('later');
 await until('typed text is held', async () => (await bubble()).includes('等你回答后输入：later'));
@@ -117,7 +117,7 @@ await openRow('plan · agy');
 await until('plan prompt shows', async () => (await screen()).includes('/artifact to review'));
 await pause(500);
 check(!(await bubble()), 'no "terminal asks" bubble while the program takes free text');
-check(await page.evaluate(() => document.querySelector('.key.answer') !== null), 'the answer keys are still blue');
+check(await page.evaluate(() => document.querySelector('.key.answer') === null), 'no key turns blue on agy\'s「Approve plan」');
 await page.focus('.term-keys');
 await page.keyboard.type('ok');
 await page.keyboard.press('Enter');

@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>手机 App 与主动推送：设计原型（2026-11-06）</title>
+<style>
+  :root { --bg:#fff; --fg:#1b1b1e; --muted:#69696a; --line:#e2e2e2; --card:#f6f6f6; --blue:#1f62d0; --red:#c93c2c; --green:#2e7d32; --amber:#9a6700; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#17191d; --fg:#eeeeef; --muted:#98999b; --line:#2f3135; --card:#222428; --blue:#76a8ff; --red:#f0705f; --green:#7bc67e; --amber:#e5c07b; } }
+  body { background:var(--bg); color:var(--fg); font:15px/1.65 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
+  h1 { font-size: 26px; margin: 0 0 4px; } h2 { font-size: 20px; margin: 40px 0 10px; border-bottom: 1px solid var(--line); padding-bottom: 6px; } h3 { font-size: 16px; margin: 24px 0 6px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0 16px; font-size: 14px; }
+  th, td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; } th { background: var(--card); }
+  code { background: var(--card); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: var(--card); padding: 12px; border-radius: 8px; overflow-x: auto; font-size: 12.5px; line-height: 1.5; }
+  .lead { background: var(--card); border-left: 4px solid var(--blue); padding: 12px 16px; border-radius: 6px; }
+  .yes { color: var(--green); font-weight: 600; } .no { color: var(--red); font-weight: 600; } .q { color: var(--amber); font-weight: 600; }
+  .tag { display:inline-block; font-size:12px; padding:0 6px; border-radius:4px; border:1px solid var(--line); color: var(--muted); }
+  .phones { display: flex; gap: 24px; flex-wrap: wrap; margin: 16px 0; }
+  .phone { width: 260px; height: 520px; border-radius: 36px; border: 8px solid #111; background: #0d0e10; color: #eee; position: relative; overflow: hidden; font-size: 12px; flex: none; }
+  .phone .cap { text-align: center; color: var(--muted); font-size: 13px; margin-top: 6px; width: 260px; }
+  .lock { background: linear-gradient(160deg, #2b3a55, #11151c); height: 100%; padding: 46px 12px 0; box-sizing: border-box; }
+  .clock { text-align: center; font-size: 54px; font-weight: 300; line-height: 1; margin-bottom: 4px; } .date { text-align:center; opacity:.8; margin-bottom: 26px; }
+  .note { background: rgba(255,255,255,.16); backdrop-filter: blur(10px); border-radius: 16px; padding: 10px 12px; margin-bottom: 8px; }
+  .note b { display:block; font-size: 12.5px; } .note .app { opacity:.75; font-size: 11px; display:flex; justify-content:space-between; }
+  .acts { display:flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+  .acts div { background: rgba(255,255,255,.22); border-radius: 10px; padding: 7px 10px; text-align: center; }
+  .acts .lockicon::before { content: "🔒 "; font-size: 10px; }
+  .appv { padding: 40px 0 0; height: 100%; box-sizing: border-box; background: #17191d; }
+  .appv .hd { padding: 0 14px 8px; font-weight: 600; font-size: 15px; display:flex; justify-content: space-between; }
+  .sec { padding: 6px 14px 2px; color: #98999b; font-size: 11px; }
+  .row { margin: 0 8px 6px; padding: 8px 10px; background: #222428; border-radius: 10px; }
+  .row .t { display:flex; gap:6px; align-items:center; font-weight: 600; } .row .s { color:#98999b; font-size: 11px; margin-top: 2px; }
+  .dot { width:8px; height:8px; border-radius:50%; display:inline-block; } .d-red{background:#f0705f} .d-blue{background:#76a8ff} .d-amber{background:#e5c07b} .d-gray{background:#696a6d}
+  .term { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; padding: 6px 10px; color: #d6d6d6; white-space: pre; line-height: 1.45; }
+  .keys { position:absolute; bottom: 0; left:0; right:0; background:#222428; padding: 6px; display:flex; gap:4px; flex-wrap: wrap; }
+  .keys span { background:#2c2e31; border-radius:6px; padding: 4px 7px; font-size: 11px; } .keys .hot { background:#1f62d0; color:#fff; }
+  .box { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--card); }
+  .arch { display:grid; grid-template-columns: 1fr 40px 1fr 40px 1fr 40px 1fr; align-items: center; gap: 0; font-size: 13px; margin: 14px 0; }
+  .arch .arrow { text-align:center; color: var(--muted); }
+  .new { border-color: var(--blue); } .new b::after { content: " 新"; color: var(--blue); font-size: 11px; }
+  ol li, ul li { margin: 3px 0; }
+</style>
+</head>
+<body>
+
+<h1>手机 App 与主动推送：设计原型</h1>
+<p class="sub">2026-11-06 · wayne-herdr-mods 0.1.7 · 状态：设计，未写代码 · 对应 Issue <a href="issues/I-004-ios-native-app.md">I-004</a></p>
+
+<div class="lead">
+<p><b>结论</b></p>
+<ol>
+<li><b>收不到推送，先不用 App 也能解决。</b>推送代码早就写好了。但你一直在 Chrome 标签页里用：最近 7 天 1790 条手机记录全是 <code>browser: chrome</code>、<code>standalone: false</code>，所以设备显示「推送关」。iOS 只给「主屏幕 Web App」推送。<b>第 0 步</b>：添加到主屏幕 → 重新扫码 → 打开推送。约 10 分钟，0 元。</li>
+<li><b>独立 App 要付费账号才值得做。</b>Apple 免费账号不能推送，装上的 App 7 天就失效。没有推送的 App 解决不了痛点 1。原生 App 需要 Apple Developer Program（$99/年）。</li>
+<li><b>App 是「薄壳」，不重写界面。</b>你说现在的交互「非常 OK」，所以 App 里跑的就是现在的手机页（WKWebView，和 Safari 同一个 WebKit）。原生代码只做网页做不到的：锁屏通知上直接点「允许」、Face ID、钥匙串、扫码。估计 4–5 天（猜测）。</li>
+<li><b>路线</b>：先做第 0 步并用一周，量推送到达率。到达率够、且「点通知再回答」够用，就不花 $99；否则开账号做第 1–3 步。</li>
+</ol>
+</div>
+
+<h2>1. 术语</h2>
+<table>
+<tr><th>术语</th><th>意思</th></tr>
+<tr><td>手机页 / PWA</td><td>现在的手机网页（<code>app/</code>，托管在中继上）。PWA 是「可以装到主屏幕的网页」。</td></tr>
+<tr><td>主屏幕 Web App</td><td>从分享菜单「添加到主屏幕」后，从主屏幕图标打开的手机页。没有浏览器地址栏，有自己的存储，iOS 只给它推送。</td></tr>
+<tr><td>Web Push</td><td>浏览器标准推送。宿主把加密内容发给 Apple 的 <code>web.push.apple.com</code>，Apple 转给手机。</td></tr>
+<tr><td>APNs</td><td>Apple Push Notification service，原生 App 的推送通道。需要付费开发者账号的 <code>.p8</code> 密钥。</td></tr>
+<tr><td>薄壳 App</td><td>一个很小的 Swift App，界面是一个 WKWebView（系统网页视图），里面加载手机页；只有推送、通知按钮、钥匙串这些用 Swift 写。</td></tr>
+<tr><td>NSE</td><td>Notification Service Extension，App 附带的一段小程序。通知显示前，iOS 先交给它处理；我们用它解密推送内容。</td></tr>
+<tr><td>通知按钮</td><td>锁屏通知长按或下拉后出现的按钮（如「1 允许」）。Web Push 在 iOS 上没有这个能力。</td></tr>
+<tr><td>宿主</td><td>Mac 上常驻的 <code>wayne-herdr-mods serve</code>（<code>host/</code>）。</td></tr>
+<tr><td>中继</td><td>Cloudflare Worker（<code>relay/</code>），只转发密文。</td></tr>
+<tr><td>nsh</td><td>Native Shell，用 TSX 写原生界面的框架。<code>ios/</code> 里有第 0 步原型。本设计不再用它重写界面（见第 4 节）。</td></tr>
+</table>
+
+<h2>2. 事实：已验证的和猜测的</h2>
+<h3>已验证（2026-11-06）</h3>
+<ul>
+<li>Web Push 链路代码完整：手机页 <code>push.subscribe</code> 订阅、设置页「发一条测试」、<code>relay/public/sw.js</code> 的 <code>push</code> / <code>notificationclick</code>（点通知打开那个终端）、宿主 <code>host/push.js</code> 发送（只发到白名单里的推送服务，含 <code>web.push.apple.com</code>）。<b>从没在真 iPhone 上验证过</b>（DESIGN.md 标「未测」）。</li>
+<li>你的设备 <code>bf94d1e6 iPhone</code>：「推送关」。指标文件 2026-10-31 至 11-06：1790 条手机记录，全部 <code>chrome</code>、<code>standalone: false</code>。</li>
+<li>Apple 免费账号（Personal Team）不支持 Push Notifications 能力，签的 App 7 天失效（<a href="https://developer.apple.com/forums/thread/768748">Apple 论坛</a>、<a href="https://developer.apple.com/support/app-capabilities/">Supported capabilities</a>）。</li>
+<li>iOS 16.4 起，主屏幕 Web App 能收 Web Push，从 Safari、Chrome、Edge 添加都行；浏览器标签页里不行。iOS 26 的「添加到主屏幕」默认「作为 Web App 打开」。iOS 的 Web Push 通知没有按钮（<a href="https://documentation.onesignal.com/docs/en/web-push-for-ios">OneSignal 文档</a>）。</li>
+<li>本机有 Apple Development 证书（team <code>649Y392UFJ</code>），没有付费账号。</li>
+<li>nsh 0.4.0（2026-11-04）加了 <code>lifecycle()</code>（App 在前台还是后台）；推送仍需要自己写 Swift 宿主。</li>
+<li>Herdr Anywhere v0.1.4（2026-11-05）：iPhone 版只在模拟器跑过，没有系统通知。它的终端也是 WKWebView 里的 xterm.js。</li>
+</ul>
+<h3>猜测，要量</h3>
+<ul>
+<li>iOS 26 上 Web Push 的到达率和延迟（第 0 步量）。</li>
+<li>NSE 里用 CryptoKit 解密、通知按钮按 agent 的选项动态生成，都没做过原型。</li>
+<li>工作量全是估计。</li>
+</ul>
+
+<h2>3. 选项对比</h2>
+<table>
+<tr><th></th><th>A. 主屏幕 Web App<br>（现有代码）</th><th>B. Bark 推送 App<br>（第三方，免费）</th><th>C. 薄壳 App + APNs<br>（付费账号）</th><th>D. 免费账号 App</th></tr>
+<tr><td>费用</td><td>0</td><td>0</td><td>$99/年</td><td>0</td></tr>
+<tr><td>agent 等你时主动推送</td><td class="yes">有</td><td class="yes">有</td><td class="yes">有</td><td class="no">没有</td></tr>
+<tr><td>锁屏上直接回答</td><td class="no">不能，点开再答</td><td class="no">不能，点开跳网页</td><td class="yes">能（Face ID 后）</td><td class="no">不能</td></tr>
+<tr><td>专注模式下也提醒</td><td class="q">未知</td><td class="yes">能（timeSensitive）</td><td class="yes">能（time-sensitive）</td><td class="no">—</td></tr>
+<tr><td>不依赖浏览器</td><td class="q">一半：自己的图标、没有地址栏，仍是网页</td><td class="no">不能</td><td class="yes">能</td><td class="yes">能</td></tr>
+<tr><td>要定期重装</td><td>不用</td><td>不用</td><td>不用（开发证书 1 年）</td><td class="no">每 7 天</td></tr>
+<tr><td>谁能看到通知内容</td><td>只有手机（RFC 8291 加密）</td><td>只有手机（AES-GCM），Bark 服务器知道设备号</td><td>只有手机（NSE 解密）</td><td>—</td></tr>
+<tr><td>工作量（估计）</td><td>你 10 分钟；我 0.5 天量到达率</td><td>0.5 天</td><td>4–5 天</td><td>3.5 天，且没推送</td></tr>
+</table>
+<p><b>推荐</b>：先 A（第 0 步）。A 的推送不可靠时，B 是 0 元的后备。想要锁屏直接回答和真正的 App，就开账号做 C。D 不做。</p>
+
+<h2>4. 为什么 App 是薄壳，不用 nsh 重写</h2>
+<table>
+<tr><th></th><th>薄壳（WKWebView + 现在的手机页）</th><th>nsh 重写（<code>ios/</code> 原型、Herdr Anywhere 的做法）</th></tr>
+<tr><td>交互</td><td>和现在完全一样：键盘栏、语音、滑动看历史、直连都是现成的</td><td>列表、发送框要重写，打磨过的细节要重做一遍</td></tr>
+<tr><td>更新</td><td>手机页仍从中继加载：<code>npm run relay:deploy</code> 后 App 立刻是新的，不用重装</td><td>每次改界面都要重新打包安装</td></tr>
+<tr><td>依赖</td><td>只有系统 WebKit</td><td>nsh 3 周大、0.x 版本，已踩过 <code>wss://</code> 坏掉的坑</td></tr>
+<tr><td>原生代码</td><td>约 400 行 Swift + NSE（猜测）</td><td>Swift 宿主 + 整个 TSX 界面</td></tr>
+<tr><td>原生手感</td><td>一般（仍是网页滚动）</td><td>更好</td></tr>
+</table>
+<p>终端掉帧（I-004 原来的启动条件 1）没有出现，所以不需要原生终端。以后真的需要，再在壳里换掉终端那一页。</p>
+
+<h2>5. 架构</h2>
+<div class="arch">
+  <div class="box new"><b>iPhone 薄壳 App</b><br>WKWebView：现在的手机页<br>Swift：APNs、通知按钮、Face ID、钥匙串<br>NSE：解密通知</div>
+  <div class="arrow">⇄<br><small>密文</small></div>
+  <div class="box"><b>中继</b><br>Cloudflare Worker<br>不变</div>
+  <div class="arrow">⇄</div>
+  <div class="box"><b>Mac 宿主</b><br><code>host/phones.js</code> RPC<br><code>host/push.js</code>：Web Push <b>+ APNs</b></div>
+  <div class="arrow">⇄</div>
+  <div class="box"><b>herdr-core</b><br>不变</div>
+</div>
+<p>推送走另一条路：宿主 → <code>api.push.apple.com</code>（HTTP/2，JWT 用 <code>.p8</code> 签）→ iPhone 的 NSE 解密 → 显示带按钮的通知。</p>
+
+<h3>agent 等你时的完整流程</h3>
+<pre>
+agent        herdr-core     宿主 host            APNs          iPhone (NSE + App)            你
+  │ OSC 7501     │             │                   │                 │                        │
+  ├─blocked─────►│──status────►│ notify.js 判断     │                 │                        │
+  │              │             │ 读屏幕选项（每个 agent 一个读取器）    │                        │
+  │              │             │ 加密 {标题,选项,turn}│                │                        │
+  │              │             ├──HTTP/2 push─────►│────────────────►│ NSE 解密，挂上按钮      │
+  │              │             │                   │                 ├──锁屏通知──────────────►│
+  │              │             │                   │                 │◄──长按，点「1 允许」────┤
+  │              │             │                   │                 │  Face ID                │
+  │              │             │◄────── term.answer {address, turn, key:'1'}（经中继，加密）───┤
+  │              │             │ 检查：还卡在同一个问题吗？                                     │
+  │              │◄─keys '1'───┤ 是 → 发键；否 → 回「问题已变」                                │
+  │◄─────────────┤             │                   │                 │                        │
+</pre>
+
+<h2>6. 屏幕原型</h2>
+<div class="phones">
+  <div>
+    <div class="phone"><div class="lock">
+      <div class="clock">23:57</div><div class="date">11月6日 星期四</div>
+      <div class="note"><div class="app"><span>HERDR · 对时效敏感</span><span>现在</span></div>
+        <b>✋ Claude Code 等你确认</b>herdr-relay / 1：要运行 npm test 吗？
+        <div class="acts"><div class="lockicon">1 允许</div><div class="lockicon">2 允许，以后不再问</div><div>打开</div></div></div>
+      <div class="note"><div class="app"><span>HERDR</span><span>3 分钟前</span></div><b>✅ epi 完成</b>story-forge-agent / 1</div>
+    </div></div>
+    <div class="cap">① 锁屏：长按出按钮，🔒 = 先 Face ID</div>
+  </div>
+  <div>
+    <div class="phone"><div class="appv">
+      <div class="hd"><span>终端</span><span>＋</span></div>
+      <div class="sec">等你 · 1</div>
+      <div class="row"><div class="t"><span class="dot d-red"></span>Claude Code</div><div class="s">herdr-relay / 1 · 要运行 npm test 吗？</div></div>
+      <div class="sec">完成 · 1</div>
+      <div class="row"><div class="t"><span class="dot d-blue"></span>epi</div><div class="s">story-forge-agent / 1</div></div>
+      <div class="sec">在跑 · 2</div>
+      <div class="row"><div class="t"><span class="dot d-amber"></span>agy</div><div class="s">story-forge-agent / 2</div></div>
+      <div class="row"><div class="t"><span class="dot d-amber"></span>agy</div><div class="s">herdr-relay / 2</div></div>
+      <div class="sec">空闲 · 1</div>
+      <div class="row"><div class="t"><span class="dot d-gray"></span>zsh</div><div class="s">herdr-relay / 4</div></div>
+    </div></div>
+    <div class="cap">② 列表：就是现在的手机页<br>（可选：按「等你 → 完成 → 在跑 → 空闲」排）</div>
+  </div>
+  <div>
+    <div class="phone"><div class="appv">
+      <div class="hd"><span>‹ herdr-relay / 1</span><span>🎤</span></div>
+      <div class="term">● Bash(npm test)
+  ⎿ 55 pass, 0 fail
+
+要运行 npm test 吗？
+❯ 1. 是
+  2. 是，以后都允许
+  3. 否</div>
+      <div class="keys"><span>Esc</span><span class="hot">←</span><span class="hot">↑</span><span class="hot">↓</span><span class="hot">→</span><span class="hot">⏎</span><span>⇧Tab</span><span>^C</span><span>Tab</span><span>粘贴</span></div>
+    </div></div>
+    <div class="cap">③ 终端页：和现在一样，不改</div>
+  </div>
+</div>
+
+<h2>7. 分步计划</h2>
+<h3>第 0 步：主屏幕 Web App 推送（0 元，今天能做）</h3>
+<p><b>你做（约 10 分钟）：</b></p>
+<ol>
+<li>在 iPhone 上用 Safari 或 Chrome 打开 <code>https://herdr-relay.sir-housir.workers.dev</code>，分享 → 添加到主屏幕，保持「作为 Web App 打开」开着。</li>
+<li>从主屏幕图标打开。它的存储和浏览器分开，所以要重新扫码：在 Mac 的 Herdr.app 点标签栏右上角的手机图标。</li>
+<li>设置 → 通知 →「开启通知」→ 允许 →「发一条测试」。</li>
+</ol>
+<p><b>我做（0.5 天）：</b>量推送到达率。宿主日志记下每条推送的发出时间和编号；service worker 收到时记下编号和延迟，下次打开时随指标上报。<code>wayne-herdr-mods metrics</code> 报告里加一行「推送：发出 N，收到 M，延迟中位数」。</p>
+<p><b>用一周后的判断：</b>到达 ≥ 95%、延迟中位数 &lt; 10 秒、你觉得「点通知再回答」够用 → 到此为止。否则 → 第 1 步。</p>
+
+<h3>第 1 步：薄壳 App 上手机（付费账号；估计 1–1.5 天）</h3>
+<ul>
+<li>新目录 <code>ios-shell/</code>（xcodegen 生成工程）：一个 WKWebView 加载 <code>https://herdr-relay.sir-housir.workers.dev</code>。</li>
+<li>麦克风和相机权限文案（语音、扫码在 WKWebView 里用 <code>getUserMedia</code>，和现在一样）。</li>
+<li>回到前台时通知手机页立刻重连（原生知道 App 状态）。</li>
+<li>用 Xcode 装到你的 iPhone；以后可以走 TestFlight。</li>
+<li>验证：<code>devicectl</code> 截图 + 手机页现有指标（<code>src</code> 记成 <code>shell</code>，能和浏览器分开统计）。</li>
+</ul>
+
+<h3>第 2 步：APNs 推送（估计 1.5 天）</h3>
+<ul>
+<li><b>推送密钥：</b>Swift 在钥匙串里生成一对 X25519 密钥，私钥不离开手机；NSE 和 App 共享钥匙串分组。公钥交给手机页。</li>
+<li><b>注册：</b>手机页经现有加密连接调用 <code>push.subscribe {apns: {token, env, key}}</code>。宿主存到这台设备的 <code>push</code> 上。</li>
+<li><b>发送：</b><code>host/push.js</code> 加 APNs 通道，只用 Node 自带的 <code>http2</code> 和 <code>crypto</code>：ES256 JWT（<code>.p8</code> 存 Mac 钥匙串，命令 <code>wayne-herdr-mods push apns-key</code>，和语音密钥一样）。</li>
+<li><b>内容加密：</b>X25519 + HKDF-SHA256 + ChaCha20-Poly1305（Node 和 CryptoKit 都自带，不加依赖）。通知上明文只有「Herdr：有终端需要你」，<code>mutable-content: 1</code> 让 NSE 换成真内容；NSE 失败时只显示这句，不漏内容。</li>
+<li><b>字段对应：</b>Web Push 的 <code>tag</code> → <code>apns-collapse-id</code>（同一个终端的新通知替换旧的）；终端地址 → <code>thread-id</code>（按终端分组）；等你确认 → <code>interruption-level: time-sensitive</code>。</li>
+</ul>
+
+<h3>第 3 步：锁屏直接回答（估计 1.5–2 天）</h3>
+<ul>
+<li><b>按钮从哪来：</b>宿主读屏幕上的选项，<b>每个 agent 一个读取器</b>，只读用真样本测过的布局（<code>~/.config/wayne-herdr-mods/asks/</code> 里已存了 claude、epi、agy 的真问题屏幕）。读不出就只有「打开」，不猜。这也是修「授权太贴合 Claude Code」的地方。</li>
+<li><b>按钮怎么生效：</b>先做「点按钮 → App 打开到那个终端并替你按下数字」（简单，约 1–2 秒）。量过嫌慢再做后台发送（App 不出来）。</li>
+<li><b>Face ID：</b>会改东西的按钮都设 <code>authenticationRequired</code>：锁着的手机必须先解锁才能批准命令。</li>
+<li><b>防止答错题：</b>新 RPC <code>term.answer {address, turn, statusMs, key}</code>。宿主先核对：这个终端还卡在同一个问题上吗（<code>statusMs</code> 没变）？变了就拒绝，回「问题已经变了」。10 分钟前的旧通知不会把「1」按进新问题里。</li>
+</ul>
+
+<h3>以后可选</h3>
+<ul>
+<li>灵动岛 / 锁屏实时活动：「3 个在跑，1 个等你」，用 APNs 更新。</li>
+<li>Android：同样的薄壳思路（WebView + FCM），没有需求不做。</li>
+</ul>
+
+<h2>8. 协议与兼容（DESIGN.md 规则 2）</h2>
+<table>
+<tr><th>组合</th><th>行为</th></tr>
+<tr><td>旧手机页 + 新宿主</td><td>旧页面只发 <code>push.subscribe {subscription}</code>（Web Push），照旧工作。<code>term.answer</code> 旧页面不调用。</td></tr>
+<tr><td>新手机页（浏览器里）+ 旧宿主</td><td>不在壳里时不发 <code>apns</code>，和现在一样。</td></tr>
+<tr><td>新手机页（壳里）+ 旧宿主</td><td>旧宿主拒绝 <code>apns</code> 字段 → 页面提示「Mac 端要更新才能推送到 App」。<code>term.answer</code> 不在旧白名单 → 按钮退回「打开」。</td></tr>
+</table>
+<p>中继地址、<code>herdr-relay/v1</code>、<code>localStorage['herdr-relay']</code> 都不改。壳里的手机页是新存储，要扫一次码（和第 0 步一样）。</p>
+<p><code>term.answer</code> 和 <code>push.subscribe</code> 的 <code>apns</code> 字段改了宿主 RPC 白名单和凭证，按 AGENTS.md 规则 6 交给另一个模型独立审查。</p>
+
+<h2>9. 风险</h2>
+<table>
+<tr><th>风险</th><th>应对</th></tr>
+<tr><td>iOS Web Push 不稳定（被系统延迟或丢弃）</td><td>第 0 步先量；不够就 B（Bark）或 C</td></tr>
+<tr><td>手机页在 WKWebView 里和在 Safari 里行为不同（键盘、麦克风权限）</td><td>第 1 步第一天就在真机上跑 <code>dev/term-smoke.mjs</code> 覆盖的操作</td></tr>
+<tr><td>NSE 内存很小（24 MB 上限，猜测值），解密超时</td><td>载荷只放标题、选项、编号；只用 CryptoKit</td></tr>
+<tr><td>旧通知被点，按进了新问题</td><td><code>term.answer</code> 核对 <code>statusMs</code></td></tr>
+<tr><td>手机丢了：别人能在锁屏上批准命令</td><td>按钮要 Face ID；Mac 上 <code>devices rm</code> 立刻作废</td></tr>
+<tr><td>付费账号到期</td><td>App 停推送，浏览器和主屏幕 Web App 照常能用</td></tr>
+</table>
+
+<h2>10. 要你拍板</h2>
+<ol>
+<li><b>现在：</b>做第 0 步（你那 10 分钟）。我同时做到达率统计。</li>
+<li><b>一周后：</b>看数字决定要不要开 $99 账号做第 1–3 步。</li>
+</ol>
+
+</body>
+</html>

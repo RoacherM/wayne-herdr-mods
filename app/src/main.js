@@ -382,16 +382,21 @@ function renderSettings() {
  *   ┌ header ───────────────────────┐
  *   │ terminal, as on the Mac  ⇢    │  tap → keyboard; sideways: pan; up/down: history
  *   │          ( status bubble )    │  only when there is something to say
- *   ├ 粘贴 Esc ⇧Tab ^C ↑ ↓ ⏎ Tab … ┤
+ *   ├ Esc ← ↑ ↓ → ⏎ ⇧Tab ^C …   ┤
  *   │  ＋  │   按住 说话   │  ⌨     │
  *   └───────────────────────────────┘
  */
-// The keys a coding agent needs most come first: what fits on the screen without scrolling the bar.
-// 粘贴: the phone's clipboard, text or a screenshot. ⇧Tab: Claude Code's mode switch. 换行: a new
-// line in the agent's input without sending it. Arrows repeat while held.
+// In the order the keys are used while vibe coding from a phone (DESIGN.md「键盘栏的顺序」): what is
+// typed goes by voice or the keyboard; the bar answers the agent and stops it. The first 7 fit on
+// a 393 px phone without scrolling the bar:
+//   Esc            stop the agent (Claude Code, Codex, epi), cancel a question
+//   ← ↑ ↓ →  ⏎     answer a menu: ↑↓ the choice, ←→ the question (Claude Code's tabs), ⏎ pick it
+//   ⇧Tab           Claude Code's mode (plan, accept edits)
+// The rest is a swipe away. 粘贴: the phone's clipboard, text or a screenshot. 换行: a new line in
+// the agent's input without sending it. Arrows repeat while held.
 const KEYBAR = [
-  ['粘贴', 'paste'], ['Esc', '\x1b'], ['⇧Tab', '\x1b[Z'], ['^C', '\x03'], ['↑', 'up'], ['↓', 'down'], ['⏎', '\r'], ['Tab', '\t'],
-  ['←', 'left'], ['→', 'right'], ['换行', PASTE_LF], ['1', '1'], ['2', '2'], ['3', '3'], ['y', 'y'], ['n', 'n'], ['^D', '\x04'], ['^R', '\x12'], ['^L', '\x0c'],
+  ['Esc', '\x1b'], ['←', 'left'], ['↑', 'up'], ['↓', 'down'], ['→', 'right'], ['⏎', '\r'], ['⇧Tab', '\x1b[Z'], ['^C', '\x03'],
+  ['Tab', '\t'], ['粘贴', 'paste'], ['换行', PASTE_LF], ['1', '1'], ['2', '2'], ['3', '3'], ['y', 'y'], ['n', 'n'], ['^D', '\x04'], ['^R', '\x12'], ['^L', '\x0c'],
 ];
 const KEY_NAMES = new Map(KEYBAR.map(([label, seq]) => [seq, label])); // what metrics records: the key's name
 const ARROWS = { up: 'A', down: 'B', right: 'C', left: 'D' };
@@ -399,8 +404,6 @@ const REPEAT = new Set(['up', 'down', 'left', 'right']);
 // A font the phone can read; the Mac's columns are wider than the phone, and the phone pans.
 const TERM_FONT = 12; // px
 const MOUSE_REPORT = /^(\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[M[\s\S]{3})+$/; // SGR, or the default encoding
-// Blue while the program asks. A menu (Claude Code's questions, epi's) moves with ↑↓, its tabs with ←→.
-const ANSWERS = new Set(['Esc', '↑', '↓', '←', '→', '⏎', '1', '2', '3', 'y', 'n']);
 // Hardware keys that go to the program as keys, not into the line.
 const HW_KEYS = { Escape: '\x1b', Tab: '\t', ArrowUp: 'up', ArrowDown: 'down', ArrowRight: 'right', ArrowLeft: 'left' };
 const TERM_THEME = { background: '#0b0b0c', foreground: '#e6e6e1', cursor: '#e6e6e1', selectionBackground: '#3a3a36' };
@@ -674,7 +677,6 @@ function openTerm(address) {
     if (!page.sized) resizeTo(t.cols, t.rows); // follow the size the Mac windows set (an older Mac: no `size` on the stream)
     showTerm();
     const blocked = t.state === 'blocked';
-    keyBtns.forEach((b) => b.classList.toggle('answer', blocked && ANSWERS.has(b.dataset.label)));
     asks = blocked;
     if (!blocked) letGo = false;
     hold();
@@ -740,7 +742,7 @@ function openTerm(address) {
       : status.composing ? { text: status.composing }
       : line.pending && blocked ? { text: `等你回答后输入：${line.pending} · 点这里照样输入`, kind: 'warn tap' }
       : line.pending ? { text: `等你回答后输入：${line.pending}`, kind: 'warn' }
-      : blocked ? { text: '终端在问你：用蓝色键回答 · 点这里照样打字', kind: 'warn tap' }
+      : blocked ? { text: '终端在问你 · 点这里照样打字', kind: 'warn tap' }
       : status.notice ? { text: status.notice, kind: 'warn' }
       : null;
     bubble.hidden = !say;

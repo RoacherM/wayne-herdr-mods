@@ -135,7 +135,6 @@ button { font: inherit; color: inherit; }
 .keybar::-webkit-scrollbar { display: none; }
 .key { flex: none; display: grid; place-items: center; min-width: 42px; height: 34px; padding: 0 12px; border: none; border-radius: 8px; background: #2c2c2e; color: var(--fg); font: 500 15px -apple-system, BlinkMacSystemFont, sans-serif; }
 .key:active { background: #48484a; }
-.key.answer { background: var(--blue); color: #fff; }
 /* Sent, the program has not drawn anything since (main.js pressed()). */
 .key.sent { box-shadow: inset 0 0 0 2px #ffd60a; }
 .term-actions { position: relative; display: flex; align-items: center; gap: 8px; }

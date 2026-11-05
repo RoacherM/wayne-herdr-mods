@@ -1,6 +1,11 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, panes, run, openOverlay, theme, window, layout, settings } from "herdr";
+import { spaces, panes, terminals, run, openOverlay, theme, window, layout, settings } from "herdr";
+
+// Herdr keeps an agent's last report after the agent exits: the pane is back at zsh, its program
+// still says Epi. A shell in front means the agent is gone.
+const SHELLS = new Set(["zsh", "bash", "fish", "sh", "dash", "nu", "pwsh", "elvish", "xonsh", "tcsh", "csh", "ksh"]);
+const SHELL = { key: "shell", icon: "icons/shell.svg", tint: true, shell: true, agent: false };
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -20,11 +25,14 @@ export default class Tabs extends View {
 
   // What a tab shows: the agent you work with there, not the first one in it. Only the window's
   // focused pane says `focused`, so each tab remembers its last focused agent pane.
-  lead(tab) {
-    const mine = panes().filter(p => p.tab === tab);
+  lead(tab, front) {
+    const mine = panes().filter(p => p.tab === tab).map(p => {
+      const fg = front[p.terminal];
+      return p.program?.agent && SHELLS.has(fg) ? { ...p, program: { ...SHELL, name: fg } } : p;
+    });
     const now = mine.find(p => p.focused);
     if (now?.program?.agent) this.used[tab] = now.pane;
-    return mine.find(p => p.pane === this.used[tab]) ?? mine.find(p => p.program?.agent) ?? now ?? mine[0];
+    return mine.find(p => p.pane === this.used[tab] && p.program?.agent) ?? mine.find(p => p.program?.agent) ?? now ?? mine[0];
   }
 
   // The side panel is remembered per space: switching shows that space's choice
@@ -62,8 +70,9 @@ export default class Tabs extends View {
     const stop = (_e, cx) => cx.stop_propagation();
     const button = (id, label, action) => div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
       .on_mouse_down("left", stop).on_click(action).child(label);
+    const front = Object.fromEntries(terminals().map(x => [x.address, x.foreground?.name])); // what runs in front, per terminal
     const item = (c, i) => {
-      const program = this.lead(c.id)?.program;
+      const program = this.lead(c.id, front)?.program;
       const name = /^tb\d+$/.test(c.name) ? program?.name ?? "Terminal" : c.name;
       return h_flex().id(`tab-${c.id}`).h(29).px(10).gap(7).rounded(7).items_center().flex_none().text_size(12.8)
         .border(1).border_color(c.active ? t.border : t.chrome).bg(c.active ? t.raised : t.chrome).text_color(c.active ? t.foreground : t.muted)

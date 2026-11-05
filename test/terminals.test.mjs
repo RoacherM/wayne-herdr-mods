@@ -29,6 +29,15 @@ test('iconOf maps Herdr agent and program names to sidebar icon keys', () => {
   assert.equal(iconOf(null, 'python3'), 'python');
 });
 
+// t25 on 2026-11-05: epi exited, zsh is back in front, the report still says app=epi.
+test('an agent that exited leaves a shell, not its icon', () => {
+  const gone = project({ address: 't25', foreground: { name: 'zsh', argv: ['/bin/zsh', '-l'] }, status: { app: 'epi', state: 'done' } });
+  assert.equal(gone.app, null);
+  assert.equal(gone.icon, 'shell');
+  const live = project({ address: 't1k', foreground: { name: 'agy', argv: ['agy'] }, status: { app: 'antigravity', state: 'idle' } });
+  assert.equal(live.icon, 'antigravity');
+});
+
 test('project turns done into idle once herdr.seen reaches turn', () => {
   const unseen = project({
     address: 't1',

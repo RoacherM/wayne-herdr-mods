@@ -53,7 +53,12 @@ const tap = async (label) => { const p = await center(label); await page.touchsc
 const endCat = async () => { await page.keyboard.type('.'); await pause(300); };
 
 const shown = await page.$$eval('.key', (bs) => bs.filter((b) => { const r = b.getBoundingClientRect(); return r.right <= innerWidth && r.left >= 0; }).map((b) => b.dataset.label));
-check('without scrolling the bar: 粘贴 Esc ⇧Tab ^C ↑ ↓ ⏎', ['粘贴', 'Esc', '⇧Tab', '^C', '↑', '↓', '⏎'].every((k) => shown.includes(k)), shown.join(' '));
+check('without scrolling the bar: Esc ← ↑ ↓ → ⏎ ⇧Tab', ['Esc', '←', '↑', '↓', '→', '⏎', '⇧Tab'].every((k) => shown.includes(k)), shown.join(' '));
+// The smallest phone this is for (393 px wide): the same 7 still fit.
+await page.setViewport({ width: 393, height: 852, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
+await pause(300);
+const small = await page.$$eval('.key', (bs) => bs.filter((b) => { const r = b.getBoundingClientRect(); return r.right <= innerWidth && r.left >= 0; }).map((b) => b.dataset.label));
+check('… also on a 393 px phone', ['Esc', '←', '↑', '↓', '→', '⏎', '⇧Tab'].every((k) => small.includes(k)), small.join(' '));
 
 await fresh();
 for (const k of ['Esc', '⇧Tab', '↑', '↓', '←', '→', 'Tab', '1', 'y', '^R', '^L']) await tap(k);
