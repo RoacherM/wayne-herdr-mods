@@ -61,6 +61,8 @@ wayne-herdr-mods metrics                   # 同样的内容，打开一个报�
 
 测量：`echo.paint` 打字到看见、`scroll.lag` 全屏程序里滑动到画面跟上、`open.ms` 打开终端、`resume.paint` 切回页面到画出来、`resume.ready` 切回到连接恢复、`rtt.ms` 往返（含排队）、`rtt.ice` 直连时的网络往返（不含排队）、`macscroll.prog` 程序回应滚轮（Mac 上，不含网络）、`macscroll.behind` 滑动时在路上的数据（KB）、`reprint.kb` / `reprint.ms` 程序清掉历史整段重印的大小、到手机拿到新画面的时间（Mac 上；超过 64 KB 换成新首屏，`fresh: true`）、`scroll.p95` 滑动时慢的帧。原始记录每天一个文件：`~/.config/wayne-herdr-mods/metrics/YYYY-MM-DD.jsonl`。改了手机网页或连接的代码后，在仓库里跑 `node dev/bench.mjs`（只看滑动：`--scroll`）（要先 `npm run build` 和 `npm run relay:dev`）：它和上次比，慢了 20% 以上会指出来，退出码 1。
 
+提问样本：终端每次问你（程序报告 `blocked`），Mac 把那一屏存到 `~/.config/wayne-herdr-mods/asks/`（只在本机，最多 200 份）。手机上答不了某个问题时，在仓库里跑 `node dev/asks.mjs --show`，看那个问题的屏幕长什么样。
+
 ## 改 Herdr.app 的界面
 
 源文件在仓库的 `herdr-app/`（`layouts/main-preview.json`、`mods/my-tabs/`、`mods/my-files/`、`mods/wayne-phones/`）。改仓库里的，不要只改 `~/.config/herdr-app/` 里的：下次安装会覆盖。

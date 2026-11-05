@@ -17,6 +17,8 @@ const SESSION = 'relay-ui';
 const r = (s) => `printf '\\033]7501;${s}\\033\\\\'`;
 const b64 = (s) => Buffer.from(s).toString('base64');
 
+// A scratch core left from an earlier run still has its terminals (same names): start clean.
+{ const old = await openCore({ session: SESSION }); await old.call('server.stop').catch(() => {}); old.close(); await new Promise((res) => setTimeout(res, 500)); }
 const mac = await openCore({ session: SESSION });
 const term = async (script, where, cwd = '/tmp') => (await mac.call('terminal.run', { argv: ['/bin/sh', '-c', script], cwd, labels: { where }, rm: true })).address;
 // A process named `claude` (a copied system shell is killed by macOS; a tiny compiled one is not),
@@ -33,6 +35,8 @@ const claude = await asClaude(`${r('state=working:app=claude')}; printf '\\033[1
 const agy = await term(`${r(`state=blocked:kind=permission:app=antigravity:msg=${b64('Approve plan')}`)}; printf '计划写好了。\\n          1 artifact · /artifact to review\\n> '; while read -r l; do printf '收到 %s\\n> ' "$l"; done`, 'plan · agy');
 // Blocked with the cursor hidden, but it reads a line: only the bubble's tap lets typing in.
 const stuck = await term(`${r(`state=blocked:kind=permission:app=antigravity:msg=${b64('Review')}`)}; printf '\\033[?25l要你看一下\\n'; while read -r l; do printf '收到 %s\\n' "$l"; done`, 'plan · stuck');
+// Asks as Claude Code does (fake-menu.mjs): the key bar's ↑↓ and ⏎ answer it.
+const asker = await asClaude(`${process.execPath} ${new URL('./fake-menu.mjs', import.meta.url).pathname}`, 'ask · claude');
 const codex = (await mac.call('terminal.run', { argv: [join(fakeBin, 'codex'), `${r('state=working:app=codex')}; for i in $(seq 1 30); do echo "step $i: building…"; sleep 0.2; done; ${r(`state=done:app=codex:msg=${b64('测试全部通过')}`)}; sleep 100000`], cwd: '/tmp', labels: { where: 'site / 1' }, rm: true })).address;
 const logs = await term(`while true; do date '+%H:%M:%S  GET /v1/health 200'; sleep 2; done`, 'site / 2');
 
@@ -41,7 +45,7 @@ const doc = await mac.call('doc.get', { name: 'herdr-app' });
 await mac.call('doc.set', { name: 'herdr-app', version: doc.version, value: { spaces: [
   { id: 's1', name: 'herdr-relay', folder: '~/Projects/sides/herdr-relay', tabs: [{ id: 'a', name: 'main', root: { children: [leaf(claude), leaf(shell)] } }] },
   // No name: Herdr.app shows it after where its terminals are now ("site"), not the folder it was made in.
-  { id: 's2', name: '', folder: '~/Projects/old-site', tabs: [{ id: 'b', name: 'build', root: leaf(codex) }, { id: 'c', name: 'logs', root: leaf(logs) }, { id: 'd', name: 'plan', root: { children: [leaf(agy), leaf(stuck)] } }] },
+  { id: 's2', name: '', folder: '~/Projects/old-site', tabs: [{ id: 'b', name: 'build', root: leaf(codex) }, { id: 'c', name: 'logs', root: leaf(logs) }, { id: 'd', name: 'plan', root: { children: [leaf(agy), leaf(stuck)] } }, { id: 'e', name: 'ask', root: leaf(asker) }] },
 ] } });
 // A Mac window viewing the claude terminal at a desktop size.
 for (const t of [claude, shell, codex, logs]) await mac.call('terminal.attach', { terminal: t, cols: 110, rows: 34 });

@@ -399,7 +399,8 @@ const REPEAT = new Set(['up', 'down', 'left', 'right']);
 // A font the phone can read; the Mac's columns are wider than the phone, and the phone pans.
 const TERM_FONT = 12; // px
 const MOUSE_REPORT = /^(\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[M[\s\S]{3})+$/; // SGR, or the default encoding
-const ANSWERS = new Set(['Esc', '⏎', '1', '2', '3', 'y', 'n']); // blue while the program asks
+// Blue while the program asks. A menu (Claude Code's questions, epi's) moves with ↑↓, its tabs with ←→.
+const ANSWERS = new Set(['Esc', '↑', '↓', '←', '→', '⏎', '1', '2', '3', 'y', 'n']);
 // Hardware keys that go to the program as keys, not into the line.
 const HW_KEYS = { Escape: '\x1b', Tab: '\t', ArrowUp: 'up', ArrowDown: 'down', ArrowRight: 'right', ArrowLeft: 'left' };
 const TERM_THEME = { background: '#0b0b0c', foreground: '#e6e6e1', cursor: '#e6e6e1', selectionBackground: '#3a3a36' };
@@ -546,6 +547,7 @@ function openTerm(address) {
     const drawn = metrics.output(bytes.length, w);
     xterm.write(textStyle(last), () => {
       drawn?.();
+      answered(); // the program drew something: the key that went out is in
       if (asks) hold(); // the program may have shown or hidden its cursor
       if (follow.y && !placing) { placing = true; requestAnimationFrame(() => { placing = false; layout(); }); }
       // Credit only what xterm has actually drawn: a slow phone slows the stream down.
@@ -788,9 +790,29 @@ function openTerm(address) {
     return b;
   }
 
+  /**
+   * On a slow network (a phone on 5G: half a second each way and more, see the rtt records) a key
+   * shows on the screen a second later, and looks like it did nothing. The key stays lit from the
+   * press until the program draws something (or 3 s): it went out, the answer is on its way.
+   */
+  let lit = null, litTimer = 0;
+  function pressed(seq) {
+    answered();
+    lit = keyBtns.find((b) => b.dataset.label === KEY_NAMES.get(seq)) ?? null;
+    lit?.classList.add('sent');
+    litTimer = setTimeout(answered, 3000);
+  }
+  function answered() {
+    if (!lit) return;
+    clearTimeout(litTimer);
+    lit.classList.remove('sent');
+    lit = null;
+  }
+
   /** A key: the program owns what went in (Tab may complete it), then the key. */
   function key(seq) {
     metrics.op('key', KEY_NAMES.get(seq) ?? '?');
+    pressed(seq);
     if (seq === 'paste') { paste(); return; }
     vibrate(6);
     metrics.typed();

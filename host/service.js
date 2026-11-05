@@ -10,6 +10,7 @@ import { chmod, mkdir, readFile, rm } from 'node:fs/promises';
 import net from 'node:net';
 import { basename, join } from 'node:path';
 import { desktopIdFor } from '../shared/e2e.js';
+import { createAskSamples } from './ask-samples.js';
 import { createNotifier } from './notify.js';
 import { createPairing } from './pairing.js';
 import { createMetricsStore } from './metrics.js';
@@ -40,10 +41,12 @@ export async function startService({ relayUrl = process.env.WAYNE_HERDR_MODS_URL
     // socket. The service worker drops the notification when the app is on screen.
     notify: (payload) => push.notify(payload, { includeOnline: true }).catch((error) => log(`wayne-herdr-mods: 推送失败：${error.message}`)),
   });
+  // What each question looked like, kept on this Mac to teach the phone new menus (ask-samples.js).
+  const samples = createAskSamples({ dir: state.dir, core: () => terminals.core(), log });
   const terminals = createTerminals({
     coreOptions, log,
     onChange: () => phones?.broadcast('terminals', {}),
-    onStatus: (change) => notifier.onStatus(change),
+    onStatus: (change) => { notifier.onStatus(change); samples.onStatus(change); },
     onCore: () => { phones?.coreChanged(); changed(); },
   });
   const voice = createVoice({ dir: state.dir, log });

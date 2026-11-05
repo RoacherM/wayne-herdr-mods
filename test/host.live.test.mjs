@@ -3,7 +3,7 @@
 // The scratch core (HC_SESSION=relay-live) is separate from Herdr.app's and is stopped at the end.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openCore } from '../host/hc.js';
@@ -230,4 +230,14 @@ test('pair, list, stream, type, send, keys — through the relay', { timeout: 12
   do moved = c2.open(await next(ws2)); while (moved.id !== 100);
   assert.ok(moved.ok, `the upload survives the new connection: ${moved.e}`);
   assert.deepEqual(await readFile(moved.r.path), png);
+
+  // --- a program asks: its screen is kept on the Mac (host/ask-samples.js), to teach the phone its menus
+  const b64s = (x) => Buffer.from(x).toString('base64');
+  await mac.call('terminal.run', { argv: ['/bin/sh', '-c', `printf '\\033]7501;state=blocked:kind=question:app=epi:msg=${b64s('Pick one')}\\033\\\\'; printf ' → Yes\\n   No\\n\\n ↑↓ navigate  enter select\\n'; sleep 30`], cwd: '/tmp', labels: { where: 'test · ask' }, rm: true });
+  const kept = await until('the question is kept', async () => { const k = (await readdir(join(dataDir, 'asks')).catch(() => [])).filter((n) => n.endsWith('.json')); return k.length && k; });
+  assert.equal(kept.length, 1);
+  assert.match(kept[0], /-epi-question\.json$/);
+  const meta = JSON.parse(await readFile(join(dataDir, 'asks', kept[0]), 'utf8'));
+  assert.equal(meta.msg, 'Pick one');
+  assert.match((await readFile(join(dataDir, 'asks', kept[0].replace('.json', '.bin')))).toString(), /→ Yes/);
 });

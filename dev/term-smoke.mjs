@@ -99,7 +99,7 @@ check(size('herdr-relay · shell') === before, 'the Mac size never changed');
 await openRow('herdr-relay · claude');
 await until('blocked prompt shows', async () => (await screen()).includes('npm test'));
 await until('bubble says the terminal asks', async () => (await bubble()).includes('终端在问你'));
-check(await page.evaluate(() => [...document.querySelectorAll('.key.answer')].map((b) => b.innerText).join(' ')) === 'Esc ⏎ 1 2 3 y n', 'answer keys are blue');
+check(await page.evaluate(() => [...document.querySelectorAll('.key.answer')].map((b) => b.innerText).join(' ')) === 'Esc ↑ ↓ ⏎ ← → 1 2 3 y n', 'answer keys are blue (arrows too)');
 await page.focus('.term-keys');
 await page.keyboard.type('later');
 await until('typed text is held', async () => (await bubble()).includes('等你回答后输入：later'));
@@ -135,4 +135,27 @@ await page.evaluate(() => document.querySelector('.term-bubble').click());
 await until('the tap lets it in (bubble gone)', async () => !(await bubble()));
 await page.keyboard.press('Enter');
 await until('then Enter sends it', async () => (await screen()).includes('收到 go'));
+
+// --- a menu as Claude Code draws it (dev/fake-menu.mjs), answered with the key bar's ↑↓ and ⏎
+const marked = async () => (await lines()).find((l) => l.includes('❯'))?.trim() ?? '';
+const lit = () => page.evaluate(() => [...document.querySelectorAll('.key.sent')].map((b) => b.innerText).join(' '));
+await page.evaluate(() => document.querySelector('.icon-btn[aria-label="返回"]')?.click());
+await openRow('ask · claude');
+await until('the menu shows', async () => (await marked()) === '❯ 1. 全部');
+// Lit in the same task as the click: nothing from the network can come in between.
+check(await page.evaluate(() => { const b = [...document.querySelectorAll('.key')].find((k) => k.innerText.trim() === '↓'); b.click(); return b.classList.contains('sent'); }), 'a key stays lit after the press, until the program draws');
+await until('↓ moves the mark', async () => (await marked()) === '❯ 2. 只要手机');
+await until('and the key goes out', async () => !(await lit()), 4000);
+await shot('5-menu');
+await clickText('.key', '⏎');
+await until('⏎ picks it: the next question', async () => (await screen()).includes('新功能叫什么名字？'));
+await clickText('.key', '↓'); await until('↓ again', async () => (await marked()) === '❯ 2. prompt (Recommended)');
+await clickText('.key', '⏎');
+await until('the Submit step', async () => (await screen()).includes('Review your answers'));
+await clickText('.key', '⏎');
+await until('the program got both answers', async () => (await screen()).includes('答案：只要手机 / prompt (Recommended)'));
+await until('then it asks for permission', async () => (await screen()).includes('Do you want to proceed?'), 4000);
+await clickText('.key', '↓'); await until('↓ on the permission prompt', async () => (await marked()).startsWith("❯ 2. Yes, and don't ask again"));
+await clickText('.key', '⏎');
+await until('the permission answer lands', async () => (await screen()).includes("授权：Yes, and don't ask again"));
 await browser.close();
