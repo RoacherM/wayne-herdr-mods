@@ -1,6 +1,6 @@
 {
   "name": "wayne-herdr-mods",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "type": "module",
   "description": "Wayne's Herdr kit: Herdr.app terminals in a phone browser (end-to-end encrypted relay), and our layout and mods for Herdr.app",

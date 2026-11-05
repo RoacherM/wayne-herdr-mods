@@ -116,7 +116,7 @@ iPhone 浏览器 / PWA ──wss /v1/client/<id>──▶ Cloudflare Worker + DO
 | 文件 | 是什么 | 从哪来 |
 |---|---|---|
 | `layouts/main-preview.json`、`.svg` | 窗口布局：在 Herdr 自带的 `main` 上换了标签栏和文件面板 | 复制自 `main` |
-| `mods/my-tabs/` | 标签栏：右上角只留「+」、手机图标、一个面板按钮 | 复制自 `tabs` 0.1.12 |
+| `mods/my-tabs/` | 标签栏：右上角只留「+」、手机图标、一个面板按钮。标签的图标是你在这个标签里最后点进的 agent（2026-11-05 改：原来是标签里第一个 agent，一个标签里有 Claude Code 和 agy 时会显示错）。只有窗口当前的窗格有 `focused`，所以每个标签自己记住 | 复制自 `tabs` 0.1.12 |
 | `mods/my-files/` | 文件面板 | 复制自 `files` 0.1.12 |
 | `mods/wayne-phones/` | 「手机」窗口和它的图标 `phone.svg` | 新写 |
 
