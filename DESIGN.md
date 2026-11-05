@@ -1,10 +1,13 @@
-# wayne-herdr-mods 设计（草案）
+---
+title: wayne-herdr-mods 设计与协议
+description: 手机浏览器通过端到端加密中继或 WebRTC 直连操作本机 Herdr.app 终端，以及 Herdr.app 自定义界面（main-preview、my-tabs、my-files、wayne-phones）的完整架构与协议契约。
+---
 
-> 2026-11-04 起项目叫 wayne-herdr-mods（旧名 herdr-relay）：手机网页和 Herdr.app 里的界面是一套东西，agent 照 `SKILL.md` 用它。命令、后台服务（`com.roacherm.wayne-herdr-mods`）、`~/.config/wayne-herdr-mods`、`~/.local/share/wayne-herdr-mods`、日志、钥匙串（`wayne-herdr-mods.voice`）、mod（`wayne-phones`）都改了新名字；`install` 把旧的配置搬过来一次（`host/main.js` 的 `migrateOld`）。故意不改的：中继地址 `herdr-relay.sir-housir.workers.dev` 和 Worker 名、加密协议里的 `herdr-relay/v1` 等标签（已配对的手机靠它们）、手机网页的 localStorage 键 `herdr-relay`（手机上的配对存在这里）、`ios/` 和 `shell/` 里的原型。下文旧的段落里写的 `herdr-relay` 命令，现在都是 `wayne-herdr-mods`。
+# wayne-herdr-mods 设计
 
-在手机浏览器里看和操作这台 Mac 上 Herdr.app 的终端和 agent。不用 Tailscale，不用 SSH，不开端口。做法照 `dsh-pair`（`~/Projects/sides/dsh-plugins/dsh-pair`）：Cloudflare 上放一个中继，电脑只往外连。
+> 2026-11-04 起项目叫 wayne-herdr-mods（旧名 herdr-relay）：手机网页和 Herdr.app 里的界面是一套东西，agent 照 `SKILL.md` 用它。命令、后台服务（`com.roacherm.wayne-herdr-mods`）、`~/.config/wayne-herdr-mods`、`~/.local/share/wayne-herdr-mods`、日志、钥匙串（`wayne-herdr-mods.voice`）、mod（`wayne-phones`）都改了新名字；`install` 把旧的配置搬过来一次（`host/main.js` 的 `migrateOld`）。故意不改的：中继地址 `herdr-relay.sir-housir.workers.dev` 和 Worker 名、加密协议里的 `herdr-relay/v1` 等标签（已配对的手机靠它们）、手机网页的 localStorage 键 `herdr-relay`（手机上的配对存在这里）、`ios/` 和 `shell/` 里的原型。
 
-日期：2026-11-02。状态：方案 + probe，还没写实现。
+在手机浏览器里看和操作这台 Mac 上 Herdr.app 的终端和 agent。不用 Tailscale，不用 SSH，不开端口。做法照 `dsh-pair`（`~/Projects/sides/dsh-plugins/dsh-pair`）：Cloudflare 上放一个中继，电脑只往外连；同一网络下自动升级为 WebRTC 直连。
 
 ## 术语
 
@@ -14,7 +17,7 @@
 - **observe viewer**：`observe: true` 的 viewer，只看，不能打字，也不影响终端尺寸。
 - **尺寸主导者**：最近一次打字、改尺寸或获得焦点的非 observe viewer。终端的列数和行数由它决定，其余 viewer 看到的都是这个尺寸。
 - **中继（relay）**：Cloudflare Worker + Durable Object，只转发密文，同一个 Worker 也托管手机网页。
-- **宿主进程（host）**：Mac 上的 `herdr-relay` 后台进程，一头连中继，一头连 herdr-core。
+- **宿主进程（host）**：Mac 上的 `wayne-herdr-mods` 后台进程，一头连中继，一头连 herdr-core。
 
 ## 结构
 
@@ -60,7 +63,9 @@ iPhone 浏览器 / PWA ──wss /v1/client/<id>──▶ Cloudflare Worker + DO
 
 **2. 尺寸只有一个，谁最后动谁说了算。** 这是唯一的冲突点。手机如果用自己的尺寸（比如 44 列）去打字，它就成了尺寸主导者，Mac 上所有显示这个终端的窗口都会变成 44 列。Mac 窗口重新获得焦点或被拖动，尺寸就回来。手机断开时，尺寸自动交还给最近活动的 Mac 窗口。
 
-**3. 我们的做法：手机布局，自动切换（2026-11-04 改）。** 用的是第 2 条规则本身，不加开关：
+### 手机布局（2026-11-04 改）
+
+用的是第 2 条规则本身，不加开关：
 
 | 谁在用 | 终端的尺寸 | 怎么发生 |
 |---|---|---|
@@ -117,7 +122,7 @@ iPhone 浏览器 / PWA ──wss /v1/client/<id>──▶ Cloudflare Worker + DO
 |---|---|---|
 | `layouts/main-preview.json`、`.svg` | 窗口布局：在 Herdr 自带的 `main` 上换了标签栏和文件面板 | 复制自 `main` |
 | `mods/my-tabs/` | 标签栏：右上角只留「+」、手机图标、一个面板按钮。标签的图标是你在这个标签里最后点进的 agent（2026-11-05 改：原来是标签里第一个 agent，一个标签里有 Claude Code 和 agy 时会显示错）。只有窗口当前的窗格有 `focused`，所以每个标签自己记住 | 复制自 `tabs` 0.1.12 |
-| `mods/my-files/` | 文件面板 | 复制自 `files` 0.1.12 |
+| `mods/my-files/` | 文件面板：支持文件树悬停/右键菜单与预览顶栏一键复制绝对路径或文件全文；`TextView.markdown` 的选区色绘制在文字上层，必须用带透明度的 `#rrggbb59`（约 35% alpha），否则实色选区会盖死选中的文字 | 复制自 `files` 0.1.12 |
 | `mods/wayne-phones/` | 「手机」窗口和它的图标 `phone.svg` | 新写 |
 
 - 改界面就改仓库里的文件，再运行 `node dist/wayne-herdr-mods.mjs install`。install 把 `herdr-app/` 打进 `wayne-herdr-mods.mjs`，写进 `~/.config/herdr-app/`，内容没变的文件不写（写了 Herdr 会重新加载那个 mod）。在 Herdr.app 里直接改的文件，下次 install 会被覆盖，要先复制回仓库。
@@ -534,6 +539,10 @@ npm run ios:dev                        # Mac 上的 iPhone 尺寸窗口（Cataly
 程序问你时，在手机上用底部的键回答：↑↓ 换选项，←→ 换题（Claude Code 一次问好几题时），⏎ 选中，Esc 取消。程序在问时，这些键是蓝色的。
 
 **试过又去掉的：选项按钮面板。** 手机读屏幕上的菜单（标记 `❯ › →`、同列的选项、下面的按键提示），在终端下半部画成一排按钮，点一个按钮，手机替你按方向键和 ⏎。真机上它回答了 6 次，都成功了。但用户不要它：选项一长，面板就挡住、也滑不动；而且原来的终端样式就够用。2026-11-05 去掉。
+
+**试过又去掉的：独立对话视图（`host/transcripts.js` + `app/src/conversation.js`）。** 2026-11-03 曾实现过读取 `~/.claude`、`~/.epi`、`~/.codex` JSONL 会话文件并在手机上渲染原生滚动列表的「对话视图」。在完成手机布局自动切换、长对话 `reprint()` 截断和 Mac 端惯性滑行后，直接看终端视图已经足够顺滑且信息完整，维护两套视图反而割裂，遂移除。
+
+**Claude Code 普通屏幕模式实测（2026-11-03，Claude Code 2.1.316，`dev/classic-smoke.mjs`）。** 默认 `"tui": "fullscreen"` 使用备用屏幕（`ESC[?1049h`），手机拿不到回滚历史；设置环境变量 `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` 优先于 `"tui": "fullscreen"`，输出进入主屏幕历史（300+ 行），手机可直接原生滚动。注意启动时不要用 `env CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 claude` 包一层，否则 `herdr-core` 会把程序名记成 `env`。代价是窗口改尺寸时 Ink 底部重画偶有重复行，是否开启由用户在 `~/.claude/settings.json` 自行决定。
 
 **「方向键没用」的真正原因：网慢。** 用户说手机上的方向键不起作用。核对的结果：
 
