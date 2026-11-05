@@ -546,6 +546,7 @@ function openTerm(address) {
     const drawn = metrics.output(bytes.length, w);
     xterm.write(textStyle(last), () => {
       drawn?.();
+      if (asks) hold(); // the program may have shown or hidden its cursor
       if (follow.y && !placing) { placing = true; requestAnimationFrame(() => { placing = false; layout(); }); }
       // Credit only what xterm has actually drawn: a slow phone slows the stream down.
       // Often, so the Mac knows how far behind the phone is (it holds wheel steps then, host/phones.js).
@@ -672,9 +673,22 @@ function openTerm(address) {
     showTerm();
     const blocked = t.state === 'blocked';
     keyBtns.forEach((b) => b.classList.toggle('answer', blocked && ANSWERS.has(b.dataset.label)));
-    // While the program asks, typing waits: a letter could answer its question.
-    line.hold(blocked);
+    asks = blocked;
+    if (!blocked) letGo = false;
+    hold();
     sync();
+  }
+
+  /**
+   * While the program asks (blocked), typing waits: in a menu a letter could answer the question.
+   * Not while the program shows its cursor: then it takes free text (Antigravity's「Approve plan」
+   * is its input line; menus hide the cursor, and Claude Code always does). A tap on the bubble
+   * lets typing in anyway, until the question is over. Without these, the page could wait forever.
+   */
+  let asks = false, letGo = false;
+  function hold() {
+    const on = asks && !letGo && xterm._core?.coreService?.isCursorHidden !== false;
+    if (on !== line.held) { line.hold(on); sync(); }
   }
 
   function onEvent(msg) {
@@ -722,8 +736,9 @@ function openTerm(address) {
     const say = status.voice ? status.voice
       : status.uploading ? { text: `上传图片 ${status.uploading}…` }
       : status.composing ? { text: status.composing }
+      : line.pending && blocked ? { text: `等你回答后输入：${line.pending} · 点这里照样输入`, kind: 'warn tap' }
       : line.pending ? { text: `等你回答后输入：${line.pending}`, kind: 'warn' }
-      : blocked ? { text: '终端在问你：用蓝色键回答', kind: 'warn' }
+      : blocked ? { text: '终端在问你：用蓝色键回答 · 点这里照样打字', kind: 'warn tap' }
       : status.notice ? { text: status.notice, kind: 'warn' }
       : null;
     bubble.hidden = !say;
@@ -732,6 +747,14 @@ function openTerm(address) {
     fill(bubble, say.level !== undefined ? h('span', { class: 'voice-level', style: `transform:scaleX(${0.08 + say.level * 0.92})` }) : null, h('span', {}, say.text));
   }
   function setStatus(k, v) { status[k] = v; sync(); }
+  // The bubble that says typing waits: a tap lets it in (hold()).
+  bubble.addEventListener('pointerdown', (e) => e.preventDefault()); // the keyboard stays up
+  bubble.addEventListener('click', () => {
+    if (!line.held) return;
+    letGo = true;
+    hold();
+    keys.focus();
+  });
 
   keys.addEventListener('compositionstart', () => { line.compose(true); });
   keys.addEventListener('compositionupdate', (e) => setStatus('composing', e.data ?? ''));

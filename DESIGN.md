@@ -511,6 +511,24 @@ npm run ios:dev                        # Mac 上的 iPhone 尺寸窗口（Cataly
 
 测法：`dev/keys-smoke.mjs`（终端里跑一个 raw 模式读取器，原样打印收到的字节）。
 
+### 程序在问时，打的字先等着（2026-11-05 改）
+
+程序报告 `blocked`（等你确认）时，手机打的字先不进终端。原因：菜单里一个字母就可能选中一项（Claude Code 的 1 / 2 / 3，y / n）。字等在发送框里，气泡说「等你回答后输入：…」，回答完再进去。
+
+问题：Antigravity 的「Approve plan」也报告 `blocked`，但它不是菜单。它的回答方式是在自己的输入行里打字（或打 `/artifact`）。手机一直等，就卡死了：只能回 Mac 上处理。
+
+现在的规则（`app/src/main.js` `hold()`）：
+
+| 程序报告 | 光标 | 打的字 |
+|---|---|---|
+| 不是 `blocked` | — | 马上进去 |
+| `blocked` | 显示（程序在自己的输入行等字） | 马上进去，快捷键照样变蓝 |
+| `blocked` | 隐藏（菜单；Claude Code 一直隐藏） | 等着。点气泡「点这里照样打字」就进去，直到这次提问结束 |
+
+依据：2026-11-05 本机 19 个终端里，菜单和 Claude Code、epi 的界面都隐藏光标；Antigravity 的输入行、shell 都显示光标。这是观察，不是程序的约定，所以留了点气泡这条退路，什么情况都不会卡死。
+
+测法：`dev/term-smoke.mjs` 里 `plan · agy`（`blocked`，光标显示，打字直接到）和 `plan · stuck`（`blocked`，光标隐藏，点气泡后到）。旧代码这 4 项失败。
+
 ### 手指滑动看历史（`app/src/touch-scroll.js`）
 
 xterm 6 自己画滚动条，只认鼠标滚轮，手指拖动不会滚。所以终端区域自己处理竖向拖动：

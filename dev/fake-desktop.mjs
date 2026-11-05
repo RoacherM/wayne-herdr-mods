@@ -27,7 +27,12 @@ execFileSync('cc', ['-O1', '-o', join(fakeBin, 'claude'), join(fakeBin, 'claude.
 execFileSync('cc', ['-O1', '-o', join(fakeBin, 'codex'), join(fakeBin, 'claude.c')]); // the same, named `codex`
 const asClaude = async (script, where) => (await mac.call('terminal.run', { argv: [join(fakeBin, 'claude'), script], cwd: '/tmp', labels: { where }, rm: true })).address;
 const shell = (await mac.call('terminal.run', { argv: ['/bin/zsh', '-f'], cwd: process.env.HOME, labels: { where: 'herdr-relay · shell' }, rm: true })).address;
-const claude = await asClaude(`${r('state=working:app=claude')}; printf '\\033[1m● 正在修改 host/phones.js\\033[0m\\n'; sleep 1; printf '  ⎿ 已更新 3 处\\n\\n'; ${r(`state=blocked:kind=permission:app=claude:msg=${b64('要运行 npm test 吗？')}`)}; printf '\\033[33m要运行 npm test 吗？\\033[0m\\n ❯ 1. 是\\n   2. 是，以后都允许\\n   3. 否\\n'; stty -echo; while read -r l; do echo "你选了 $l"; ${r('state=working:app=claude')}; sleep 2; ${r('state=done:app=claude')}; done`, 'herdr-relay · claude');
+const claude = await asClaude(`${r('state=working:app=claude')}; printf '\\033[1m● 正在修改 host/phones.js\\033[0m\\n'; sleep 1; printf '  ⎿ 已更新 3 处\\n\\n'; ${r(`state=blocked:kind=permission:app=claude:msg=${b64('要运行 npm test 吗？')}`)}; printf '\\033[?25l\\033[33m要运行 npm test 吗？\\033[0m\\n ❯ 1. 是\\n   2. 是，以后都允许\\n   3. 否\\n'; stty -echo; while read -r l; do echo "你选了 $l"; ${r('state=working:app=claude')}; sleep 2; ${r('state=done:app=claude')}; done`, 'herdr-relay · claude');
+// Antigravity waiting for its plan to be approved: blocked, but its own input line takes the answer
+// (the cursor is shown there). Typing must go straight in.
+const agy = await term(`${r(`state=blocked:kind=permission:app=antigravity:msg=${b64('Approve plan')}`)}; printf '计划写好了。\\n          1 artifact · /artifact to review\\n> '; while read -r l; do printf '收到 %s\\n> ' "$l"; done`, 'plan · agy');
+// Blocked with the cursor hidden, but it reads a line: only the bubble's tap lets typing in.
+const stuck = await term(`${r(`state=blocked:kind=permission:app=antigravity:msg=${b64('Review')}`)}; printf '\\033[?25l要你看一下\\n'; while read -r l; do printf '收到 %s\\n' "$l"; done`, 'plan · stuck');
 const codex = (await mac.call('terminal.run', { argv: [join(fakeBin, 'codex'), `${r('state=working:app=codex')}; for i in $(seq 1 30); do echo "step $i: building…"; sleep 0.2; done; ${r(`state=done:app=codex:msg=${b64('测试全部通过')}`)}; sleep 100000`], cwd: '/tmp', labels: { where: 'site / 1' }, rm: true })).address;
 const logs = await term(`while true; do date '+%H:%M:%S  GET /v1/health 200'; sleep 2; done`, 'site / 2');
 
@@ -36,7 +41,7 @@ const doc = await mac.call('doc.get', { name: 'herdr-app' });
 await mac.call('doc.set', { name: 'herdr-app', version: doc.version, value: { spaces: [
   { id: 's1', name: 'herdr-relay', folder: '~/Projects/sides/herdr-relay', tabs: [{ id: 'a', name: 'main', root: { children: [leaf(claude), leaf(shell)] } }] },
   // No name: Herdr.app shows it after where its terminals are now ("site"), not the folder it was made in.
-  { id: 's2', name: '', folder: '~/Projects/old-site', tabs: [{ id: 'b', name: 'build', root: leaf(codex) }, { id: 'c', name: 'logs', root: leaf(logs) }] },
+  { id: 's2', name: '', folder: '~/Projects/old-site', tabs: [{ id: 'b', name: 'build', root: leaf(codex) }, { id: 'c', name: 'logs', root: leaf(logs) }, { id: 'd', name: 'plan', root: { children: [leaf(agy), leaf(stuck)] } }] },
 ] } });
 // A Mac window viewing the claude terminal at a desktop size.
 for (const t of [claude, shell, codex, logs]) await mac.call('terminal.attach', { terminal: t, cols: 110, rows: 34 });

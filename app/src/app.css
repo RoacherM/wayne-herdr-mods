@@ -125,6 +125,7 @@ button { font: inherit; color: inherit; }
   color: #f2f2f7; font-size: 13.5px; box-shadow: 0 4px 18px rgba(0,0,0,.4); pointer-events: none; }
 .term-bubble span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .term-bubble.warn { color: #ffd60a; }
+.term-bubble.tap { pointer-events: auto; cursor: pointer; }
 .term-bubble.cancel { color: #ff453a; }
 .term-bubble .voice-level { flex: none; width: 56px; height: 6px; border-radius: 3px; background: var(--blue); transform-origin: left center; transition: transform 60ms linear; }
 .term-bubble.cancel .voice-level { background: #ff453a; }

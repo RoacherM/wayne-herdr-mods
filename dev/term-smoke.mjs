@@ -96,7 +96,7 @@ await page.evaluate(() => document.querySelector('.icon-btn[aria-label="返回"]
 check(size('herdr-relay · shell') === before, 'the Mac size never changed');
 
 // --- claude, blocked: typing waits, the answer keys are blue
-await page.evaluate(() => document.querySelector('.group.needs .trow').click());
+await openRow('herdr-relay · claude');
 await until('blocked prompt shows', async () => (await screen()).includes('npm test'));
 await until('bubble says the terminal asks', async () => (await bubble()).includes('终端在问你'));
 check(await page.evaluate(() => [...document.querySelectorAll('.key.answer')].map((b) => b.innerText).join(' ')) === 'Esc ⏎ 1 2 3 y n', 'answer keys are blue');
@@ -110,4 +110,29 @@ await until('held text went in (bubble gone)', async () => !(await bubble()), 80
 await page.keyboard.press('Enter');
 await until('then Enter sends the held text', async () => (await screen()).includes('你选了 later'), 12_000);
 await shot('3-answered');
+
+// --- Antigravity, blocked on「Approve plan」with its input line (cursor shown): typing goes straight in
+await page.evaluate(() => document.querySelector('.icon-btn[aria-label="返回"]')?.click());
+await openRow('plan · agy');
+await until('plan prompt shows', async () => (await screen()).includes('/artifact to review'));
+await pause(500);
+check(!(await bubble()), 'no "terminal asks" bubble while the program takes free text');
+check(await page.evaluate(() => document.querySelector('.key.answer') !== null), 'the answer keys are still blue');
+await page.focus('.term-keys');
+await page.keyboard.type('ok');
+await page.keyboard.press('Enter');
+await until('typed answer reaches the program', async () => (await screen()).includes('收到 ok'));
+await shot('4-plan');
+
+// --- blocked, cursor hidden, but no menu to answer: a tap on the bubble lets typing in
+await page.evaluate(() => document.querySelector('.icon-btn[aria-label="返回"]')?.click());
+await openRow('plan · stuck');
+await until('stuck prompt shows', async () => (await screen()).includes('要你看一下'));
+await page.focus('.term-keys');
+await page.keyboard.type('go');
+await until('typing is held', async () => (await bubble()).includes('等你回答后输入：go'));
+await page.evaluate(() => document.querySelector('.term-bubble').click());
+await until('the tap lets it in (bubble gone)', async () => !(await bubble()));
+await page.keyboard.press('Enter');
+await until('then Enter sends it', async () => (await screen()).includes('收到 go'));
 await browser.close();
