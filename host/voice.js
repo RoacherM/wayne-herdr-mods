@@ -18,9 +18,15 @@ export const MAX_BYTES = 2 * 1024 * 1024;
 export const MAX_SECONDS = 120;
 const FFMPEG = ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', 'ffmpeg'];
 
-const run = (bin, args, input) => new Promise((resolve, reject) => {
+// A failure names the tool and what it said, never its arguments: Node's own error carries the whole
+// command line (`Command failed: …`, `cmd`, `spawnargs`), and arguments can hold a key or a sentence.
+export const run = (bin, args, input) => new Promise((resolve, reject) => {
   const child = execFile(bin, args, { maxBuffer: 16 << 20, encoding: 'buffer' }, (error, stdout, stderr) => {
-    if (error) reject(Object.assign(error, { stderr: stderr?.toString() })); else resolve(stdout);
+    if (!error) { resolve(stdout); return; }
+    const said = stderr?.toString().trim() ?? '';
+    const name = bin.split('/').pop();
+    const why = error.code === 'ENOENT' ? '没有这个程序' : typeof error.code === 'number' ? `退出码 ${error.code}` : String(error.code ?? error.signal ?? '');
+    reject(Object.assign(new Error(`${name} 失败（${why}）${said ? `：${said.slice(0, 300)}` : ''}`), { code: error.code, stderr: said }));
   });
   if (input !== undefined) child.stdin.end(input);
 });
@@ -33,12 +39,39 @@ export async function readKey() {
     return out.toString().trim() || null;
   } catch { return null; }
 }
+/** A key as Volcengine gives it: printable ASCII, no spaces (it goes to `security` as one line). */
+export function checkKey(key) {
+  key = String(key ?? '').trim();
+  if (!key) throw new Error('没有输入 Key');
+  if (!/^[\x21-\x7e]+$/.test(key)) throw new Error('Key 里有空格或别的字符，检查一下是不是复制多了');
+  return key;
+}
 export async function saveKey(key) {
-  // -U updates an existing item. The key is on security's argv for the few ms it runs.
-  await run('/usr/bin/security', ['add-generic-password', '-U', '-s', KEYCHAIN.service, '-a', KEYCHAIN.account, '-l', 'wayne-herdr-mods 火山语音识别', '-w', key]);
+  key = checkKey(key);
+  // -U updates an existing item. A bare -w last makes security ask for the password, twice, on stdin
+  // (macOS 27.0, 2026-11-06), so the key is never on its argv, where `ps` would show it.
+  await run('/usr/bin/security', ['add-generic-password', '-U', '-s', KEYCHAIN.service, '-a', KEYCHAIN.account, '-l', 'wayne-herdr-mods 火山语音识别', '-w'], `${key}\n${key}\n`);
 }
 export async function deleteKey() {
   await run('/usr/bin/security', ['delete-generic-password', '-s', KEYCHAIN.service, '-a', KEYCHAIN.account]).catch(() => {});
+}
+
+/** The key store the service uses; tests pass their own, so they never touch the keychain. */
+export const KEYCHAIN_KEYS = { read: readKey, save: saveKey, remove: deleteKey };
+/** What a screen may show of a key: its last 4 characters. */
+export const keyTail = (key) => (!key ? null : key.length > 8 ? `…${key.slice(-4)}` : '…');
+
+/** One try of the whole path: the Mac reads `text` aloud (`say`), and the recognizer writes it back. */
+export async function sayAndRecognize(text, { key, words = [], spell = words, timeoutMs } = {}) {
+  const { mkdtemp, readFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = await mkdtemp(join(tmpdir(), 'herdr-voice-test-'));
+  try {
+    await run('/usr/bin/say', ['-v', 'Tingting', '-o', join(dir, 'a.aiff'), '--', text]);
+    const wav = await toWav(await readFile(join(dir, 'a.aiff')));
+    return await recognize(wav, { key, words, spell, ...(timeoutMs ? { timeoutMs } : {}) });
+  } finally { await rm(dir, { recursive: true, force: true }); }
 }
 
 // ------------------------------------------------------------------ audio -------

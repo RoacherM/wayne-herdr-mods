@@ -3,11 +3,11 @@
 // Written by `wayne-herdr-mods install` from the repo's herdr-app/; edits here are replaced on the next install.
 //
 // Everything goes through the command (`wayne-herdr-mods ctl <method> <json>`), which talks
-// to the running host: status, pair.start / pair.cancel / pair.decide, devices.remove, and watch
-// (answers when anything changes, or after 20 s), so the dialog follows phones coming and going.
+// to the running host: status, pair.start / pair.cancel / pair.decide, devices.remove, voice.set / voice.test /
+// voice.off, and watch (answers when anything changes, or after 20 s), so the dialog follows phones coming and going.
 
 import { View, div, image } from "gpui-kit";
-import { v_flex, h_flex } from "gpui-base";
+import { v_flex, h_flex, Input, InputState } from "gpui-base";
 import { exec, home, appHome, theme, notify } from "herdr";
 import * as fs from "fs/promises";
 
@@ -39,6 +39,11 @@ export default class Phones extends View {
     this.removing = null;  // a device id waiting for its second click
     this.known = null;     // device ids when pairing started: the new one gets a notification
     this.closed = false;
+    this.keyInput = InputState.new({ placeholder: "粘贴火山引擎的 API Key" }); // the voice key; never shown back
+    this.keyInput.set_masked(true);
+    this.changingKey = false; // the key field is open while a key is already set
+    this.heard = null;        // the last「试一次」: { text, ms }
+    this.saved = false;       // a key was just saved: a phone sees it on its next connection
     cx.spawn(async (cx) => {
       try { await this.show(await ctl("status")); } catch (e) { this.error = e.message; }
       cx.notify();
@@ -126,7 +131,8 @@ export default class Phones extends View {
       .child(h_flex().justify_end().child(this.button("pair", "配对新手机", true, this.act("pair", async () => {
         this.known = new Set(v.devices.map((d) => d.id));
         await this.show(await ctl("pair.start"));
-      }))));
+      }))))
+      .child(this.voiceCard(v.voice));
   }
 
   deviceList(devices) {
@@ -146,6 +152,39 @@ export default class Phones extends View {
             : (_e, cx) => { this.removing = d.id; cx.notify(); })
           .child(asking ? "确认移除" : "移除"));
     }));
+  }
+
+  // Voice input on the phone: the phone records, this Mac sends the audio to Volcengine's recognizer with
+  // this key (kept in the keychain, never sent to a phone). The same as `wayne-herdr-mods voice key / test / off`.
+  voiceCard(tail) {
+    const t = theme();
+    const card = v_flex().gap(8).pt(12).border_t_1().border_color(t.border)
+      .child(h_flex().items_center().gap(6)
+        .child(div().flex_1().font_semibold().child("语音输入"))
+        .child(div().text_size(12).text_color(tail ? t.done : t.dim).child(tail ? `已开启 · Key ${tail}` : "未开启")));
+    const save = this.act("voice-save", async () => {
+      const key = this.keyInput.value().trim();
+      if (!key) throw new Error("先粘贴 Key");
+      await this.show(await ctl("voice.set", { key }));
+      this.keyInput.set_value("");
+      this.changingKey = false;
+      this.heard = null;
+      this.saved = true;
+    });
+    if (!tail || this.changingKey) {
+      return card
+        .child(div().text_size(12).text_color(t.muted).child("手机上按住说话，Mac 用火山引擎「豆包语音识别」转成文字。在火山引擎控制台创建 API Key，粘贴到这里；Key 存在这台 Mac 的钥匙串里，不会发给手机。"))
+        .child(h_flex().gap(8).items_center()
+          .child(div().flex_1().child(Input.new(this.keyInput)))
+          .child(this.changingKey ? this.button("voice-keep", "取消", false, (_e, cx) => { this.changingKey = false; this.keyInput.set_value(""); cx.notify(); }) : div())
+          .child(this.button("voice-save", "保存", true, save)));
+    }
+    return card
+      .child(this.heard ? div().text_size(12).text_color(t.muted).child(`识别：${this.heard.text || "（空）"} · ${this.heard.ms} ms`) : this.saved ? div().text_size(12).text_color(t.dim).child("已保存。手机重新打开网页后出现麦克风键。") : div())
+      .child(h_flex().justify_end().gap(8)
+        .child(this.button("voice-off", "关闭", false, this.act("voice-off", async () => { this.heard = null; this.saved = false; await this.show(await ctl("voice.off")); })))
+        .child(this.button("voice-change", "换 Key", false, (_e, cx) => { this.changingKey = true; cx.notify(); }))
+        .child(this.button("voice-test", "试一次", true, this.act("voice-test", async () => { this.heard = await ctl("voice.test"); }))));
   }
 
   offerCard(offer) {

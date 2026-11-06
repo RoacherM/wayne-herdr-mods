@@ -105,7 +105,7 @@ iPhone 浏览器 / PWA ──wss /v1/client/<id>──▶ Cloudflare Worker + DO
 
 | 入口 | 怎么打开 | 说明 |
 |---|---|---|
-| Herdr.app 的「手机」窗口（2026-11-04） | 标签栏右上角的手机图标；agent 用 `wayne-herdr-mods pair` 替人打开并显示二维码 | 列出配对的手机（在线、上次连接、推送），「配对新手机」显示二维码，手机来了显示核对码和「允许 / 拒绝」，「移除」点两次才删。关掉窗口时，还没人扫的二维码作废。 |
+| Herdr.app 的「手机」窗口（2026-11-04） | 标签栏右上角的手机图标；agent 用 `wayne-herdr-mods pair` 替人打开并显示二维码 | 列出配对的手机（在线、上次连接、推送），「配对新手机」显示二维码，手机来了显示核对码和「允许 / 拒绝」，「移除」点两次才删。关掉窗口时，还没人扫的二维码作废。下面「语音输入」一节：粘贴火山引擎 API Key 保存（输入框打码）、「试一次」（Mac 朗读一句再识别）、「换 Key」、「关闭」（2026-11-06）。 |
 | 命令行 | `wayne-herdr-mods devices`（`devices rm <id>`） | 只列出、移除。配对只在 Herdr.app 里做（2026-11-04 起，终端里打二维码的方式删了）。 |
 
 「手机」窗口是一个 Herdr.app mod（插件），叫 `wayne-phones`，在 `herdr-app/mods/wayne-phones/`。它是下面「Herdr.app 里的界面」的一部分。
@@ -424,7 +424,9 @@ A 部分在 `HC_SESSION=relay-probe` 的独立 core 里自己开一个 `/bin/sh`
 | 转码 | Mac 用 ffmpeg 转成 ogg/opus 16 kHz 单声道：极速版文档列的格式里没有 webm，iOS 的 mp4 也不确定是否直收，统一转码最稳。 |
 | 识别 | 极速版：一次 POST 直接返回结果，没有提交再轮询。头：`X-Api-Key`（新版控制台的 Key）或 `X-Api-App-Key` + `X-Api-Access-Key`（旧版），`X-Api-Resource-Id: volc.bigasr.auc_turbo`，`X-Api-Request-Id`（UUID），`X-Api-Sequence: -1`。体：`audio.data`（base64）+ `audio.format`，`request.model_name: "bigmodel"`，`enable_itn`、`enable_punc`。结果状态在响应头 `X-Api-Status-Code`：`20000000` 成功，`20000003` 静音。 |
 | 热词 | 带上编程词和当前终端的项目名、文件名。具体字段（`request.context` 或 `corpus`）以真实请求为准，未验证。 |
-| 密钥 | `wayne-herdr-mods voice key` 从标准输入读入，存进 macOS 钥匙串（`security add-generic-password`），不进 state.json、不进日志。没配 key 时 `ready` 里 `voice: false`，手机不显示麦克风键。 |
+| 密钥 | 「手机」窗口的「语音输入」一节，或 `wayne-herdr-mods voice key`（从标准输入读入），都存进 macOS 钥匙串（`security add-generic-password`），不进 state.json、不进日志。窗口经 `ctl voice.set / voice.test / voice.off` 交给后台服务，`status` 只带 Key 末 4 位（`voice: "…32e5"`）。新 Key 下一次识别就生效；手机要重新连接才显示麦克风键。命令行 `voice key / off` 在后台服务运行时也走 `ctl`（Key 走 0600 的控制 socket），没运行时直接写钥匙串。
+- Key 出现在哪里（2026-11-06 独立审查后改）：`security` 从标准输入读 Key（`-w` 放最后，它问两遍，macOS 27.0 实测），不在它的参数里。工具失败时的报错只写工具名、退出码和它的 stderr，不写参数（Node 原本的报错带整条命令行，钥匙串锁着时会把 Key 显示在窗口里；`test/voice.test.mjs` 测这一条）。还剩一处：Herdr mod 的 `exec` 没有标准输入，mod 也不能写 `~/.config/wayne-herdr-mods/`（沙箱只给自己的目录，2026-11-06 用探针 mod 实测），所以窗口把 Key 放在 `wayne-herdr-mods ctl voice.set` 的参数里。这个进程活约 1 秒；这期间这台 Mac 上任何本地账户都能用 `ps` 看到（`/bin/ps` 是 setuid root），记录进程命令行的监控软件也会记下。单人用的 Mac 可以接受；介意的话用命令行 `voice key`，它从终端读 Key。
+- 状态只显示 Key 末 4 位；8 位以下的 Key 一位也不显示。「试一次」朗读固定的句子，20 秒内结束（mod 的 `exec` 最多等 30 秒）。没配 key 时 `ready` 里 `voice: false`，手机不显示麦克风键。 |
 | 结果 | `voice.done {id}` 返回文字，填进发送框，不自动发。 |
 | 限制 | 单条 ≤ 2 MB、≤ 120 秒；每台手机同时只识别一条；识别完立刻删音频。 |
 

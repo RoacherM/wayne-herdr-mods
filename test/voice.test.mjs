@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fixWords, recognize } from '../host/voice.js';
+import { fixWords, keyTail, recognize, run } from '../host/voice.js';
 import { createUploads, MAX_UPLOAD_BYTES } from '../host/uploads.js';
 import { startRecording } from '../app/src/voice.js';
 
@@ -144,4 +144,19 @@ test('a muted stream (back from the background) is not reused; an empty recordin
   const before = gumCalls;
   (await startRecording()).cancel();
   assert.equal(gumCalls, before + 1, 'a new stream after an empty recording');
+});
+
+// Review 2026-11-06: Node's execFile error says `Command failed: <bin> <args…>`, and the key used to be an
+// argument of `security … -w <key>`. A locked keychain then put the whole key in the「手机」window's error.
+test('a failed tool never puts its arguments in the error', async () => {
+  const error = await run('/usr/bin/false', ['-w', 'SECRET-KEY-123']).catch((e) => e);
+  assert.ok(error instanceof Error);
+  assert.ok(!String(error.message).includes('SECRET-KEY-123'), error.message);
+  assert.ok(!JSON.stringify(Object.entries(error)).includes('SECRET-KEY-123'), 'nor in its fields (cmd, spawnargs)');
+});
+
+test('a screen shows at most the last 4 of a key, and nothing of a short one', () => {
+  assert.equal(keyTail('0123456789abcdef'), '…cdef');
+  assert.equal(keyTail('abcd'), '…');
+  assert.equal(keyTail(null), null);
 });

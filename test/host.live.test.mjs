@@ -40,9 +40,20 @@ test('pair, list, stream, type, send, keys — through the relay', { timeout: 12
   mac.on(macView.channel, { onData: (b) => { macOut += b.toString(); mac.send(macView.channel, 1, Buffer.from(Uint32Array.of(b.length).buffer)); } });
 
   const dataDir = await mkdtemp(join(tmpdir(), 'herdr-relay-'));
-  const svc = await startService({ relayUrl: RELAY, dataDir, coreOptions: { session: SESSION }, log: () => {} });
+  // The voice key lives in memory here: a test never writes the user's keychain.
+  const keys = { value: null, read: async () => keys.value, save: async (k) => { keys.value = k; }, remove: async () => { keys.value = null; } };
+  const svc = await startService({ relayUrl: RELAY, dataDir, coreOptions: { session: SESSION }, log: () => {}, voiceKeys: keys });
   t.after(() => svc.stop());
   await until('relay online + core online', async () => { const v = await controlCall(dataDir, 'status'); return v.relay === 'online' && v.core === 'online'; }, 20_000);
+
+  // --- the voice key from Herdr.app's「手机」window (ctl voice.set / voice.off), not only the command line
+  assert.equal((await controlCall(dataDir, 'status')).voice, null, 'no key yet');
+  assert.equal((await controlCall(dataDir, 'voice.set', { key: ' abcdefgh1234 ' })).voice, '…1234', 'the window shows the last 4');
+  assert.equal(keys.value, 'abcdefgh1234', 'saved, trimmed');
+  await assert.rejects(controlCall(dataDir, 'voice.set', { key: 'abc def' }), /空格/, 'a key with a space is refused');
+  await assert.rejects(controlCall(dataDir, 'voice.set', { key: '  ' }), /Key/, 'an empty key is refused');
+  assert.equal((await controlCall(dataDir, 'voice.off')).voice, null, 'off');
+  assert.equal(keys.value, null);
 
   // --- pairing
   const offer = decodePairLink((await controlCall(dataDir, 'pair.start')).pairing.offer.link);

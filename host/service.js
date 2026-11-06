@@ -20,11 +20,11 @@ import { createRelayLink } from './relay-link.js';
 import { createRtcLink } from './rtc-link.js';
 import { createState } from './state.js';
 import { createTerminals } from './terminals.js';
-import { readKey, recognize, toWav } from './voice.js';
+import { checkKey, KEYCHAIN_KEYS, keyTail, recognize, sayAndRecognize, toWav } from './voice.js';
 
 export const DEFAULT_RELAY = 'https://herdr-relay.sir-housir.workers.dev';
 
-export async function startService({ relayUrl = process.env.WAYNE_HERDR_MODS_URL ?? DEFAULT_RELAY, dataDir, coreOptions = {}, log = console.error, notifyAfterSeconds = 20 } = {}) {
+export async function startService({ relayUrl = process.env.WAYNE_HERDR_MODS_URL ?? DEFAULT_RELAY, dataDir, coreOptions = {}, log = console.error, notifyAfterSeconds = 20, voiceKeys = KEYCHAIN_KEYS } = {}) {
   const state = await createState(dataDir ? { dir: dataDir } : {});
   const desktopId = await desktopIdFor(state.signKeys.publicKey);
 
@@ -49,7 +49,8 @@ export async function startService({ relayUrl = process.env.WAYNE_HERDR_MODS_URL
     onStatus: (change) => { notifier.onStatus(change); samples.onStatus(change); },
     onCore: () => { phones?.coreChanged(); changed(); },
   });
-  const voice = createVoice({ dir: state.dir, log });
+  const voice = createVoice({ dir: state.dir, log, keys: voiceKeys });
+  let voiceShown = keyTail(await voiceKeys.read()); // what status shows of the key; read once, then on each change
   const metrics = createMetricsStore({ dir: state.dir });
   // Two kinds of connection carry phones: through the relay, and direct (WebRTC, `rtc:<n>`).
   const via = (cid) => (String(cid).startsWith('rtc:') ? rtc : link);
@@ -78,6 +79,7 @@ export async function startService({ relayUrl = process.env.WAYNE_HERDR_MODS_URL
     core: terminals.state(),
     terminals: terminals.list().length,
     pairing: pairing.view(),
+    voice: voiceShown,
     devices: state.devices().map((d) => ({ id: d.id, name: d.name, createdAt: d.createdAt, lastSeen: d.lastSeen, push: Boolean(d.push), online: phones.online(d.id) })),
     connected: phones.connected(),
   });
@@ -94,6 +96,26 @@ export async function startService({ relayUrl = process.env.WAYNE_HERDR_MODS_URL
       await state.removeDevice(device.id);
       changed();
       return view();
+    },
+    // The voice key from Herdr.app's「手机」window, as `wayne-herdr-mods voice key / off` do. A phone shows its
+    // mic key from its next connection on.
+    'voice.set': async ({ key }) => {
+      key = checkKey(key);
+      await voiceKeys.save(key);
+      voiceShown = keyTail(key);
+      changed();
+      return view();
+    },
+    'voice.off': async () => { await voiceKeys.remove(); voiceShown = null; changed(); return view(); },
+    // The window's「试一次」: a fixed sentence (nothing from outside reaches `say`), done within 20 s, under the
+    // 30 s a Herdr mod's exec waits.
+    'voice.test': async () => {
+      const key = await voiceKeys.read();
+      if (!key) throw new Error('还没有 Key');
+      const { hints, spell } = await voiceWords(state.dir, null);
+      spell.push('phones.js'); hints.push('phones.js'); // as `voice test`: the sentence names this file
+      const r = await sayAndRecognize(VOICE_TEST, { key, words: hints, spell, timeoutMs: 20_000 });
+      return { said: VOICE_TEST, text: r.text, ms: r.ms };
     },
     /** Long-poll: answers when anything changes (or after `ms`). */
     watch: ({ ms = 25_000 }) => new Promise((resolve) => {
@@ -166,12 +188,15 @@ export async function voiceWords(dir, cwd) {
   return { hints: [...new Set([...spell, ...HINTS])], spell };
 }
 
+/** What `voice test` and the window's「试一次」read aloud. */
+export const VOICE_TEST = '帮我把 phones.js 里的重连逻辑改一下，然后跑一遍 npm test，失败了就告诉我';
+
 /** The Mac side of voice input: key from the keychain, hotwords from voiceWords(). */
-function createVoice({ dir, log }) {
+function createVoice({ dir, log, keys }) {
   return {
-    available: async () => Boolean(await readKey()),
+    available: async () => Boolean(await keys.read()),
     async transcribe(bytes, { terminal } = {}) {
-      const key = await readKey();
+      const key = await keys.read();
       const wav = await toWav(bytes);
       const { hints, spell } = await voiceWords(dir, terminal?.foreground?.cwd ?? terminal?.cwd);
       try {

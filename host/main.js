@@ -19,12 +19,12 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import QRCode from 'qrcode';
-import { controlCall, DEFAULT_RELAY, startService, voiceWords } from './service.js';
+import { controlCall, DEFAULT_RELAY, startService, VOICE_TEST, voiceWords } from './service.js';
 import { readHerdrFiles } from './herdr-files.js';
 import { createMetricsStore, summarize } from './metrics.js';
 import { renderReport } from './metrics-report.js';
 import { defaultDataDir } from './state.js';
-import { deleteKey, KEYCHAIN, readKey, recognize, saveKey, toWav } from './voice.js';
+import { checkKey, deleteKey, KEYCHAIN, readKey, saveKey, sayAndRecognize } from './voice.js';
 
 const NAME = 'wayne-herdr-mods';
 const LABEL = `com.roacherm.${NAME}`;
@@ -268,6 +268,12 @@ function uninstall() {
   console.log(`已停止并移除。密钥和已配对设备保留在 ${dataDir}（删除这个目录等于重置所有配对）。`);
 }
 
+/** A change the running service should know about; without a service, done here. */
+async function viaService(m, p, alone) {
+  try { await controlCall(dataDir, m, p, { timeoutMs: 40_000 }); }
+  catch (error) { if (error.code !== 'NOT_RUNNING') throw error; await alone(); }
+}
+
 async function voiceCmd() {
   const sub = args[0];
   if (sub === 'key') {
@@ -280,30 +286,23 @@ async function voiceCmd() {
         key = (await new Promise((r) => { let b = ''; process.stdin.on('data', (d) => (b += d)).on('end', () => r(b)); })).trim();
       }
     }
-    key = String(key ?? '').trim();
-    if (!key) throw new Error('没有输入 Key');
-    await saveKey(key);
+    key = checkKey(key);
+    // Through the running service when there is one (over its 0600 socket), so「手机」window's status follows.
+    await viaService('voice.set', { key }, () => saveKey(key));
     console.log(`已存进钥匙串（${KEYCHAIN.service}）。运行 wayne-herdr-mods voice test 试一次。`);
     return;
   }
-  if (sub === 'off') { await deleteKey(); console.log('已删除 API Key。手机上不再显示麦克风键（重开网页后生效）。'); return; }
+  if (sub === 'off') { await viaService('voice.off', {}, deleteKey); console.log('已删除 API Key。手机上不再显示麦克风键（重开网页后生效）。'); return; }
   if (sub === 'test') {
     const key = await readKey();
     if (!key) throw new Error('还没有 Key：先运行 wayne-herdr-mods voice key');
-    const text = args.slice(1).join(' ') || '帮我把 phones.js 里的重连逻辑改一下，然后跑一遍 npm test，失败了就告诉我';
-    const { mkdtemp, readFile, rm } = await import('node:fs/promises');
-    const { tmpdir } = await import('node:os');
-    const dir = await mkdtemp(join(tmpdir(), 'herdr-voice-test-'));
-    try {
-      execFileSync('/usr/bin/say', ['-v', 'Tingting', '-o', join(dir, 'a.aiff'), text]);
-      const wav = await toWav(await readFile(join(dir, 'a.aiff')));
-      console.log(`朗读：${text}`);
-      // As on the phone: the built-in words, voice-words.txt, and the folder of the terminal (here: phones.js's).
-      const { hints, spell } = await voiceWords(dataDir, null);
-      spell.push('phones.js'); hints.push('phones.js');
-      const r = await recognize(wav, { key, words: hints, spell });
-      console.log(`识别：${r.text || '（空）'}\n用时：${r.ms} ms`);
-    } finally { await rm(dir, { recursive: true, force: true }); }
+    const text = args.slice(1).join(' ') || VOICE_TEST;
+    console.log(`朗读：${text}`);
+    // As on the phone: the built-in words, voice-words.txt, and the folder of the terminal (here: phones.js's).
+    const { hints, spell } = await voiceWords(dataDir, null);
+    spell.push('phones.js'); hints.push('phones.js');
+    const r = await sayAndRecognize(text, { key, words: hints, spell });
+    console.log(`识别：${r.text || '（空）'}\n用时：${r.ms} ms`);
     return;
   }
   const key = await readKey();
