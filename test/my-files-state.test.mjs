@@ -24,44 +24,33 @@ test('a terminal block of the layout (no pane) keeps its own panel too', () => {
   assert.notEqual(key({ focus: block }), key({ focus: focus('tA', 'p1') }));
 });
 
-test('with the full-window view focused, the panel is the one of the pane that opened it', () => {
-  const viewer = { root: '/repo', on: null, from: 'p4', files: [], active: null };
-  assert.equal(key({ focus: focus('tA', 'p3'), viewer }), key({ focus: focus('tA', 'p4') }));
+test('with a file tab focused, the panel is the one of the window that opened it', () => {
+  const opened = { file: '/repo/a.md', root: '/repo', on: null, from: 'p4' };
+  assert.equal(key({ focus: focus('tA', 'p3'), opened }), key({ focus: focus('tA', 'p4') }));
+  assert.equal(key({ focus: focus('tA', 'p1'), opened }), key({ focus: focus('tA', 'p1') }), 'a shell split beside the file: the panel follows the shell');
+  assert.notEqual(key({ focus: focus('tA', 'p1'), opened }), key({ focus: focus('tA', 'p4') }));
 });
 
 test('a pane with its own file looks at that file\'s folder', () => {
   assert.deepEqual(files.locate({ file: '/a/b/c.md', space, panes, focus: focus('tA', 'p1') }), { pane: null, cwd: '/a/b', on: null, file: '/a/b/c.md' });
+  assert.equal(files.locate({ file: '/a/b/c.md', fileOn: 'vps', space, panes, focus: null }).on, 'vps', 'a file on another machine stays there');
 });
 
-test('the full-window view is per tab', () => {
-  assert.equal(files.viewerPane(panes, 'tA')?.pane, 'p3');
-  assert.equal(files.viewerPane(panes, 'tB'), null);
+test('a file opens once: a second click finds its tab; closed tabs are forgotten', () => {
+  const a = { file: '/repo/a.md', root: '/repo', on: null, from: 'p1' };
+  let all = files.withFileTab({}, 'tF', a, new Set(['tA', 'tF']));
+  all = files.withFileTab(all, 'tG', { ...a, file: '/repo/b.md' }, new Set(['tA', 'tF', 'tG']));
+  assert.equal(files.fileTabOf(all, '/repo/a.md', new Set(['tF', 'tG'])), 'tF');
+  assert.equal(files.fileTabOf(all, '/repo/a.md', new Set(['tG'])), null, 'its tab was closed: open a new one');
+  assert.equal(files.fileTabOf(all, '/repo/c.md', new Set(['tF', 'tG'])), null);
+  all = files.withFileTab(all, 'tH', { ...a, file: '/repo/c.md' }, new Set(['tG', 'tH']));
+  assert.deepEqual(Object.keys(all).sort(), ['tG', 'tH'], 'tab tF was closed: its entry goes');
+  assert.deepEqual(files.withFileTab(null, 'tA', null, new Set(['tA'])), {});
 });
 
-test('open files are kept per tab after the view closes, and dropped with their tab', () => {
-  const a = { root: '/repo', on: null, from: 'p1', files: ['/repo/a.md'], active: '/repo/a.md' };
-  let all = files.withViewer({}, 'tA', a, new Set(['tA', 'tB']));
-  all = files.withViewer(all, 'tB', { ...a, files: [], active: null }, new Set(['tA', 'tB']));
-  assert.deepEqual(Object.keys(all).sort(), ['tA', 'tB']);
-  assert.deepEqual(all.tA.files, ['/repo/a.md'], 'kept: the next ⤢ shows them again');
-  all = files.withViewer(all, 'tB', all.tB, new Set(['tB']));
-  assert.deepEqual(Object.keys(all), ['tB'], 'tab tA was closed: its files go');
-  assert.equal(files.withViewer(null, 'tA', null, new Set(['tA'])).tA, undefined);
-});
-
-test('opening a file adds a tab once and shows it; closing shows a neighbour', () => {
-  let v = { root: '/repo', on: null, files: [], active: null };
-  v = files.openIn(v, '/repo/a.md'); v = files.openIn(v, '/repo/b.js'); v = files.openIn(v, '/repo/a.md');
-  assert.deepEqual(v.files, ['/repo/a.md', '/repo/b.js']);
-  assert.equal(v.active, '/repo/a.md');
-  v = files.openIn(v, '/repo/c.txt');
-  v = files.closeIn(v, '/repo/c.txt');
-  assert.equal(v.active, '/repo/b.js', 'the last one closed → the one before it');
-  v = files.closeIn(v, '/repo/a.md');
-  assert.equal(v.active, '/repo/b.js', 'closing another tab keeps the shown one');
-  v = files.closeIn(v, '/repo/b.js');
-  assert.deepEqual(v.files, []);
-  assert.equal(v.active, null);
+test('the tab tab.new made is the new id', () => {
+  assert.equal(files.newTabId(new Set(['t1', 't2']), ['t1', 't2', 't3']), 't3');
+  assert.equal(files.newTabId(new Set(['t1']), ['t1']), null);
 });
 
 test('a relative link in a file opened by absolute path stays absolute', () => {
