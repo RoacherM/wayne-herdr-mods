@@ -36,7 +36,17 @@ test('a pane with its own file looks at that file\'s folder', () => {
 test('the full-window view is per tab', () => {
   assert.equal(files.viewerPane(panes, 'tA')?.pane, 'p3');
   assert.equal(files.viewerPane(panes, 'tB'), null);
-  assert.notEqual(files.viewerKey('tA'), files.viewerKey('tB'));
+});
+
+test('open files are kept per tab after the view closes, and dropped with their tab', () => {
+  const a = { root: '/repo', on: null, from: 'p1', files: ['/repo/a.md'], active: '/repo/a.md' };
+  let all = files.withViewer({}, 'tA', a, new Set(['tA', 'tB']));
+  all = files.withViewer(all, 'tB', { ...a, files: [], active: null }, new Set(['tA', 'tB']));
+  assert.deepEqual(Object.keys(all).sort(), ['tA', 'tB']);
+  assert.deepEqual(all.tA.files, ['/repo/a.md'], 'kept: the next ⤢ shows them again');
+  all = files.withViewer(all, 'tB', all.tB, new Set(['tB']));
+  assert.deepEqual(Object.keys(all), ['tB'], 'tab tA was closed: its files go');
+  assert.equal(files.withViewer(null, 'tA', null, new Set(['tA'])).tA, undefined);
 });
 
 test('opening a file adds a tab once and shows it; closing shows a neighbour', () => {

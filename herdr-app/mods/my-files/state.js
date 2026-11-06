@@ -3,9 +3,18 @@
 
 const dirOf = (file) => file.split(/[\\/]/).slice(0, -1).join("/");
 
-/** The full-window view of a tab keeps its open files in shared(viewerKey(tab)):
- *  { root, on, from: the pane that opened it, files: [absolute path], active: absolute path | null }. */
-export const viewerKey = (tab) => `my-files/viewer/${tab}`;
+/** Every tab's full-window view, in one shared value: { [tab]: { root, on, from: the window that
+ *  opened it, files: [absolute path], active: absolute path | null } }. Kept when the view closes,
+ *  so the next ⤢ shows the same files. */
+export const VIEWERS = "my-files/viewers";
+
+/** `all` with `tab`'s view set (or removed when null), and without the tabs that no longer exist. */
+export function withViewer(all, tab, viewer, liveTabs) {
+  const out = {};
+  for (const [id, v] of Object.entries(all ?? {})) if (liveTabs.has(id) && id !== tab) out[id] = v;
+  if (viewer) out[tab] = viewer;
+  return out;
+}
 
 /** The full-window view's pane in `tab`, or null. */
 export const viewerPane = (panes, tab) => (tab && panes.find((p) => p.mod === "my-files" && p.tab === tab)) || null;
