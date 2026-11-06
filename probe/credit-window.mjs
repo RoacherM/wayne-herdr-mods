@@ -1,4 +1,7 @@
-import { openCore } from '/Users/byronwayne/Projects/sides/herdr-relay/host/hc.js';
+// Probe: how much does herdr-core send a viewer that never credits, and what does it send once it does?
+// Answer (DESIGN.md「滑动延迟」): a 256 KB window per viewer; behind, it replays old output in order.
+//   node probe/credit-window.mjs   (own scratch core HC_SESSION=relay-credit-probe, stopped at the end)
+import { openCore } from '../host/hc.js';
 const mac = await openCore({ session: 'relay-credit-probe' });
 const run = await mac.call('terminal.run', { argv: ['/bin/sh', '-c', 'sleep 0.5; i=0; while [ $i -lt 4000 ]; do printf "\\033[H\\033[2Jframe %d %0200d\\n" $i 0; i=$((i+1)); done; sleep 30'], cwd: '/tmp', rm: true });
 const v = await mac.call('terminal.attach', { terminal: run.address, cols: 100, rows: 30, observe: true, resize_notifications: true });

@@ -1,7 +1,8 @@
 // Full path: real host service + real relay + simulated phone + a scratch herdr-core.
-//   RELAY=http://127.0.0.1:8799 node --test test/host.live.test.mjs   (npm run relay:dev first)
+//   node --test test/host.live.test.mjs                                 (starts its own relay: test/local-relay.mjs)
+//   RELAY=http://127.0.0.1:8799 node --test test/host.live.test.mjs   (or uses yours: npm run relay:dev)
 // The scratch core (HC_SESSION=relay-live) is separate from Herdr.app's and is stopped at the end.
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -9,8 +10,11 @@ import { join } from 'node:path';
 import { openCore } from '../host/hc.js';
 import { controlCall, startService } from '../host/service.js';
 import { decodePairLink, newBoxKeys, phoneHandshake, unb64 } from '../shared/e2e.js';
+import { startLocalRelay } from './local-relay.mjs';
 
-const RELAY = process.env.RELAY ?? 'http://127.0.0.1:8799';
+const ownRelay = process.env.RELAY ? null : await startLocalRelay();
+after(() => ownRelay?.stop());
+const RELAY = process.env.RELAY ?? ownRelay.url;
 const SESSION = 'relay-live';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const strip = (s) => s.replace(/\x1b\[[0-9;?!>=]*[ -/]*[@-~]/g, '').replace(/\x1b[\]P^_][^\x07\x1b]*(\x07|\x1b\\)/g, '').replace(/\x1b./g, '');

@@ -6,3 +6,8 @@ dev/shots/
 .wrangler/
 bench/report.html
 bench/events.json
+.scratch/
+# Herdr.app writes these into each mod folder; not ours (host/herdr-files.js APP_WRITES)
+herdr-app/**/gpui-kit.d.ts
+herdr-app/**/jsconfig.json
+herdr-app/**/herdr.d.ts

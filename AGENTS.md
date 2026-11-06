@@ -11,10 +11,12 @@
 | `relay/` | Cloudflare Worker + Durable Object | 代码跑在 Cloudflare 边缘、且只转发密文或托管静态页吗？ |
 | `shared/` | 手机与 Mac 共用的纯逻辑（`e2e.js`、`coast.js`、`wheel.js`、`pieces.js`） | 双端都要用且不依赖 Node/DOM 专有 API 吗？ |
 | `herdr-app/` | `Herdr.app` 自定义布局与 mod（`main-preview`、`my-tabs`、`my-files`、`wayne-phones`） | 是装进 `~/.config/herdr-app/` 的界面配置或 mod 吗？ |
-| `test/` | 单测与全链路协议测试 | `host.live.test.mjs` 需先起 `npm run relay:dev`，其余单测免预启动直接跑 |
+| `test/` | 单测与全链路协议测试 | 不预先起任何服务就能跑通吗？需要中继时用 `test/local-relay.mjs` 起临时实例 |
 | `dev/` | 无头 Chrome 冒烟（`*-smoke.mjs`）、`fake-desktop.mjs`、`bench.mjs`、`asks.mjs` | 需要起无头浏览器、假桌面或跑分吗？文件第 1 行写明前置条件 |
 | `probe/` | `herdr-core` 行为探针（`sync.mjs` 等） | 是在验证外部二进制/协议的未知行为吗？ |
 | `bench/` | 跑分数据（`results.jsonl`） | 只放跑分结果数据，不放脚本 |
+| `ios/`、`shell/ios/` | 原型：nsh 原生 App 第 0 步（已停）、WKWebView 薄壳 | 是 I-004 的原型吗？手机页功能一律做进 `app/` |
+| `.scratch/` | 排查数据、临时截图、一次性审计输出（已 gitignore） | 是一次性产物吗？严禁放进 `docs/` |
 
 ## 2. 按任务读取文档
 
@@ -22,12 +24,24 @@
 - 外部 Agent 使用本工具的说明：[SKILL.md](SKILL.md)（随 `install` 装入 `~/.agents/skills/wayne-herdr-mods`）
 - 待办与待拍板队列：[docs/issues/INDEX.md](docs/issues/INDEX.md)
 
+改哪里 → 先读 `DESIGN.md` 哪一节：
+
+| 改动位置 | 先读 |
+|---|---|
+| `shared/e2e.js`、`relay/`、配对、`host/phones.js` 白名单 | 「安全」「手机能做什么，对应哪个接口」「地址和域名」 |
+| `host/rtc-link.js`、`app/src/direct.js`、`shared/pieces.js` | 「直连（WebRTC，已实现）」 |
+| 终端尺寸、多个查看者 | 「多个窗口怎么同步」「手机布局」 |
+| `app/` 终端页（画面、滚动、键盘、输入） | 「终端页怎么显示」「终端页布局」「画面不闪」「滑动延迟」「重印整段对话」 |
+| `host/voice.js`、`app/src/voice.js` | 「语音输入（已实现）」 |
+| `herdr-app/` | 「Herdr.app 里的界面」 |
+| `ios/`、`shell/ios/` | 「原生 App（nsh）」+ [docs/native-app.html](docs/native-app.html) |
+| `probe/` | 「probe 怎么跑」及对应章节的版本号与日期 |
+
 ## 3. 常用命令
 
 ```sh
-node --test test/!(host.live).test.mjs             # 免预启动快速单测
-npm run relay:dev                                  # 起本地中继（127.0.0.1:8799）
-RELAY=http://127.0.0.1:8799 npm test               # 含 host.live.test.mjs 的全量测试（使用独立 HC_SESSION=relay-live）
+npm test                                           # 全量测试，约 7 秒；host.live 自起临时中继 + 独立 HC_SESSION=relay-live
+npm run relay:dev                                  # 起本地中继（127.0.0.1:8799），dev/ 冒烟与跑分要用
 node dev/bench.mjs                                 # 模拟跑分（需先 build + relay:dev），慢 20% 以上退出码为 1
 node dev/asks.mjs --show                           # 查看本机捕获的 blocked 提问屏幕样本
 npm run build && node dist/wayne-herdr-mods.mjs install  # 构建并同步命令、LaunchAgent、Herdr.app 界面与 skill

@@ -1,4 +1,6 @@
 // Tap "+" on a space in the home screen → a new shell tab opens and accepts typing.
+//   npm run build; npm run relay:dev; node dev/fake-desktop.mjs > /tmp/fake.log &
+//   node dev/newtab-smoke.mjs "<pairing link>"
 import puppeteer from 'puppeteer-core';
 const link = process.argv[2];
 const browser = await puppeteer.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new' });

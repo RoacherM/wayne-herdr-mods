@@ -1,6 +1,7 @@
 // Claude Code in classic mode (CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1) on the phone: its output goes
 // into the terminal's own history, so the phone scrolls it locally, with no wheel sent to the Mac.
-// Set up by hand in the scratch core (docs/plan-conversation-direct.md, C):
+// Result and how to turn it on: DESIGN.md「在手机上回答程序的问题」(Claude Code 普通屏幕模式实测).
+// Set up by hand in the scratch core (HC_SESSION=relay-ui), after npm run build; npm run relay:dev:
 //   two Claude Code terminals labelled where="cc / classic" and where="cc / full", each with some output;
 //   node dev/fake-desktop.mjs (without stopping that core), then node dev/classic-smoke.mjs "<link>"
 import puppeteer from 'puppeteer-core';

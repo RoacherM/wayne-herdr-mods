@@ -33,8 +33,8 @@ wayne-herdr-mods voice key           # 可选：火山「录音文件识别 2.0 
 ## 测试
 
 ```sh
-npm run relay:dev                                  # 本地中继
-RELAY=http://127.0.0.1:8799 npm test               # 加密 + 全链路（在独立的 scratch herdr-core 上）
+npm test                                           # 单测 + 全链路（自起临时中继和独立的 scratch herdr-core）
+npm run relay:dev                                  # 本地中继，dev/ 下的冒烟和跑分要用
 node probe/sync.mjs                                # herdr-core 多窗口规则
 node dev/bench.mjs                                 # 模拟跑分：直连、中继、中继+150ms；写 bench/results.jsonl 和 bench/report.html
 ```

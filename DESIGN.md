@@ -187,18 +187,23 @@ iPhone 浏览器 / PWA ──wss /v1/client/<id>──▶ Cloudflare Worker + DO
 
 ## 目录
 
+目录边界和「放进这里的判断标准」见 `AGENTS.md` 第 1 节；这里只记每个目录的来历。
+
 ```
-shared/e2e.js        从 dsh-pair 复制
-shared/pieces.js     直连数据通道上的分片
-relay/               从 dsh-pair 复制：Worker + DO + 静态网页
-host/                新写：中继连接、配对、hc 适配、推送、命令行
-app/                 新写：手机网页（终端列表 + xterm.js 终端页），build 到 relay/public
-herdr-app/           Herdr.app 里我们的界面：布局 main-preview、标签栏、文件面板、「手机」窗口；build 时打进 dist/wayne-herdr-mods.mjs
-SKILL.md             给 agent 的用法；`--skill` 打印它，install 装进 ~/.agents/skills/wayne-herdr-mods
-probe/               hc.mjs（分帧客户端）、sync.mjs（多窗口同步 probe）
-test/                e2e.test.mjs（加密）、host.live.test.mjs（全链路）
-dev/                 fake-desktop.mjs（假 Mac）、ui-smoke.mjs（无头 iPhone 截图）、bench.mjs（模拟跑分）、scroll-app.py（跑分用的全屏程序）
-bench/results.jsonl  每次跑分一条一路径，带 commit（report.html 不提交）
+shared/      e2e.js 从 dsh-pair 复制；pieces.js（直连分片）、coast.js、wheel.js 新写
+relay/       从 dsh-pair 复制：Worker + DO + 静态网页（relay/public 是 app/ 的构建产物）
+host/        新写：中继连接、配对、hc 适配、推送、语音、命令行；打包成 dist/wayne-herdr-mods.mjs
+app/         新写：手机网页（终端列表 + xterm.js 终端页），build 到 relay/public
+herdr-app/   Herdr.app 里我们的界面；build 时打进 dist/，install 写到 ~/.config/herdr-app/
+SKILL.md     给 agent 的用法；`--skill` 打印它，install 装进 ~/.agents/skills/wayne-herdr-mods
+test/        npm test：单测 + host.live.test.mjs（全链路，自己起临时中继 test/local-relay.mjs）
+dev/         需先起东西的冒烟与跑分：fake-desktop.mjs（假 Mac）、*-smoke.mjs（无头 iPhone）、bench.mjs
+probe/       herdr-core 行为探针：hc.mjs（分帧客户端）、sync.mjs、create.mjs、credit-window.mjs、wheel-batch.mjs
+bench/       results.jsonl：每次跑分每条路径一行，带 commit（report.html 不提交）
+ios/         原型，已停：nsh 写的原生 App 第 0 步（见「原生 App（nsh）」），不再往前做
+shell/ios/   原型：WKWebView 薄壳 + install.sh（免费 Apple ID 7 天），方向见 docs/native-app.html（I-004）
+docs/        issues/（待办队列）、native-app.html（I-004 的设计原型）
+.scratch/    排查数据、临时截图（不提交）
 ```
 
 后台常驻：`~/Library/LaunchAgents/` 下放一个 LaunchAgent，复制安装，不用软链接。它不启动、不重启 Herdr.app 和 herdr-core；herdr-core 不在时只报离线，等它回来再连。
@@ -212,7 +217,7 @@ bench/results.jsonl  每次跑分一条一路径，带 commit（report.html 不�
 | 3 | `dev/ui-smoke.mjs`：无头 Chrome 模拟 iPhone，连 `dev/fake-desktop.mjs`。欢迎页、首页分组、「需要你」、终端页、按 1 回答菜单、shell 打字、设置、深色 | 过，截图在 dev/shots，无页面错误 |
 | 4 | 部署后在真 iPhone 上扫码，在 Herdr.app 的真实 agent 终端上操作一次 | 2026-11-02 过：iPhone 配对成功，从手机给 Herdr.app 里正在运行的 Claude Code 发了一条消息，agent 收到了 |
 
-本地跑法：`npm run relay:dev`，然后 `RELAY=http://127.0.0.1:8799 npm test`；看界面：`node dev/fake-desktop.mjs` 打印配对链接，`node dev/ui-smoke.mjs "<链接>"`。
+本地跑法：`npm test`（`host.live.test.mjs` 自己起一个临时中继；要用自己的中继就设 `RELAY=http://127.0.0.1:8799`）；看界面：`node dev/fake-desktop.mjs` 打印配对链接，`node dev/ui-smoke.mjs "<链接>"`。
 
 ## 画面不闪（2026-11-04）
 
@@ -617,12 +622,12 @@ xterm 6 自己画滚动条，只认鼠标滚轮，手指拖动不会滚。所以
 
 验证：`test/coast.test.mjs`（曲线：约 2 秒、先快后慢、有上限）；`dev/scroll-smoke.mjs`（模拟 iPhone 触摸，19/19，含比手机高的布局：外层先滑到边，再交给 Mac）：竖拖看到更早的行且不发任何东西给 Mac、横拖左右滚且不动历史、点按弹出键盘、全屏程序收到 `ESC[<64;…M` 滚轮报告、慢拖约每行一步且手指没松开时程序已经在动、手机上没有提前挪的文字、甩一下松手后还在滚且只发了一条 `term.coast`、打字和 ↓ 先回到最新。真机手感待验证。
 
-### Slash 命令（`app/src/live-command.js`）
+### Slash 命令（`app/src/live-line.js`）
 
 问题：输入框只在发送时才把文字交给终端，所以打 `/` 时 Claude Code、Codex 自己的命令菜单（边打边筛选）不会出现。
 实测（2026-11-02，临时 herdr-core）：`terminal.send`（粘贴 + 回车）发完整的 `/help`（Claude Code）和 `/status`（Codex）都能执行，所以发送这一步没问题，缺的是菜单。
 
-做法：输入框内容以 `/` 开头（且只有一行、没有图片）时进入命令模式：每次改动都算出「退格到公共前缀，再补上新字」的按键，从终端流实时打进去。菜单就显示在上方的终端里；↑↓、Tab 用快捷键栏；发送 = 回车。把 `/` 删掉，打进终端的字也会退格删掉。普通消息仍然走 `terminal.send`。
+做法（v0.1.0 起）：不再单设「命令模式」。手机输入框只当键盘：每次改动都算出「退格到公共前缀，再补上新字」的按键，从终端流实时打进程序自己的输入行（`keystrokes()`）。所以 `/` 开头时菜单自然出现在上方的终端里；↑↓、Tab 用快捷键栏；发送 = 回车。把 `/` 删掉，打进终端的字也会退格删掉。2026-11-02 最早的实现 `app/src/live-command.js` 只对 `/` 开头的一行这样做，普通消息走 `terminal.send`；v0.1.0 合并进 `live-line.js` 后删除。
 
 验证：`dev/slash-smoke.mjs`（模拟 iPhone + 真 Claude Code，8/8）：打 `/he` 出现 /help 菜单，发送后打开帮助，删掉 `/` 后 Claude Code 输入框为空，普通消息不受影响。
 
