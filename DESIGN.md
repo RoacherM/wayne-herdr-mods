@@ -541,6 +541,25 @@ npm run ios:dev                        # Mac 上的 iPhone 尺寸窗口（Cataly
 
 拼写还原：识别后，把结果里和热词只差大小写、或者只差空格/点/横线的地方，改回热词原样（只改整词，`testing` 不会被改）。只对 `SPELL` 表和你自己的词生效；`Node`、`push` 这类普通词只当提示、不强改。你的词写在 `~/.config/wayne-herdr-mods/voice-words.txt`，一行一个，`#` 开头是注释；终端所在文件夹名自动加入。
 
+## 内置浏览器：nsh 探针（2026-11-06）
+
+问题：能不能像 dsh 的 `browser-use-plugin`（0.1.1）那样，做一个人和 agent 共用的浏览器？dsh 的做法：Electron 界面里放一个 `<webview>`，agent 的 `browser_*` 工具经长轮询交给拥有它的渲染进程执行，人在侧栏看到每一步。
+
+- Herdr.app 里面放不了：它的 mod 文档写明不能用 web view（herdr-app 0.1.13）；`Herdr` 程序不链接 WebKit，也不含 nsh。nsh 的 GPUI 后端能显示 web view，但要 Herdr 自己嵌入 nsh 的 `AppView`。
+- 单独的 nsh 窗口可以。探针 `probe/nsh-browser/`（nsh 0.3.0 main `df6aa34`，`nsh test App.test.tsx --target macos`，真 AppKit 窗口 + WKWebView，联网）。做法：`injectedJavaScriptBeforeContentLoaded` 给每个页面装一个小助手，app 发 `{id, script}`，助手执行后用 `window.nsh.postMessage` 回结果。
+
+| 问题 | 实测（开发宿主里，一次运行） |
+|---|---|
+| 来回一次多快 | `injectJavaScript`：50 次 p50 0.07 ms、p95 0.31 ms；`ref.postMessage`：p50 0.15 ms、p95 12 ms、最大 88 ms。200 KB 的结果 1 ms 回来。 |
+| 读页面 | Wikipedia 首页 381 个可点元素，序列化约 5 KB，来回 17 ms；词条页 798 个、约 45 KB，页内 14 ms。 |
+| 点击 | `el.click()` 和派发的 `pointerdown/mousedown/mouseup/click` 都是 `isTrusted: false`。普通链接、按钮、表单能用（在 Wikipedia 搜 `WebKit` 并提交，跳到了词条页）；检查 `isTrusted` 的网站不认。 |
+| 打字 | 输入框和 `contenteditable` 里 `document.execCommand('insertText')` 产生的 `beforeinput`/`input` 是 `isTrusted: true`；用 value setter 加派发 `input` 是 `false`。 |
+| 截图 | TSX 没有截图接口。`nsh test` 的窗口截图包含网页内容（`shots/window.png`），但那是测试工具专用。正式做要二选一：Rust 原生组件调 WKWebView `takeSnapshot`，或者 Mac 宿主对这个窗口 `screencapture -l <窗口号>`（要屏幕录制权限）。都没验证。 |
+
+- 推测（未验证）：真点击要在 Rust 里给 WKWebView 发 `NSEvent`（nsh 测试工具 `nsh-platform-macos/src/synth.rs` 就是这样发系统输入的）。这需要自己写一个嵌入 nsh 的 Mac 宿主；`nsh package` 打出的独立 App 不注册原生组件。
+- 注意：每个网站都能调用 `window.nsh.postMessage`，所以 app 收到的页面消息一律当不可信数据，只认带自己发出的 `id` 的回答。
+- 探针只回答能不能做；还没决定做不做。对比 ego lite（Chromium，已装，`ego-browser` skill）：它有真点击和截图，但不能按 Herdr 的需要定制。
+
 ## 发图片（已实现）
 
 手机点「+」选图（最多 6 张）。大图先在手机上缩到长边 2048px、JPEG 0.85。发送时每张图分块 `upload.put` 传到 Mac，再 `image.put` 调用 herdr-core 的 `terminal.put`：文件落在这个终端自己的文件夹里（终端删掉时一起删），返回路径。消息变成「路径1 路径2 你的文字」，用 `terminal.send` 发出去。Claude Code 和 Codex 会把消息里的图片路径当附件读。单张上限 8 MB（`terminal.put` 的上限）。
