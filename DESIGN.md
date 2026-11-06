@@ -122,7 +122,7 @@ iPhone 浏览器 / PWA ──wss /v1/client/<id>──▶ Cloudflare Worker + DO
 |---|---|---|
 | `layouts/main-preview.json`、`.svg` | 窗口布局：在 Herdr 自带的 `main` 上换了标签栏和文件面板 | 复制自 `main` |
 | `mods/my-tabs/` | 标签栏：右上角只留「+」、手机图标、一个面板按钮。标签的图标是你在这个标签里最后点进的 agent（2026-11-05 改：原来是标签里第一个 agent，一个标签里有 Claude Code 和 agy 时会显示错）。只有窗口当前的窗格有 `focused`，所以每个标签自己记住。agent 退出后前台回到 shell，图标就是终端（2026-11-05 改，见「agent 退出后的图标」） | 复制自 `tabs` 0.1.12 |
-| `mods/my-files/` | 文件面板：支持文件树悬停/右键菜单与预览顶栏一键复制绝对路径或文件全文；`TextView.markdown` 的选区色绘制在文字上层，必须用带透明度的 `#rrggbb59`（约 35% alpha），否则实色选区会盖死选中的文字 | 复制自 `files` 0.1.12 |
+| `mods/my-files/` | 文件面板：每个窗格（window）各记一份展开的文件夹和预览的文件；右上角 ⤢ 打开全窗口预览（见下面「文件面板：每个窗格一份，全窗口预览」）。复制路径、复制全文在树的每一行（悬停、右键）。`TextView.markdown` 的选区色绘制在文字上层，必须用带透明度的 `#rrggbb59`（约 35% alpha），否则实色选区会盖死选中的文字。纯逻辑在 `state.js`（`test/my-files-state.test.mjs`） | 复制自 `files` 0.1.12 |
 | `mods/wayne-phones/` | 「手机」窗口和它的图标 `phone.svg` | 新写 |
 
 ### agent 退出后的图标（2026-11-05）
@@ -140,6 +140,26 @@ iPhone 浏览器 / PWA ──wss /v1/client/<id>──▶ Cloudflare Worker + DO
 - 不加快捷键；2026-11-04 一次安装加在 `keys.json` 的 ⌘⇧M，搬配置时删掉。
 - `wayne-herdr-mods uninstall` 只删「手机」窗口，布局和标签栏留着（那时标签栏的手机图标点了没反应）。
 - 复制来的 mod 不跟着 Herdr 更新。Herdr 改了 `tabs` 或 `files`，要自己对比 `cloned_from` 的版本再合进来。
+
+### 文件面板：每个窗格一份，全窗口预览（2026-11-06）
+
+- 现象：在一个 tab 里打开 `build.mjs` 预览，换到别的 tab 或同一 tab 的另一个窗格，看到的还是它。
+- 原因：`files` 0.1.12 记状态（展开的文件夹、预览的文件）用的键是文件夹路径。同一文件夹下的所有窗格共用一份。
+- 规则：键里加上窗格（`state.js` 的 `locate`、`windowOf`）。窗格就是 tab 里的一个 window；布局里的终端块没有窗格，用 `terminal:<地址>` 代替。焦点在全窗口视图上时，面板是打开它的那个窗格的（`from`）。
+- 全窗口预览：面板右上角 ⤢。在当前 tab 拆出一个 `my-files` 窗格（`props.viewer = tab`），它自己 `pane.zoom` 盖住终端，终端照常在后面跑。上面一排是打开的文件，点 × 关掉。这时在面板的树里点文件，就在全窗口里开一个标签，不在面板里预览。⤡（面板右上角或全窗口右上角）关掉这个窗格，回到终端。每个 tab 最多一个全窗口视图，打开的文件存在 `shared("my-files/viewer/<tab>")`。
+- 预览顶栏只留 ⤢ 和「用默认 App 打开」；「复制路径」「复制全文」从顶栏去掉（2026-11-06，用户觉得多余）。
+- 已验证（herdr-app 0.1.13，2026-11-06）：`herdr-app check` 通过；`pane.split {mod: "my-files", props: {viewer}}` 画出全窗口视图和空状态提示，`herdr-app status` 无错误。**没验证**：真窗口里点 ⤢ 后的自动放大、点树里文件开标签。测试时不要往用户正在用的窗口发 `tab.new` / `pane.split`：两次调用之间焦点可能换到别的 tab（2026-11-06 一次分屏落进了用户的 tab 4，当场撤掉）。
+
+### 图标跟着 Herdr.app（2026-11-06）
+
+手机上的程序图标和 Herdr.app 侧栏、标签栏一样，新的 agent 不用在这里一个个加。
+
+- Herdr.app 每个终端是什么程序、用哪个图标、要不要着色，只有它自己知道（内置程序表 + 用户的 `programs.json`）。常驻的标签栏 `my-tabs` 每 2 秒把 `terminals()` 里本机终端的 `program`（`key`、`icon`、`tint`）写进 `shared("wayne-herdr-mods.programs")`，内容没变不写。Herdr 把 `shared` 存在 `~/.config/herdr-app/shared.json`。
+- 宿主（`host/terminals.js`）读这个文件（按修改时间缓存，`watchFile` 2 秒一查，变了就推给手机）：终端的图标 key 用 Herdr 的答案，图标文件和着色也用 Herdr 的；手机已经会用宿主发来的 `icons`。
+- Herdr 没开、或者答案还没写到时退回旧做法：agent 报告的 `app` 或前台程序名，经 `ALIASES` 和 Herdr 自带 `new-menu` 缓存的 agent 表（`shared("new-menu.agents")` 的 `run` → `key`，`tint`）换成 key，再找 `icons/<key>.svg`。
+- 前台是 shell 时一律是 shell 图标，不管 Herdr 上次怎么说（见上面「agent 退出后的图标」）。
+- Herdr 不认识的 agent（例如 droid，2026-11-06）Herdr 自己也只显示通用的 agent 图标，手机一样。要专门的图标，在 `~/.config/herdr-app/programs.json` 里加一项（Herdr 自己的扩展点），手机自动跟上。试过不做：从 LobeHub 图标库自动下载——droid、factory 都没有（2026-11-06 unpkg `@lobehub/icons-static-svg` 404），还要联网、要改用户的 Herdr 配置。
+- 终端页顶栏中间显示这个图标，不再显示 agent 的名字（名字只给读屏，`aria-label`）。图标 key 变了才换（列表刷新很频繁）。测法：`dev/fake-desktop.mjs` + 无头 iPhone 打开 claude 和 zsh 终端，顶栏分别是 Claude 图标和终端图标（2026-11-06）。
 
 ## 地址和域名
 

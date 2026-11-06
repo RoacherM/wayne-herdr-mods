@@ -1,11 +1,24 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, panes, terminals, run, openOverlay, theme, window, layout, settings } from "herdr";
+import { spaces, panes, terminals, run, openOverlay, theme, window, layout, settings, shared, setShared } from "herdr";
 
 // Herdr keeps an agent's last report after the agent exits: the pane is back at zsh, its program
 // still says Epi. A shell in front means the agent is gone.
 const SHELLS = new Set(["zsh", "bash", "fish", "sh", "dash", "nu", "pwsh", "elvish", "xonsh", "tcsh", "csh", "ksh"]);
 const SHELL = { key: "shell", icon: "icons/shell.svg", tint: true, shell: true, agent: false };
+
+// The phone shows the icon Herdr shows: Herdr's own answer for each terminal of this Mac goes into
+// shared.json, where wayne-herdr-mods reads it (host/terminals.js, DESIGN.md「图标跟着 Herdr.app」).
+// This bar is always on screen, so it is the one that writes it; only when it changed.
+const PROGRAMS = "wayne-herdr-mods.programs";
+function publishPrograms() {
+  const out = {};
+  for (const t of terminals()) {
+    const p = t?.program;
+    if (typeof t?.address === "string" && !t.address.includes("/") && p?.key) out[t.address] = { key: p.key, icon: p.icon ?? null, tint: Boolean(p.tint) };
+  }
+  if (JSON.stringify(out) !== JSON.stringify(shared(PROGRAMS) ?? {})) setShared(PROGRAMS, out);
+}
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -17,7 +30,9 @@ function find(node, id) {
 }
 
 export default class Tabs extends View {
-  init() {
+  init(_props, cx) {
+    publishPrograms();
+    cx.timer.every(2000, () => publishPrograms());
     this.pressed = null;
     this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}");
     this.used = {}; // tab id → the agent pane last focused there

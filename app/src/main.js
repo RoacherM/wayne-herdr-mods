@@ -421,7 +421,16 @@ function openTerm(address) {
   app.term = page;
   const status = { notice: '', uploading: '', composing: '', voice: null }; // what the bubble may say
 
-  const title = h('b', {}, t0?.app || t0?.program || address);
+  // The program as its icon, the one Herdr.app shows (DESIGN.md「图标跟着 Herdr.app」); its name only for screen readers.
+  const title = h('span', { class: 'bar-ico', role: 'img' });
+  const showWho = (t) => {
+    title.setAttribute('aria-label', t?.app || t?.program || address);
+    const key = t ? `${t.icon}|${Boolean(app.list?.icons?.[t.icon])}` : null;
+    if (key === title.dataset.key) return; // an icon only when it changes: the list refreshes often
+    title.dataset.key = key ?? '';
+    title.replaceChildren(t ? progIcon(t, app.list?.icons) : h('b', {}, address));
+  };
+  showWho(t0);
   const sub = h('span', { class: 'status' }, t0?.where ?? address);
   const host = h('div', { class: 'xterm-host' });
   const viewport = h('div', { class: 'term-viewport' }, host); // the Mac's grid; pans sideways
@@ -672,7 +681,7 @@ function openTerm(address) {
   function onList() {
     const t = app.list.terminals.find((x) => x.address === address);
     if (!t) { setStatus('notice', '这个终端已经结束。'); return; }
-    title.textContent = t.app || t.program || address;
+    showWho(t);
     sub.textContent = [t.where, t.state === 'blocked' ? (KIND_TEXT[t.kind] ?? '等你处理') : STATE_TEXT[t.state]].filter(Boolean).join(' · ');
     if (!page.sized) resizeTo(t.cols, t.rows); // follow the size the Mac windows set (an older Mac: no `size` on the stream)
     showTerm();

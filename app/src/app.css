@@ -109,6 +109,8 @@ button { font: inherit; color: inherit; }
 .screen.term .bar-title { align-items: center; text-align: center; }
 .screen.term .bar-title b { font-size: 15px; }
 .screen.term .bar-title .status { font-size: 11.5px; color: var(--fg3); }
+.screen.term .bar-ico { display: inline-grid; place-items: center; height: 22px; }
+.screen.term .bar-ico .prog-ico { width: 22px; height: 22px; }
 .term-stage { position: relative; flex: 1 1 auto; min-height: 0; background: #0b0b0c; }
 /* The Mac's grid at the phone's font: wider than the phone. Sideways the browser pans it; up and
    down is touch-scroll.js (history, or the wheel to the program). */

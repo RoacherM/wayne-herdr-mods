@@ -2,13 +2,18 @@
 // thumbnail for anything else the system can render (PDF, HTML, Office). Anything else
 // keeps the source view with syntax highlighting. A Changed filter hides untouched files.
 //
-// Two ways to use it:
-//   - the Files panel (the shipped layout's `files` slot), following the focused pane
+// Three ways to use it:
+//   - the Files panel (the shipped layout's `files` slot), following the focused pane; each window
+//     (pane) keeps its own folders open and file shown
+//   - the full-window view (props {viewer: tab}): the panel's ⤢ splits it beside the tab's pane
+//     and zooms it over the terminal; files clicked in the panel open in it as tabs. Its open files
+//     are shared(viewerKey(tab)). DESIGN.md「Herdr.app 里的界面」
 //   - a pane of its own:
 //     herdr-app do pane.split '{"direction":"right","mod":"my-files","props":{"file":"/abs/path.md"}}'
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState, TextView, set_theme } from "gpui-base";
-import { spaces, panes, focused, props, exec, readTextFile, writeTextFile, watchFolder, theme, settings, window, appHome, openOverlay, closeOverlay, notify } from "herdr";
+import { spaces, panes, focused, props, exec, run, shared, setShared, readTextFile, writeTextFile, watchFolder, theme, settings, window, appHome, openOverlay, closeOverlay, notify } from "herdr";
+import { locate, viewerKey, viewerPane, windowOf, openIn, closeIn, linkTarget } from "./state.js";
 
 const MOD = "mods/my-files";
 const CACHE = `${MOD}/.cache`;
@@ -83,16 +88,13 @@ async function writeFileToClipboard(absPath, on, cx) {
   return true;
 }
 
-// Where the panel looks: a pane's own file wins, then the focused pane's folder.
+// Where the panel looks (state.js locate): per window (pane), a pane's own file first, then the focused window's folder.
 function location() {
-  const file = props()?.file;
-  if (file) return { cwd: file.split(/[\\/]/).slice(0, -1).join("/"), on: null, file };
-  const space = spaces().find((s) => s.active), f = focused();
-  const pane = f?.pane ? panes().find((p) => p.pane === f.pane) : null;
-  const on = f?.pane === null ? (f.terminal?.includes("/") ? f.terminal.split("/")[0] : null) : space?.machine ?? null;
-  return { cwd: pane?.cwd || f?.cwd || space?.folder, on, file: null };
+  const focus = focused();
+  return locate({ file: props()?.file, space: spaces().find((s) => s.active), focus, panes: panes(), viewer: focus?.tab ? shared(viewerKey(focus.tab)) : null });
 }
-const key = () => JSON.stringify(location());
+const key = () => (props()?.viewer ? `viewer:${props().viewer}` : JSON.stringify(location()));
+const viewer = (tab) => (tab ? shared(viewerKey(tab)) : null) ?? null;
 
 async function directory(path, on) {
   if (!on && window()?.platform === "windows") {
@@ -140,6 +142,7 @@ export default class MyFiles extends View {
     this.entries = new Map(); this.folders = new Set(); this.pending = new Set(); this.marks = {};
     this.pref = "preview"; this.hovered = null; this.copied = null;
     if (props()?.menu) return;
+    if (props()?.viewer) return this.initViewer(cx);
     this.refresh(cx);
     cx.timer.every(10000, (cx) => this.refresh(cx));
   }
@@ -313,6 +316,82 @@ export default class MyFiles extends View {
     });
   }
 
+  // --- the full-window view (props {viewer: tab})
+
+  initViewer(cx) {
+    const tab = props().viewer, v = viewer(tab);
+    this.context = { key: key(), cwd: v?.root ?? null, on: v?.on ?? null }; this.root = this.context.cwd; this.on = this.context.on;
+    // Zoom over the tab once it shows up among the panes (pane.split has just made it).
+    let tries = 0;
+    const zoom = (cx) => {
+      const me = viewerPane(panes(), tab);
+      if (me) { if (!me.zoomed) run("pane.zoom", { pane: me.pane }); return; }
+      if (++tries < 20) cx.timer.after(100, zoom);
+    };
+    cx.timer.after(0, zoom);
+  }
+
+  /** Opens the full-window view over this tab, with the file the panel shows (if any). */
+  enterFull(cx) {
+    const tab = focused()?.tab;
+    if (!tab || viewerPane(panes(), tab)) return;
+    const at = focused()?.pane ?? panes().find((p) => p.tab === tab)?.pane;
+    const files = this.file ? [this.abs(this.file)] : [];
+    setShared(viewerKey(tab), { root: this.root, on: this.on, from: windowOf(focused()), files, active: files[0] ?? null });
+    run("pane.split", { direction: "right", mod: "my-files", props: { viewer: tab }, ...(at ? { pane: at } : {}) });
+    this.show(null, cx); this.refresh(cx); cx.notify();
+  }
+
+  /** Closes the full-window view of `tab`: back to its terminal. */
+  exitFull(tab) {
+    const me = viewerPane(panes(), tab);
+    setShared(viewerKey(tab), null);
+    if (me) run("pane.close", { pane: me.pane });
+  }
+
+  openInViewer(tab, absPath) {
+    const v = viewer(tab) ?? { root: this.root, on: this.on, from: null, files: [], active: null };
+    setShared(viewerKey(tab), openIn(v, absPath));
+  }
+
+  fileTab(path, active, t, tab) {
+    return h_flex().id(`vt-${path}`).h(30).flex_none().pl(10).pr(4).gap(6).items_center().rounded(6).cursor_pointer()
+      .bg(active ? t.selected : t.background).text_color(active ? t.foreground : t.muted).hover((s) => s.bg(active ? t.selected : t.hover))
+      .tooltip(path)
+      .on_click((_e, cx) => { const v = viewer(tab); if (v) setShared(viewerKey(tab), { ...v, active: path }); cx.notify(); })
+      .child(svg(`${MOD}/file.svg`).size(12).flex_none().text_color(t.dim))
+      .child(div().max_w(220).truncate().text_size(12.5).child(baseName(path)))
+      .child(div().id(`vt-close-${path}`).size(18).flex().items_center().justify_center().rounded(4).text_color(t.dim)
+        .hover((s) => s.bg(t.hover).text_color(t.foreground))
+        .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+        .on_click((_e, cx) => {
+          cx.stop_propagation();
+          const v = viewer(tab);
+          if (v) setShared(viewerKey(tab), closeIn(v, path));
+          cx.notify();
+        })
+        .child(svg(`${MOD}/close.svg`).size(11)));
+  }
+
+  viewerView(t, cx) {
+    const tab = props().viewer, v = viewer(tab);
+    const active = v?.active ?? null;
+    if (v && (v.root !== this.root || (v.on ?? null) !== this.on)) { this.root = v.root; this.on = v.on ?? null; this.context = { ...this.context, cwd: v.root, on: this.on }; }
+    if (active !== this.file) this.show(active, cx);
+    const switchable = Boolean(active) && Boolean(this.kind) && this.kind !== "look";
+    const bar = h_flex().id("viewer-bar").h(42).flex_none().px(8).gap(6).items_center().border_b(1).border_color(t.border)
+      .child(h_flex().id("viewer-tabs").flex_1().min_w(0).gap(4).items_center().overflow_x_scroll()
+        .children((v?.files ?? []).map((f) => this.fileTab(f, f === active, t, tab))))
+      .when(switchable, (el) => el.child(this.modeSwitch(t)))
+      .when(Boolean(active), (el) => el.child(this.iconBtn("viewer-open", "open", "Open in default app", t, () => exec(OPENERS[window()?.platform] ?? "open", [active]))))
+      .child(this.iconBtn("viewer-exit", "collapse", "Exit full window", t, () => this.exitFull(tab)));
+    return v_flex().id("my-files-viewer").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border)
+      .text_color(t.foreground).text_size(13)
+      .on_size_change((size, cx) => { this.width = size.width; cx.notify(); })
+      .child(bar)
+      .child(active ? this.body(t) : div().p(16).text_color(t.dim).child("Click a file in the Files panel to open it here"));
+  }
+
   iconBtn(id, icon, tip, t, action) {
     const ok = this.copied === id;
     return div().id(id).size(22).flex_none().flex().items_center().justify_center().rounded(6).cursor_pointer()
@@ -351,7 +430,12 @@ export default class MyFiles extends View {
         else if (this.hovered === path) this.hovered = null;
         cx.notify();
       })
-      .on_click((_e, cx) => entry.dir ? this.toggle(path, cx) : this.show(path, cx))
+      .on_click((_e, cx) => {
+        const tab = focused()?.tab;
+        if (entry.dir) this.toggle(path, cx);
+        else if (viewerPane(panes(), tab)) this.openInViewer(tab, this.abs(path));
+        else this.show(path, cx);
+      })
       .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.openRowMenu(entry, path); })
       .child(entry.dir ? svg(`${MOD}/chevron-${open ? "down" : "right"}.svg`).size(12).flex_none().text_color(t.dim) : div().w(12).flex_none())
       .child(svg(`${MOD}/${entry.dir ? "folder" : "file"}.svg`).size(14).flex_none().text_color(t.muted))
@@ -385,16 +469,13 @@ export default class MyFiles extends View {
 
   /** A link inside the preview: a file beside this one opens here, anything else goes to the system. */
   openLink(url, cx) {
-    const dir = this.file?.includes("/") ? this.file.slice(0, this.file.lastIndexOf("/")) : "";
-    const target = url.replace(/^\.\//, "").replace(/[#?].*$/, "");
-    if (/^[a-z][a-z0-9+.-]*:/i.test(url) || !target) return void exec(OPENERS[window()?.platform] ?? "open", [url]);
-    const parts = (dir ? `${dir}/${target}` : target).split("/"), rest = [];
-    for (const part of parts) {
-      if (part === "..") rest.pop();
-      else if (part !== "." && part !== "") rest.push(part);
+    const target = linkTarget(this.file, url);
+    if (target === null) {
+      if (/^[a-z][a-z0-9+.-]*:/i.test(url)) exec(OPENERS[window()?.platform] ?? "open", [url]);
+      return;
     }
-    if (!rest.length) return;
-    this.show(rest.join("/"), cx);
+    if (props()?.viewer) this.openInViewer(props().viewer, this.abs(target));
+    else this.show(target, cx);
     cx.notify();
   }
 
@@ -410,14 +491,16 @@ export default class MyFiles extends View {
       .child(this.seg(t, this.preview === "source", "Source", (_e, cx) => { this.pref = "source"; this.show(this.file, cx); cx.notify(); }));
   }
 
+  /** ⤢ full window (⤡ back while it is open), and the file's default app. Copying lives on the
+   *  tree rows (hover, right-click). */
   headerActions(t) {
-    if (!this.file) {
-      return this.root ? this.iconBtn("files-copy-root", "path", "Copy folder path", t, (_e, cx) => this.copyPath(this.root, "files-copy-root", cx)) : div();
-    }
+    const tab = focused()?.tab, open = Boolean(viewerPane(panes(), tab));
+    const panel = !props()?.file;
     return h_flex().gap(2).flex_none().items_center()
-      .child(this.iconBtn("files-copy-path", "path", "Copy path", t, (_e, cx) => this.copyPath(this.file, "files-copy-path", cx)))
-      .child(this.iconBtn("files-copy-text", "copy", "Copy content", t, (_e, cx) => this.copyText(this.file, "files-copy-text", cx)))
-      .child(this.iconBtn("files-open", "open", "Open in default app", t, () => exec(OPENERS[window()?.platform] ?? "open", [this.abs(this.file)])));
+      .when(panel && Boolean(this.root), (el) => el.child(open
+        ? this.iconBtn("files-full", "collapse", "Exit full window", t, () => this.exitFull(tab))
+        : this.iconBtn("files-full", "expand", "Full window", t, (_e, cx) => this.enterFull(cx))))
+      .when(Boolean(this.file), (el) => el.child(this.iconBtn("files-open", "open", "Open in default app", t, () => exec(OPENERS[window()?.platform] ?? "open", [this.abs(this.file)]))));
   }
 
   header(t) {
@@ -491,6 +574,7 @@ export default class MyFiles extends View {
     const t = theme(), menu = props()?.menu;
     syncSelectionTheme(t, cx);
     if (menu) return this.menuView(menu, t);
+    if (props()?.viewer) return this.viewerView(t, cx);
     if (key() !== this.context?.key) this.refresh(cx);
     const panel = !props()?.file;
     return v_flex().id("my-files").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border)

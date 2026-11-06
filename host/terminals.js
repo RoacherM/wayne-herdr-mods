@@ -8,7 +8,7 @@
  *
  * Phone streams (attach) ride on the same connection: `core()` hands it out.
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync, unwatchFile, watchFile } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { CREDIT, openCore, u32 } from './hc.js';
@@ -151,6 +151,20 @@ export function createTerminals({ coreOptions = {}, log = () => {}, onChange = (
   }
 
   const loadIcon = createIconLoader(APP_HOME);
+  // Herdr.app's own answer per terminal (DESIGN.md「图标跟着 Herdr.app」): re-read when shared.json changes.
+  const sharedFile = join(APP_HOME, 'shared.json');
+  let herdr = { mtime: -1, value: readHerdrPrograms(null), seen: '{}' };
+  const herdrNow = () => {
+    try {
+      const { mtimeMs } = statSync(sharedFile);
+      if (mtimeMs !== herdr.mtime) herdr = { ...herdr, mtime: mtimeMs, value: readHerdrPrograms(JSON.parse(readFileSync(sharedFile, 'utf8'))) };
+    } catch { /* missing, or caught mid-write: keep the last answer */ }
+    return herdr.value;
+  };
+  watchFile(sharedFile, { interval: 2000 }, () => {
+    const seen = JSON.stringify(herdrNow().byAddress);
+    if (seen !== herdr.seen) { herdr.seen = seen; changed(); }
+  });
   connect();
 
   return {
@@ -159,14 +173,14 @@ export function createTerminals({ coreOptions = {}, log = () => {}, onChange = (
     get: (address) => terminals.get(address),
     /** Live terminals as herdr-core reports them (argv included: for the host only). */
     raw: () => [...terminals.values()].filter((t) => t.state === 'live'),
-    list: () => [...terminals.values()].filter((t) => t.state === 'live').map(project),
+    list: () => { const h = herdrNow(); return [...terminals.values()].filter((t) => t.state === 'live').map((t) => project(t, h)); },
     icons() {
-      const out = {};
+      const out = {}, h = herdrNow();
       for (const t of terminals.values()) {
         if (t.state !== 'live') continue;
-        const p = project(t);
+        const p = project(t, h);
         if (p.icon && !(p.icon in out)) {
-          const entry = loadIcon(p.icon, Boolean(p.app));
+          const entry = loadIcon(p.icon, Boolean(p.app), h);
           if (entry) out[p.icon] = entry;
         }
       }
@@ -175,7 +189,7 @@ export function createTerminals({ coreOptions = {}, log = () => {}, onChange = (
     layout: () => layout,
     /** Retry right away (after a wake-up, or when a phone asks). */
     kick() { if (!core && !stopped) { attempt = 0; clearTimeout(retryTimer); connect(); } },
-    dispose() { stopped = true; clearTimeout(retryTimer); clearTimeout(changeTimer); core?.close(); },
+    dispose() { stopped = true; clearTimeout(retryTimer); clearTimeout(changeTimer); unwatchFile(sharedFile); core?.close(); },
   };
 }
 
@@ -212,12 +226,37 @@ export function programOf(fg) {
   return script.split('/').pop().replace(/\.(m?js|cjs|ts|py|rb|pl|php)$/, '') || fg.name;
 }
 
+const NO_HERDR = Object.freeze({ byAddress: {}, byKey: {}, byRun: {} });
+const record = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null);
+
+/**
+ * What Herdr.app says about programs, from its shared.json (parsed; null when unreadable):
+ * - byAddress: its answer per terminal of this Mac, { t6: { key, icon, tint } } (our my-tabs writes it);
+ * - byKey: icon file and tint per key, from those answers and its agent table (its new-menu caches it);
+ * - byRun: the command an agent runs → its key (`agy` → `antigravity`).
+ */
+export function readHerdrPrograms(shared) {
+  const byAddress = {}, byKey = {}, byRun = {};
+  for (const [address, p] of Object.entries(record(record(shared)?.['wayne-herdr-mods.programs']) ?? {})) {
+    if (typeof p?.key === 'string') byAddress[address] = { key: p.key, icon: typeof p.icon === 'string' ? p.icon : null, tint: Boolean(p.tint) };
+  }
+  const table = record(shared)?.['new-menu.agents']?.[''];
+  for (const a of Array.isArray(table) ? table : []) {
+    if (typeof a?.key !== 'string') continue;
+    byKey[a.key] = { icon: typeof a.icon === 'string' ? a.icon : null, tint: Boolean(a.tint) };
+    const cmd = Array.isArray(a.run) && typeof a.run[0] === 'string' ? a.run[0].split('/').pop().toLowerCase() : null;
+    if (cmd && cmd !== a.key) byRun[cmd] = a.key;
+  }
+  for (const p of Object.values(byAddress)) byKey[p.key] ??= { icon: p.icon, tint: p.tint };
+  return { byAddress, byKey, byRun };
+}
+
 /** Program icon key as Herdr.app's sidebar resolves it: agent report first, else foreground program. */
-export function iconOf(app, program) {
+export function iconOf(app, program, herdr = NO_HERDR) {
   const raw = String(app || program || '').toLowerCase();
   if (!raw) return 'shell';
   if (SHELLS.has(raw)) return 'shell';
-  return ALIASES[raw] ?? raw;
+  return ALIASES[raw] ?? herdr.byRun[raw] ?? raw;
 }
 
 function effectiveState(t) {
@@ -248,28 +287,28 @@ function findCustomProgram(progs, key) {
   return progs[key] ?? Object.values(progs).find((p) => p.match?.includes(key));
 }
 
+/** key → { svg, tint }: the file and tint Herdr.app uses for it, else programs.json, else icons/<key>.svg. */
 function createIconLoader(appDir) {
-  const cache = new Map();
+  const files = new Map();
   let custom = null;
-  return (key, isAgent) => {
-    if (cache.has(key)) return cache.get(key);
+  const read = (rel) => { if (!files.has(rel)) files.set(rel, readIconSvg(appDir, rel)); return files.get(rel); };
+  return (key, isAgent, herdr = NO_HERDR) => {
     custom ??= readCustomPrograms(appDir);
-    const hit = findCustomProgram(custom, key);
+    const known = herdr.byKey[key], hit = findCustomProgram(custom, key);
     const fallback = isAgent ? 'icons/agent.svg' : 'icons/program.svg';
-    const svg = readIconSvg(appDir, hit?.icon ?? `icons/${key}.svg`) ?? readIconSvg(appDir, fallback);
+    const svg = read(known?.icon ?? hit?.icon ?? `icons/${key}.svg`) ?? read(fallback);
     if (!svg) return null;
-    const entry = { svg, tint: hit?.tint ?? !NO_TINT.has(key) };
-    cache.set(key, entry);
-    return entry;
+    return { svg, tint: known?.tint ?? hit?.tint ?? !NO_TINT.has(key) };
   };
 }
 
 /** What a phone sees of one terminal. Never argv or env: only display facts. */
-export function project(t) {
+export function project(t, herdr = NO_HERDR) {
   const status = t.status ?? null;
   const program = programOf(t.foreground);
   // An agent's last report outlives it: with a shell back in front, the agent has exited.
   const app = SHELLS.has(program) ? null : status?.app || null;
+  const said = SHELLS.has(program) ? null : herdr.byAddress[t.address]?.key;
   return {
     address: t.address,
     name: t.name ?? null,
@@ -280,7 +319,7 @@ export function project(t) {
     cwd: t.foreground?.cwd ?? t.cwd ?? null,
     program,
     app,
-    icon: iconOf(app, program),
+    icon: said || iconOf(app, program, herdr),
     state: effectiveState(t), // idle | working | done | blocked | error | null (never reported)
     kind: status?.kind ?? null, // permission | question | auth (blocked only)
     msg: status?.msg || null,
