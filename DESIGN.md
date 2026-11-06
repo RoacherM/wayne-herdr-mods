@@ -598,6 +598,35 @@ npm run ios:dev                        # Mac 上的 iPhone 尺寸窗口（Cataly
 
 测法：`dev/keys-smoke.mjs`（终端里跑一个 raw 模式读取器，原样打印收到的字节）。
 
+### 每个 agent 的快捷键（2026-11-06）
+
+键盘栏在 `^C` 后面多两组键：这个终端里 agent 自己的快捷键，和 `^ ⌥ ⇧` 三个修饰键。
+
+```
+ Esc ← ↑ ↓ → ⏎ ⇧Tab ^C │ ^⏎ ^O ^T ^B ⌥P …（跟着 agent 变）│ ^ ⌥ ⇧ │ Tab 粘贴 换行 …
+```
+
+- **agent 的快捷键**（`app/src/agent-keys.js`）：按终端的图标（Herdr.app 给的 `icon`），不认识时按程序名。agent 退出变回 shell，这组键就没了。来源都是程序自己（2026-11-06）：
+  - Claude Code 2.1.316：程序里的默认键表，例如 `ctrl+enter` 是 `chat:sendNow`（立即发送）。放了 ^⏎ ^O ^T ^B ⌥P ⌥T ^G ^S。
+  - agy（Antigravity CLI）：程序里的更新说明和提示。⌥M（和「排队」设置相反地发送）、^O、^G、^R、⌥S、⇧⏎。
+  - droid 1.5.0：程序里的提示。^N ^L ^O ^T ^R ^X ⇧⏎。
+  - Codex 0.163.0 没放：它的提示是运行时拼的，从程序里读不准；用修饰键自己组合。
+  - 读用户的配置：Claude Code 有 `~/.claude/keybindings.json`、agy 也有 `keybindings.json`，这台 Mac 上都没有，所以先不读。以后有人改了键再加。
+- **修饰键**：点 `^`、`⌥`、`⇧`（可以多个），再点一个键栏的键（Esc、箭头、⏎、Tab、1 2 3 y n），或者在键盘上打一个英文字符，就发出组合键，例如 `^` 再 `⏎` 是 `ctrl+enter`，`⌥` 再打 `m` 是 `alt+m`。发一次就松开。中文输入法在拼字时不算。外接键盘的 Ctrl/Alt + ⏎ 也走这条路。
+- **怎么发**：按名字发（`term.press {s, keys: ['ctrl+enter']}`），Mac 调 herdr-core 的 `terminal.keys`。herdr-core 按程序要的格式编码（`probe/keys.mjs`，hc 0.1.18，2026-11-06 实测）：
+
+| 键 | 程序没要求（legacy） | modifyOtherKeys | kitty 键盘协议 |
+|---|---|---|---|
+| `ctrl+enter` | `ESC[27;5;13~` | `ESC[27;5;13~` | `ESC[13;5u` |
+| `shift+enter` | `ESC[27;2;13~` | `ESC[27;2;13~` | `ESC[13;2u` |
+| `alt+m` | `ESC m` | `ESC m` | `ESC[109;3u` |
+| `ctrl+shift+p` | 报错（legacy 没有这个键） | 报错 | `ESC[112;6u` |
+
+  手机自己发字节做不到这一点：程序在手机连上之前就切了键盘模式，手机看不到。
+- 顺序：`term.press` 和打字走同一条队列（`host/phones.js` 的 `stream.inputs`），先发出去的字先到。名字不在白名单（`KEY_RE`）里的整条丢掉；herdr-core 报错（比如 legacy 下的 `ctrl+shift+p`）只记日志。
+- 新旧混用：`ready` 里有 `keys: true` 的 Mac 才收 `term.press`。旧 Mac + 新手机：没有这个字段，手机不显示 agent 快捷键和修饰键，其它键照旧。新 Mac + 旧手机：旧手机不发 `term.press`，没有变化。
+- 测法：`test/agent-keys.test.mjs`（每个 agent 的键都在白名单里、组合的名字）；`test/host.live.test.mjs`（`term.press` 排在前面打的字后面，坏名字丢掉）。
+
 ### 程序在问时，打的字先等着（2026-11-05 改）
 
 程序报告 `blocked`（等你确认）时，手机打的字先不进终端。原因：菜单里一个字母就可能选中一项（Claude Code 的 1 / 2 / 3，y / n）。字等在发送框里，气泡说「等你回答后输入：…」，回答完再进去。

@@ -437,3 +437,7 @@ button { font: inherit; color: inherit; }
 }
 
 .bar-pad { flex: none; visibility: hidden; } /* keeps the title in the middle */
+
+/* The agent's own shortcuts (agent-keys.js) sit in the bar like the other keys; ^ ⌥ ⇧ light while held. */
+.agent-keys { display: contents; }
+.keybar .key.mod.on { background: var(--fg, #e6e6e1); color: var(--bg, #0b0b0c); }

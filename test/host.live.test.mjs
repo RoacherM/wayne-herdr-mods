@@ -77,6 +77,7 @@ test('pair, list, stream, type, send, keys — through the relay', { timeout: 12
   const ready = await rx();
   assert.equal(ready.type, 'ready');
   assert.equal(ready.paired, true);
+  assert.equal(ready.keys, true, 'this Mac takes keys by name (term.press)');
 
   // --- RPC plumbing
   let id = 0;
@@ -124,6 +125,13 @@ test('pair, list, stream, type, send, keys — through the relay', { timeout: 12
   await until('mac sees phone output', () => strip(macOut).includes('FROM_PHONE_5'));
   const g1 = await mac.call('terminal.get', { terminal: address });
   assert.deepEqual([g1.cols, g1.rows], [120, 40], 'phone typing must not change the size');
+
+  // --- keys by name (term.press, DESIGN.md「每个 agent 的快捷键」): after what was typed before them,
+  // through herdr-core's terminal.keys. A name the Mac does not take is dropped.
+  notify('term.input', { s, d: 'echo PRESS_' });
+  notify('term.press', { s, keys: ['rm -rf'] });
+  notify('term.press', { s, keys: ['9', 'enter'] });
+  await until('mac sees the pressed keys', () => strip(macOut).includes('PRESS_9\r\n') || /\nPRESS_9/.test(strip(macOut)));
 
   // --- a lot of output: credit keeps flowing (more than the 256 KiB initial window)
   notify('term.input', { s, d: 'yes 0123456789abcdef0123456789abcdef | head -n 20000; echo BULK_DONE\r' });

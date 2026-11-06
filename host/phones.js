@@ -42,7 +42,8 @@ const WHEEL_HELD_MAX = 4096; // characters of held steps (about 400): beyond, th
 const WHEEL_ANSWER_MS = 100; // a step the program has not answered yet holds the next ones this long at most
 // One wheel step, as xterm reports it to a program: SGR, or the old X10 form.
 const WHEEL_RE = /^(?:\x1b\[<6[45];\d{1,4};\d{1,4}M|\x1b\[M[`a][\x20-\xff]{2})$/;
-const KEY_RE = /^(?:(?:ctrl|alt|shift|cmd|super|meta)\+)*(?:[a-z0-9]|enter|esc|escape|tab|backspace|space|delete|del|insert|home|end|pageup|pgup|pagedown|pgdn|up|down|left|right|f(?:[1-9]|1[0-2])|[-=[\]\\;',./`])$/i;
+const PRESS_MS = 3000;
+export const KEY_RE = /^(?:(?:ctrl|alt|shift|cmd|super|meta)\+)*(?:[a-z0-9]|enter|esc|escape|tab|backspace|space|delete|del|insert|home|end|pageup|pgup|pagedown|pgdn|up|down|left|right|f(?:[1-9]|1[0-2])|[-=[\]\\;',./`])$/i;
 
 export function createPhones({ state, pairing, push, terminals, voice, metrics, link: getLink, rtc, log = () => {}, onChange = () => {} }) {
   const peers = new Map(); // cid → peer
@@ -150,6 +151,7 @@ export function createPhones({ state, pairing, push, terminals, voice, metrics, 
     send(peer, {
       type: 'ready', paired, deviceId: device.id, deviceName: device.name, desktopName: state.desktopName,
       vapidPublicKey: push.publicKey, hasPush: Boolean(device.push), voice: voiceOn,
+      keys: true, // term.press: keys by name (DESIGN.md「每个 agent 的快捷键」)
     });
   }
 
@@ -431,6 +433,27 @@ export function createPhones({ state, pairing, push, terminals, voice, metrics, 
     if (stream.held) release(stream); // anything else goes after the steps before it
     write(stream, text, phone, coast);
   }
+  /**
+   * Keys by name (ctrl+enter, alt+m), after what was typed before them: herdr-core's terminal.keys
+   * sends each as the program asked for it (legacy, modifyOtherKeys or kitty; probe/keys.mjs).
+   * DESIGN.md「每个 agent 的快捷键」
+   */
+  function press(stream, keys) {
+    if (!Array.isArray(keys) || !keys.length || keys.length > 8 || !keys.every((k) => typeof k === 'string' && KEY_RE.test(k))) return;
+    if (stream.held) release(stream);
+    stream.inputs = (stream.inputs ?? Promise.resolve()).then(async () => {
+      const channel = await typer(stream);
+      if (channel === null || stream.stopped) return;
+      const [cols, rows] = typerSize(stream); // the device used last leads, as typing does
+      stream.core.send(channel, RESIZE, size(cols, rows));
+      // At most PRESS_MS: a core that never answers must not hold up the typing behind it.
+      let timer;
+      const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('超时')), PRESS_MS); });
+      await Promise.race([stream.core.call('terminal.keys', { terminal: stream.address, keys }), late])
+        .catch((error) => log(`wayne-herdr-mods: 按键 ${keys.join(' ')} 没发出：${error.message}`))
+        .finally(() => clearTimeout(timer));
+    });
+  }
   /** May a wheel step go to the program now: little on its way to the phone, and the last step answered. */
   const wheelMay = (stream) => stream.watch.behind() <= WHEEL_BEHIND && stream.watch.waiting() > WHEEL_ANSWER_MS;
   function retry(stream) {
@@ -513,6 +536,7 @@ export function createPhones({ state, pairing, push, terminals, voice, metrics, 
   function notify(peer, { m, p = {} }) {
     try {
       if (m === 'term.input') { const stream = streamOf(peer, p.s); stopCoast(stream); input(stream, p.d); }
+      else if (m === 'term.press') { const stream = streamOf(peer, p.s); stopCoast(stream); press(stream, p.keys); }
       else if (m === 'term.coast') coast(streamOf(peer, p.s), p);
       else if (m === 'term.fit') refit(streamOf(peer, p.s), p.fit);
       else if (m === 'term.ack') {

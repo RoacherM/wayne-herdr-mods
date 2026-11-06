@@ -20,6 +20,7 @@ import { LiveLine, PASTE_LF, pasteText } from './live-line.js';
 import { MAX_MS, shrinkImage, startRecording, transcribe, upload, voiceSupported } from './voice.js';
 import { createMetrics } from './metrics.js';
 import { progIcon, statusIcon } from './prog-icons.js';
+import { agentKeys, combo, keyOfChar, MODS } from './agent-keys.js';
 
 // Times and kinds of what happens, to the Mac (DESIGN.md「体验记录」). Never content.
 // eslint-disable-next-line no-undef
@@ -392,13 +393,19 @@ function renderSettings() {
 //   Esc            stop the agent (Claude Code, Codex, epi), cancel a question
 //   ← ↑ ↓ →  ⏎     answer a menu: ↑↓ the choice, ←→ the question (Claude Code's tabs), ⏎ pick it
 //   ⇧Tab           Claude Code's mode (plan, accept edits)
+// Then the agent's own shortcuts (agent-keys.js; ^⏎ in Claude Code, ⌥M in agy) and ^ ⌥ ⇧: held for
+// the next key, from the bar or the keyboard (^ then ⏎ is ctrl+enter). Both go by name (term.press).
 // The rest is a swipe away. 粘贴: the phone's clipboard, text or a screenshot. 换行: a new line in
 // the agent's input without sending it. Arrows repeat while held.
+const KEYBAR_FRONT = 8; // Esc … ^C: the agent's keys and the modifiers come after them
 const KEYBAR = [
   ['Esc', '\x1b'], ['←', 'left'], ['↑', 'up'], ['↓', 'down'], ['→', 'right'], ['⏎', '\r'], ['⇧Tab', '\x1b[Z'], ['^C', '\x03'],
   ['Tab', '\t'], ['粘贴', 'paste'], ['换行', PASTE_LF], ['1', '1'], ['2', '2'], ['3', '3'], ['y', 'y'], ['n', 'n'], ['^D', '\x04'], ['^R', '\x12'], ['^L', '\x0c'],
 ];
 const KEY_NAMES = new Map(KEYBAR.map(([label, seq]) => [seq, label])); // what metrics records: the key's name
+// A bar key as a key name, for a combo with ^ ⌥ ⇧ (the others ignore the modifiers).
+const NAME_OF = { '\x1b': 'esc', left: 'left', up: 'up', down: 'down', right: 'right', '\r': 'enter', '\t': 'tab', 1: '1', 2: '2', 3: '3', y: 'y', n: 'n' };
+const MOD_LABELS = { ctrl: '^', alt: '⌥', shift: '⇧' };
 const ARROWS = { up: 'A', down: 'B', right: 'C', left: 'D' };
 const REPEAT = new Set(['up', 'down', 'left', 'right']);
 // A font the phone can read; the Mac's columns are wider than the phone, and the phone pans.
@@ -421,6 +428,11 @@ function openTerm(address) {
   app.term = page;
   const status = { notice: '', uploading: '', composing: '', voice: null }; // what the bubble may say
 
+  // The agent's shortcuts and ^ ⌥ ⇧, when this Mac takes keys by name (an older one: neither).
+  const named = Boolean(app.info?.keys);
+  const mods = new Set();
+  const modBtns = named ? MODS.map((m) => h('button', { class: 'key mod', 'data-label': MOD_LABELS[m], 'aria-pressed': 'false', onClick: () => toggleMod(m) }, MOD_LABELS[m])) : [];
+  const agentBox = h('span', { class: 'agent-keys' });
   // The program as its icon, the one Herdr.app shows (DESIGN.md「图标跟着 Herdr.app」); its name only for screen readers.
   const title = h('span', { class: 'bar-ico', role: 'img' });
   const showWho = (t) => {
@@ -429,6 +441,7 @@ function openTerm(address) {
     if (key === title.dataset.key) return; // an icon only when it changes: the list refreshes often
     title.dataset.key = key ?? '';
     title.replaceChildren(t ? progIcon(t, app.list?.icons) : h('b', {}, address));
+    showAgentKeys(t);
   };
   showWho(t0);
   const sub = h('span', { class: 'status' }, t0?.where ?? address);
@@ -453,11 +466,12 @@ function openTerm(address) {
       h('span', { class: 'icon-btn bar-pad' })), // keeps the title in the middle
     h('div', { class: 'term-stage' }, viewport, bubble, latestBtn),
     h('footer', { class: 'term-foot' },
-      h('div', { class: 'keybar' }, keyBtns),
+      h('div', { class: 'keybar' }, keyBtns.slice(0, KEYBAR_FRONT), agentBox, modBtns, keyBtns.slice(KEYBAR_FRONT)),
       h('div', { class: 'term-actions' }, pickBtn, talkBtn, kbdBtn, keys, picker)));
   fill(root(), screen);
   // Buttons must not take the focus: the keyboard stays up while you press Esc or ⏎.
-  for (const b of [pickBtn, kbdBtn, latestBtn, ...keyBtns]) b.addEventListener('pointerdown', (e) => e.preventDefault());
+  for (const b of [pickBtn, kbdBtn, latestBtn, ...keyBtns, ...modBtns]) keepFocus(b);
+  function keepFocus(b) { b.addEventListener('pointerdown', (e) => e.preventDefault()); }
 
   // ---- the terminal
   const xterm = new Terminal({
@@ -773,8 +787,18 @@ function openTerm(address) {
   keys.addEventListener('compositionupdate', (e) => setStatus('composing', e.data ?? ''));
   keys.addEventListener('compositionend', () => { status.composing = ''; line.compose(false); line.set(keys.value); sync(); });
   keys.addEventListener('input', (e) => { if (e.isComposing) { line.value = keys.value; return; } line.set(keys.value); sync(); });
+  // With ^ ⌥ ⇧ held, the next character typed is a combo, not text (^ then m: ctrl+m).
+  keys.addEventListener('beforeinput', (e) => {
+    if (!mods.size || e.inputType !== 'insertText' || e.isComposing) return;
+    const k = keyOfChar(e.data ?? '');
+    if (!k) return;
+    e.preventDefault();
+    pressNamed(combo(mods, k));
+  });
   keys.addEventListener('keydown', (e) => {
     if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === 'Enter' && mods.size) { e.preventDefault(); pressNamed(combo(mods, 'enter')); return; }
+    if (e.key === 'Enter' && named && (e.ctrlKey || e.altKey)) { e.preventDefault(); pressNamed(combo(new Set([e.ctrlKey && 'ctrl', e.altKey && 'alt', e.shiftKey && 'shift']), 'enter')); return; }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); return; }
     if (e.key === 'Backspace' && !keys.value) { e.preventDefault(); line.backspace(); return; }
     const seq = HW_KEYS[e.key] ?? (e.ctrlKey && !e.metaKey && /^[a-z]$/i.test(e.key) ? String.fromCharCode(e.key.toUpperCase().charCodeAt(0) - 64) : null);
@@ -807,9 +831,9 @@ function openTerm(address) {
    * press until the program draws something (or 3 s): it went out, the answer is on its way.
    */
   let lit = null, litTimer = 0;
-  function pressed(seq) {
+  function pressed(label) {
     answered();
-    lit = keyBtns.find((b) => b.dataset.label === KEY_NAMES.get(seq)) ?? null;
+    lit = [...keyBtns, ...agentBox.children].find((b) => b.dataset.label === label) ?? null;
     lit?.classList.add('sent');
     litTimer = setTimeout(answered, 3000);
   }
@@ -822,14 +846,52 @@ function openTerm(address) {
 
   /** A key: the program owns what went in (Tab may complete it), then the key. */
   function key(seq) {
+    if (mods.size && NAME_OF[seq]) { pressNamed(combo(mods, NAME_OF[seq]), KEY_NAMES.get(seq)); return; }
+    clearMods();
     metrics.op('key', KEY_NAMES.get(seq) ?? '?');
-    pressed(seq);
+    pressed(KEY_NAMES.get(seq));
     if (seq === 'paste') { paste(); return; }
     vibrate(6);
     metrics.typed();
     line.commit(); sync();
     // Arrows as the program asked for them: ESC O A in application mode (vim, less), else ESC [ A.
     out(ARROWS[seq] ? `\x1b${xterm.modes.applicationCursorKeysMode ? 'O' : '['}${ARROWS[seq]}` : seq);
+  }
+
+  /**
+   * Keys by name (ctrl+enter, alt+m): the Mac's herdr-core sends each the way the program asked for
+   * (DESIGN.md「每个 agent 的快捷键」). In order with the typing: what is in the line goes first.
+   */
+  function pressNamed(names, label = null) {
+    const list = [].concat(names);
+    clearMods();
+    metrics.op('key', label ?? list.join(' '));
+    pressed(label);
+    vibrate(6);
+    metrics.typed();
+    line.commit(); sync();
+    toLatest();
+    chain = chain.then(() => { if (page.s) app.link.notify('term.press', { s: page.s, keys: list }); });
+  }
+  function toggleMod(m) {
+    if (mods.has(m)) mods.delete(m); else mods.add(m);
+    showMods();
+  }
+  function clearMods() { if (mods.size) { mods.clear(); showMods(); } }
+  function showMods() {
+    modBtns.forEach((b, i) => { const on = mods.has(MODS[i]); b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
+  }
+  /** The terminal's agent shortcuts, when its program changes (an agent exits: a shell, none). */
+  function showAgentKeys(t) {
+    if (!named) return;
+    const list = agentKeys(t);
+    if (agentBox.list === list) return; // the list refreshes often
+    agentBox.list = list;
+    agentBox.replaceChildren(...list.map(([label, names, what]) => {
+      const b = h('button', { class: 'key', 'data-label': label, title: what, 'aria-label': `${label} ${what}`, onClick: () => pressNamed(names, label) }, label);
+      keepFocus(b);
+      return b;
+    }));
   }
 
   /**

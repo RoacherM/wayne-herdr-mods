@@ -1,5 +1,5 @@
 // The key bar, as an iPhone, against dev/fake-desktop.mjs: what each key sends (a raw reader prints it),
-// what fits without scrolling the bar, 粘贴, and an arrow held down.
+// what fits without scrolling the bar, 粘贴, an arrow held down, and combos with ^ ⌥ ⇧.
 //   npm run build; npm run relay:dev; node dev/fake-desktop.mjs > /tmp/fake.log &
 //   node dev/keys-smoke.mjs "<pairing link>"
 import { writeFileSync } from 'node:fs';
@@ -102,6 +102,17 @@ await pause(400);
 await endCat();
 const m = ((await raw()) ?? '').split('\x1b[B').length - 1;
 check('sliding the bar sideways from ↓ sends nothing', m === 0, `${m} times`);
+
+// ^ ⌥ ⇧ are held for the next key (DESIGN.md「每个 agent 的快捷键」); herdr-core encodes the combo.
+// The raw reader asked for no keyboard mode: the legacy bytes.
+await fresh();
+await tap('^'); await tap('⏎');
+await tap('⌥'); await page.keyboard.type('m');
+await tap('^'); await tap('⇧'); await tap('↑');
+await tap('1'); // the modifiers let go after one key
+await endCat();
+got = await raw();
+check('^ ⏎, ⌥ m, ^ ⇧ ↑: combos by name', got === '\x1b[27;5;13~\x1bm\x1b[1;6A1', JSON.stringify(got));
 
 await browser.close();
 console.log(fail ? `${fail} FAILED` : 'ALL PASS');
