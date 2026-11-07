@@ -233,8 +233,8 @@ test/        npm test：单测 + host.live.test.mjs（全链路，自己起临�
 dev/         需先起东西的冒烟与跑分：fake-desktop.mjs（假 Mac）、*-smoke.mjs（无头 iPhone）、bench.mjs
 probe/       herdr-core 行为探针：hc.mjs（分帧客户端）、sync.mjs、create.mjs、credit-window.mjs、wheel-batch.mjs
 bench/       results.jsonl：每次跑分每条路径一行，带 commit（report.html 不提交）
-ios/         原型，已停：nsh 写的原生 App 第 0 步（见「原生 App（nsh）」），不再往前做
-shell/ios/   原型：WKWebView 薄壳 + install.sh（免费 Apple ID 7 天），方向见 docs/native-app.html（I-004）
+ios/         nsh 原生 Herdr iOS App（App.tsx + host/ Swift 宿主，见「原生 App（nsh）」）
+shell/ios/   原型：WKWebView 薄壳 + install.sh（已停）
 docs/        issues/（待办队列）、native-app.html（I-004 的设计原型）
 .scratch/    排查数据、临时截图（不提交）
 ```
@@ -493,7 +493,7 @@ A 部分在 `HC_SESSION=relay-probe` 的独立 core 里自己开一个 `/bin/sh`
 >   2. **键盘栏与输入区对齐网页版**（`ios/App.tsx`）：最新键盘栏顺序（`Esc ← ↑ ↓ → ⏎ ⇧Tab ^C` + 每个 agent 专属快捷键 `agent-keys.js` + `^ ⌥ ⇧` 修饰键组合 `term.press` + `Tab 粘贴 换行 1 2 3 y n ^D ^R ^L`）、按下的键亮黄框直到程序重画、剪贴板文字/截图粘贴、`blocked` 时按光标显隐（`cursorHidden`）决定是否暂存打字（点顶部黄条立即放行）、右侧显式「键盘 / 收起」按钮（`Keyboard.dismiss()`）。
 >   3. **Swift 宿主能力**（`ios/host/Sources/App.swift`）：`voice.start / stop / cancel`（`AVAudioRecorder` 16 kHz 单声道 AAC `.m4a`，分块 `upload.put` + `voice.done` 调 Mac 火山极速版识别）、`qr.scan`（`AVCaptureSession` 原生扫码弹窗）、`haptic`（轻触震动）；`nsh.json` 显式声明 `capabilities.host: ["voice.*", "qr.*", "haptic"]`；监听 `lifecycle()` 在回前台时立即 `wake()` 重连并恢复 `term.fit`，切后台时释放终端尺寸主导权。
 >   4. **多台 Mac 切换**（`ios/src/conn.ts` + `ios/App.tsx`）：`Storage["herdr-relay"]` 保存 `desktops: Saved[]`（兼容单台旧格式，跨 Mac 复用同一把设备密钥），首页顶栏胶囊与设置页可一键切换已配对 Mac 或「配对另一台 Mac」。
->   5. **真机安装**：已通过 `ios/host/install.sh` 签名并装入真 iPhone（`com.roacherm.herdr`），待用户在手机「设置 ▸ 通用 ▸ VPN 与设备管理」点信任后真机核验。
+>   5. **真机验证（2026-11-07）**：已通过 `ios/host/install.sh` 签名并装入真 iPhone（`com.roacherm.herdr`），真机配对上线（设备 `04ab271d Herdr iPhone`）并成功从原生 App 向本机终端发送消息。
 >
 > 2026-11-06 的方向（已被上面替代）见 [docs/native-app.html](docs/native-app.html)（I-004）：
 > - 推送：设备一直「推送关」，因为手机页只在 Chrome 标签页里用（7 天 1790 条指标全是 `standalone: false`）。iOS 只给主屏幕 Web App 推送。先用主屏幕 Web App + 现有 Web Push（0 元）。

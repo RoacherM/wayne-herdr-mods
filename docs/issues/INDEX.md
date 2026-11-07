@@ -22,7 +22,6 @@ Agent 自动处理规则：只认领 `Ready` 栏的条目；修完用 `git commi
 
 | ID | 领域 | 标题 | 现状 |
 |---|---|---|---|
-| [I-004](I-004-ios-native-app.md) | 独立 App | nsh 原生 Herdr iOS App（免费账号，不上架） | 全功能已迁入并装上真机；待手机信任开发者证书后配对核验 |
 
 ## 3. External Blocked / Ops Approval（跨仓阻塞或需本机配置授权）
 
@@ -39,4 +38,5 @@ Agent 自动处理规则：只认领 `Ready` 栏的条目；修完用 `git commi
 
 | ID | 领域 | 标题 | Commit | 测试 | 日期 |
 |---|---|---|---|---|---|
+| I-004 | `ios` | nsh 原生 Herdr iOS App（免费账号，不上架） | `82a83dd` | `nsh test App.test.tsx` + 真机 iPhone | 2026-11-07 |
 | I-000 | `herdr-app` | `my-files` 文件树/预览复制与 Markdown 半透明选区修复 | `50bfd18` | `herdr-app check` | 2026-11-05 |

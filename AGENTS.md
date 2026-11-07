@@ -15,7 +15,7 @@
 | `dev/` | 无头 Chrome 冒烟（`*-smoke.mjs`）、`fake-desktop.mjs`、`bench.mjs`、`asks.mjs` | 需要起无头浏览器、假桌面或跑分吗？文件第 1 行写明前置条件 |
 | `probe/` | `herdr-core` 行为探针（`sync.mjs` 等） | 是在验证外部二进制/协议的未知行为吗？ |
 | `bench/` | 跑分数据（`results.jsonl`） | 只放跑分结果数据，不放脚本 |
-| `ios/` | nsh 原生 Herdr iOS App：`App.tsx` 界面 + `host/` Swift 宿主（I-004，进行中） | 代码跑在原生 App 里吗？网页版功能仍做进 `app/` |
+| `ios/` | nsh 原生 Herdr iOS App：`App.tsx` 界面 + `host/` Swift 宿主（已实现） | 代码跑在原生 App 里吗？网页版功能仍做进 `app/` |
 | `shell/ios/` | WKWebView 薄壳（已停） | 只留作参考 |
 | `.scratch/` | 排查数据、临时截图、一次性审计输出（已 gitignore） | 是一次性产物吗？严禁放进 `docs/` |
 
