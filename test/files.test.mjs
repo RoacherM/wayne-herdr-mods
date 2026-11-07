@@ -39,26 +39,32 @@ test('roots, list, path sandboxing, text/image/video open and 64KB slice streami
   await writeFile(join(outsideDir, 'secret.txt'), 'top-secret');
   await symlink(join(outsideDir, 'secret.txt'), join(workspaceDir, 'escape-link.txt'));
 
+  const otherDir = join(baseDir, 'storyforge');
+  await mkdir(otherDir, { recursive: true });
+  await writeFile(join(otherDir, 'wrong.txt'), 'other session');
+
   const fakeTerminals = {
-    layout: () => [{ id: 's1', name: 'herdr-relay', folder: workspaceDir, tabs: [{ id: 'tab1', terminals: ['t1'] }] }],
-    list: () => [{ address: 't1', cwd: workspaceDir }],
-    get: () => ({ address: 't1', cwd: workspaceDir }),
+    layout: () => [{ id: 's1', name: 'herdr-relay', folder: null, tabs: [{ id: 'tab0', terminals: ['t0'] }, { id: 'tab1', terminals: ['t1'] }] }],
+    list: () => [{ address: 't0', cwd: otherDir }, { address: 't1', cwd: workspaceDir }],
+    get: (addr) => (addr === 't0' ? { address: 't0', cwd: otherDir } : { address: 't1', cwd: workspaceDir }),
   };
 
   const files = createFiles({ dir: dataDir, terminals: fakeTerminals });
 
   try {
-    // 1. Roots discovery (UI roots deduplicated, and term:<addr> canonicalizes to space root)
+    // 1. Roots discovery and per-terminal cwd isolation (`term:t1` resolves t1's own cwd, not t0's)
     const { roots } = await files.roots();
-    assert.equal(roots.length, 1);
-    assert.equal(roots[0].id, 's1');
-    assert.equal(roots[0].name, 'herdr-relay');
+    assert.equal(roots.length, 2);
     const byTermRoot = await files.list({ rootId: 'term:t1', path: '' });
-    assert.equal(byTermRoot.rootId, 's1');
+    assert.equal(byTermRoot.rootId, 'term:t1');
+    assert.equal(byTermRoot.rootName, 'workspace');
     assert.equal(byTermRoot.items.length, 2);
+    assert.ok(byTermRoot.marks && typeof byTermRoot.marks === 'object');
+    const panelRes = await files.panel({ rootId: 'term:t1', address: 't1', open: true });
+    assert.equal(panelRes.ok, true);
 
     // 2. Directory listing (folders first, hides .git, .DS_Store, and outside symlinks)
-    const rootList = await files.list({ rootId: 's1', path: '' });
+    const rootList = await files.list({ rootId: 'term:t1', path: '' });
     assert.deepEqual(
       rootList.items.map((i) => ({ name: i.name, dir: i.dir, kind: i.kind })),
       [
@@ -68,20 +74,20 @@ test('roots, list, path sandboxing, text/image/video open and 64KB slice streami
     );
 
     // 3. Path traversal & .git rejection
-    await assert.rejects(() => files.list({ rootId: 's1', path: '../outside' }), /不允许访问/);
-    await assert.rejects(() => files.open({ rootId: 's1', path: '../outside/secret.txt' }), /不允许访问/);
-    await assert.rejects(() => files.open({ rootId: 's1', path: '.git/config' }), /不允许访问/);
-    await assert.rejects(() => files.open({ rootId: 's1', path: 'escape-link.txt' }), /超出工作区范围/);
+    await assert.rejects(() => files.list({ rootId: 'term:t1', path: '../outside' }), /不允许访问/);
+    await assert.rejects(() => files.open({ rootId: 'term:t1', path: '../outside/secret.txt' }), /不允许访问/);
+    await assert.rejects(() => files.open({ rootId: 'term:t1', path: '.git/config' }), /不允许访问/);
+    await assert.rejects(() => files.open({ rootId: 'term:t1', path: 'escape-link.txt' }), /超出工作区范围/);
 
     // 4. Markdown / text open + truncation
-    const md = await files.open({ rootId: 's1', path: 'README.md' });
+    const md = await files.open({ rootId: 'term:t1', path: 'README.md' });
     assert.equal(md.kind, 'md');
     assert.equal(md.truncated, false);
     assert.match(md.text, /# Hello Herdr/);
 
     const bigText = 'A'.repeat(MAX_TEXT_BYTES + 5000);
     await writeFile(join(workspaceDir, 'big.log'), bigText);
-    const openedBig = await files.open({ rootId: 's1', path: 'big.log' });
+    const openedBig = await files.open({ rootId: 'term:t1', path: 'big.log' });
     assert.equal(openedBig.kind, 'text');
     assert.equal(openedBig.truncated, true);
     assert.equal(openedBig.text.length, MAX_TEXT_BYTES);
@@ -92,7 +98,7 @@ test('roots, list, path sandboxing, text/image/video open and 64KB slice streami
     // Copy a real PNG inside workspace
     const { copyFile } = await import('node:fs/promises');
     await copyFile(samplePng, join(workspaceDir, 'screen.png'));
-    const img = await files.open({ rootId: 's1', path: 'screen.png' });
+    const img = await files.open({ rootId: 'term:t1', path: 'screen.png' });
     assert.equal(img.kind, 'image');
     assert.ok(img.previewId);
     assert.ok(img.total > 0);
@@ -124,8 +130,8 @@ test('roots, list, path sandboxing, text/image/video open and 64KB slice streami
       sampleMp4,
     ]);
     const [vid, vid2] = await Promise.all([
-      files.open({ rootId: 's1', path: 'clip.mp4' }),
-      files.open({ rootId: 's1', path: 'clip.mp4' }),
+      files.open({ rootId: 'term:t1', path: 'clip.mp4' }),
+      files.open({ rootId: 'term:t1', path: 'clip.mp4' }),
     ]);
     assert.equal(vid.kind, 'video');
     assert.equal(vid.previewId, vid2.previewId);
@@ -140,7 +146,7 @@ test('roots, list, path sandboxing, text/image/video open and 64KB slice streami
     // 7. Symlink-swap after open is blocked at slice time
     const binPath = join(workspaceDir, 'swap.bin');
     await writeFile(binPath, Buffer.from([0x00, 0x01, 0x02, 0x03]));
-    const openedBin = await files.open({ rootId: 's1', path: 'swap.bin' });
+    const openedBin = await files.open({ rootId: 'term:t1', path: 'swap.bin' });
     assert.equal(openedBin.kind, 'binary');
     await rm(binPath);
     await symlink(join(outsideDir, 'secret.txt'), binPath);

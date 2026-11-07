@@ -13,6 +13,7 @@ import { PROG_ICONS } from "./src/prog-icons";
 import { TERM_HTML } from "./src/term-html";
 import { LiveLine, PASTE_LF, pasteText } from "../app/src/live-line.js";
 import { agentKeys, combo, keyOfChar, MODS } from "../app/src/agent-keys.js";
+import chevronDownIcon from "./assets/chevron-down.svg";
 import chevronIcon from "./assets/chevron.svg";
 import docIosIcon from "./assets/doc-ios.png";
 import downIcon from "./assets/down.svg";
@@ -34,7 +35,7 @@ import videoIcon from "./assets/video.svg";
 type Route =
   | { name: "home" }
   | { name: "term"; address: string }
-  | { name: "files"; rootId?: string; path?: string; title?: string }
+  | { name: "files"; rootId?: string; address?: string; path?: string; title?: string }
   | { name: "preview"; rootId: string; path: string; title: string }
   | { name: "settings" };
 const nav = createNavStack<Route>([{ name: "home" }]);
@@ -281,29 +282,12 @@ function Group(props: { title: string; items: GroupItem[]; space?: Space; needs?
       nav.push({ name: "term", address });
     } catch (e: any) { problem.set(e.message); } finally { adding.set(false); }
   }
-  const firstTerm = props.items.find((x): x is { kind: "term"; t: Terminal; firstAfterLabel: boolean } => x.kind === "term")?.t;
-  const groupRootId = props.space?.id ?? (firstTerm ? `term:${firstTerm.address}` : "");
-  function openFiles() {
-    tapHaptic();
-    nav.push({ name: "files", rootId: groupRootId || undefined, path: "", title: props.title });
-  }
   return (
     <View class="gap-2">
       <View class="min-h-8 flex-row items-center gap-2 px-1">
         <Text class={`flex-1 text-[13px] font-medium ${props.needs ? "text-foreground" : "text-muted-foreground"}`} style={{ numberOfLines: 1 }}>
           {props.title}
         </Text>
-        {groupRootId ? (
-          <Button
-            onPress={openFiles}
-            class="h-8 flex-row items-center gap-1.5 rounded-full bg-card px-3 active:bg-secondary"
-            testID={`files-${groupRootId}`}
-            accessibilityLabel="浏览文件"
-          >
-            <Image src={folderIosIcon} style={{ width: 17, height: 17 }} />
-            <Text class="text-[12.5px] font-medium text-card-foreground">文件</Text>
-          </Button>
-        ) : null}
         {props.space ? (
           <Button onPress={add} disabled={adding()} class="h-8 w-8 items-center justify-center rounded-full bg-card active:bg-secondary" testID={`add-${props.space.id}`} accessibilityLabel="新建终端">
             <Icon src={plusIcon} size={16} class="tint-muted-foreground" />
@@ -1024,23 +1008,37 @@ function TermScreen(props: { address: string }) {
   });
 
   const voiceOk = computed(() => Boolean(info()?.voice) && host.available());
-  const spaceIdForTerm = computed(() => {
-    for (const sp of list().layout) {
-      if (sp.tabs.some((tab) => tab.terminals.includes(address))) return sp.id;
-    }
-    return `term:${address}`;
-  });
 
   return (
     <NavPage
       title={title()}
       headerStyle={{ backgroundColor: DARK.bar, color: "#f2f2f7", tintColor: DARK.tint }}
       statusBar={{ foreground: "light" }}
+      ios={{ headerRightSymbol: "folder" }}
       headerTitle={
         <View class="items-center gap-0.5" accessibilityLabel={title()}>
           <ProgIcon t={term()} size={20} dark />
           <Text class="text-[12px] text-[#8d8d93]" style={{ numberOfLines: 1 }}>{subtitle()}</Text>
         </View>
+      }
+      headerRight={
+        <Button
+          onPress={() => {
+            tapHaptic();
+            nav.push({
+              name: "files",
+              rootId: `term:${address}`,
+              address,
+              path: "",
+              title: base(term()?.cwd) || title(),
+            });
+          }}
+          class="h-9 w-9 items-center justify-center rounded-full"
+          testID="term-files"
+          accessibilityLabel="文件树"
+        >
+          <Icon src={folderIcon} size={18} color="#f2f2f7" />
+        </Button>
       }
     >
       <View class="flex-1 bg-[#0b0b0c] pb-[env(keyboard-inset-height)]">
@@ -1124,14 +1122,6 @@ function TermScreen(props: { address: string }) {
               <Icon src={plusIcon} size={21} color="#aeaeb2" />
             </Button>
             <Button
-              onPress={() => { tapHaptic(); nav.push({ name: "files", rootId: spaceIdForTerm(), path: "", title: base(term()?.cwd) || title() }); }}
-              class="h-10 w-10 items-center justify-center rounded-full bg-[#2c2c2e] active:bg-[#48484a]"
-              testID="term-files"
-              accessibilityLabel="浏览工作区文件"
-            >
-              <Image src={folderWhiteIcon} style={{ width: 20, height: 20 }} />
-            </Button>
-            <Button
               disabled={voiceState() === "busy"}
               onPressDown={() => startVoice()}
               onPressUp={() => { if (voiceState() === "rec") stopVoice(false); }}
@@ -1203,35 +1193,88 @@ function fileEntryIconFor(kind: string, dir: boolean) {
   return docIosIcon;
 }
 
-function FilesScreen(props: { rootId?: string; path?: string; title?: string }) {
-  const roots = signal<RootEntry[]>([]);
-  const activeRoot = signal<string>(props.rootId ?? "");
-  const curPath = signal<string>(props.path ?? "");
-  const rootName = signal<string>(props.title ?? "文件");
-  const items = signal<FileEntry[]>([]);
+type TreeRow = {
+  item: FileEntry;
+  depth: number;
+  isOpen: boolean;
+  isLoading: boolean;
+  mark: string;
+  hasChangedChildren: boolean;
+};
+
+const MARK_COLOR: Record<string, string> = {
+  M: "text-[#f5a623]",
+  A: "text-[#32d74b]",
+  D: "text-[#ff453a]",
+  U: "text-[#ff453a]",
+};
+
+function dirHasChanges(dirRel: string, m: Record<string, string>) {
+  const prefix = `${dirRel}/`;
+  for (const k of Object.keys(m)) {
+    if (k === dirRel || k.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
+function FilesScreen(props: { rootId?: string; address?: string; path?: string; title?: string }) {
+  const activeRoot = signal<string>(props.rootId || (props.address ? `term:${props.address}` : ""));
+  const rootName = signal<string>(props.title ?? "Files");
+  const dirMap = signal<Record<string, FileEntry[]>>({});
+  const expanded = signal<string[]>([]);
+  const loadingDirs = signal<Record<string, boolean>>({});
+  const marks = signal<Record<string, string>>({});
+  const onlyChanged = signal<boolean>(false);
   const loading = signal<boolean>(true);
   const err = signal<string>("");
   let initialTriggered = false;
+  let closedOnMac = false;
 
-  async function loadDir(rId: string, p: string) {
+  function closePanelOnMac() {
+    if (closedOnMac) return;
+    closedOnMac = true;
+    rpc("files.panel", {
+      address: props.address,
+      rootId: activeRoot() || undefined,
+      open: false,
+    }).catch(() => {});
+  }
+
+  function syncTreeToMac(nextFolders: string[], nextOnlyChanged: boolean) {
+    rpc("files.panel", {
+      address: props.address,
+      rootId: activeRoot() || undefined,
+      folders: nextFolders,
+      onlyChanged: nextOnlyChanged,
+    }).catch(() => {});
+  }
+
+  async function loadRoot(rId: string) {
     if (status() !== "ready") return;
     loading.set(true);
     err.set("");
     try {
-      let curRoots = roots();
-      if (!curRoots.length) {
-        const rr = (await rpc("files.roots", {}, 15_000)) as { roots: RootEntry[] };
-        curRoots = rr.roots ?? [];
-        roots.set(curRoots);
-        if (!rId && curRoots.length) rId = curRoots[0].id;
-      }
-      const res = (await rpc("files.list", { rootId: rId || undefined, path: p }, 20_000)) as {
-        rootId: string; rootName: string; path: string; items: FileEntry[];
+      const res = (await rpc("files.list", {
+        rootId: rId || undefined,
+        path: "",
+        syncPanel: true,
+        address: props.address,
+      }, 20_000)) as {
+        rootId: string;
+        rootName: string;
+        path: string;
+        items: FileEntry[];
+        marks?: Record<string, string>;
+        expandedFolders?: string[];
+        subfolders?: Record<string, FileEntry[]>;
       };
       activeRoot.set(res.rootId);
-      curPath.set(res.path);
-      rootName.set(res.rootName || "工作区");
-      items.set(res.items ?? []);
+      rootName.set(res.rootName || props.title || "Files");
+      dirMap.set({ "": res.items ?? [], ...(res.subfolders ?? {}) });
+      marks.set(res.marks ?? {});
+      if (Array.isArray(res.expandedFolders) && res.expandedFolders.length) {
+        expanded.set(res.expandedFolders);
+      }
     } catch (e: any) {
       err.set(e.message || "无法读取目录");
     } finally {
@@ -1239,54 +1282,156 @@ function FilesScreen(props: { rootId?: string; path?: string; title?: string }) 
     }
   }
 
+  async function toggleFolder(relPath: string) {
+    tapHaptic();
+    const cur = expanded();
+    if (cur.includes(relPath)) {
+      const next = cur.filter((p) => p !== relPath);
+      expanded.set(next);
+      syncTreeToMac(next, onlyChanged());
+      return;
+    }
+    const next = [...cur, relPath];
+    expanded.set(next);
+    syncTreeToMac(next, onlyChanged());
+
+    if (!dirMap()[relPath] && !loadingDirs()[relPath]) {
+      loadingDirs.set({ ...loadingDirs(), [relPath]: true });
+      try {
+        const res = (await rpc("files.list", {
+          rootId: activeRoot() || undefined,
+          path: relPath,
+        }, 20_000)) as { items: FileEntry[] };
+        dirMap.set({ ...dirMap(), [relPath]: res.items ?? [] });
+      } catch (e: any) {
+        err.set(e.message || "无法展开子目录");
+      } finally {
+        const nextLoading = { ...loadingDirs() };
+        delete nextLoading[relPath];
+        loadingDirs.set(nextLoading);
+      }
+    }
+  }
+
+  function setFilterMode(changedOnly: boolean) {
+    if (onlyChanged() === changedOnly) return;
+    tapHaptic();
+    onlyChanged.set(changedOnly);
+    let nextExp = expanded();
+    if (changedOnly) {
+      const autoSet = new Set(nextExp);
+      for (const p of Object.keys(marks())) {
+        const parts = p.split("/");
+        let cur = "";
+        for (let i = 0; i < parts.length - 1; i++) {
+          cur = cur ? `${cur}/${parts[i]}` : parts[i];
+          autoSet.add(cur);
+        }
+      }
+      nextExp = [...autoSet];
+      expanded.set(nextExp);
+    }
+    syncTreeToMac(nextExp, changedOnly);
+  }
+
   effect(() => {
     if (status() === "ready" && !initialTriggered) {
       initialTriggered = true;
-      loadDir(props.rootId ?? "", props.path ?? "");
+      loadRoot(activeRoot());
     }
   });
 
-  const segments = computed(() => {
-    const p = curPath();
-    return p ? p.split("/").filter(Boolean) : [];
+  cleanup(() => {
+    const stillInFiles = nav.stack().some((r) => r.name === "files" || r.name === "preview");
+    if (!stillInFiles) closePanelOnMac();
   });
 
-  const pageTitle = computed(() => {
-    const segs = segments();
-    return segs.length ? segs[segs.length - 1] : rootName();
+  const changedCount = computed(() => Object.keys(marks()).length);
+
+  const treeRows = computed<TreeRow[]>(() => {
+    const map = dirMap();
+    const exp = expanded();
+    const busy = loadingDirs();
+    const m = marks();
+    const filterChanged = onlyChanged();
+    const out: TreeRow[] = [];
+
+    function walk(dirRel: string, depth: number) {
+      const list = map[dirRel] ?? [];
+      for (const item of list) {
+        const hasChg = item.dir ? dirHasChanges(item.path, m) : Boolean(m[item.path]);
+        if (filterChanged && !hasChg) continue;
+        const isOpen = item.dir && exp.includes(item.path);
+        const isLoading = Boolean(item.dir && busy[item.path]);
+        const mark = item.dir ? "" : (m[item.path] ?? "");
+        out.push({ item, depth, isOpen, isLoading, mark, hasChangedChildren: item.dir && hasChg });
+        if (isOpen && map[item.path]) {
+          walk(item.path, depth + 1);
+        }
+      }
+    }
+
+    walk("", 0);
+    return out;
   });
 
   return (
-    <NavPage title={pageTitle()} headerClass="bg-background">
-      <Scroll class="flex-1 bg-background" contentClass="gap-4 px-4 pt-2 pb-10">
-        {!curPath() && roots().length > 1 ? (
-          <Scroll horizontal scrollbar={false} class="flex-none" contentClass="flex-row items-center gap-2">
-            {roots().map((r) => {
-              const on = r.id === activeRoot();
-              return (
-                <Button
-                  onPress={() => { tapHaptic(); loadDir(r.id, ""); }}
-                  class={`h-9 flex-row items-center gap-2 rounded-full px-4 active:opacity-80 ${on ? "bg-primary" : "bg-card"}`}
-                >
-                  <Image src={on ? folderWhiteIcon : folderIosIcon} style={{ width: 17, height: 17 }} />
-                  <Text class={`text-[14px] font-medium ${on ? "text-primary-foreground" : "text-card-foreground"}`}>{r.name}</Text>
-                </Button>
-              );
-            })}
-          </Scroll>
-        ) : null}
-
-        {/* Breadcrumb bar when inside a subfolder */}
-        {curPath() ? (
-          <Scroll horizontal scrollbar={false} class="flex-none" contentClass="flex-row items-center gap-1.5 px-1">
-            <View class="flex-row items-center gap-1.5 rounded-full bg-card px-3 py-1.5">
-              <Image src={folderIosIcon} style={{ width: 15, height: 15 }} />
-              <Text class="font-mono text-[12.5px] text-muted-foreground" style={{ numberOfLines: 1 }}>
-                {rootName()} / {curPath()}
+    <NavPage
+      title={rootName()}
+      headerClass="bg-background"
+      ios={{ headerRightSymbol: "folder.fill" }}
+      headerRight={
+        <Button
+          onPress={() => {
+            tapHaptic();
+            closePanelOnMac();
+            nav.pop();
+          }}
+          class="h-9 w-9 items-center justify-center rounded-full"
+          testID="files-close"
+          accessibilityLabel="收起文件树"
+        >
+          <Icon src={folderIcon} size={18} class="tint-foreground" />
+        </Button>
+      }
+    >
+      <Scroll class="flex-1 bg-background" contentClass="gap-3 px-4 pt-2 pb-10">
+        {/* Mac my-files style header bar: Files + current session folder + All / Changed filter */}
+        <View class="flex-row items-center justify-between gap-2 px-1">
+          <View class="flex-1 flex-row items-center gap-2">
+            <Image src={folderIosIcon} style={{ width: 18, height: 18 }} />
+            <Text class="text-[13px] font-semibold text-foreground" style={{ numberOfLines: 1 }}>
+              {rootName()}
+            </Text>
+            {changedCount() > 0 ? (
+              <View class="rounded-full bg-[#f5a623]/15 px-2 py-0.5">
+                <Text class="font-mono text-[11px] font-semibold text-[#f5a623]" style={{ fontVariant: ["tabular-nums"] }}>
+                  {changedCount()} 变更
+                </Text>
+              </View>
+            ) : null}
+          </View>
+          <View class="flex-row items-center rounded-full bg-card p-0.5">
+            <Button
+              onPress={() => setFilterMode(false)}
+              class={`rounded-full px-3 py-1 ${!onlyChanged() ? "bg-secondary" : ""}`}
+              testID="files-filter-all"
+            >
+              <Text class={`text-[12px] font-medium ${!onlyChanged() ? "text-foreground" : "text-muted-foreground"}`}>
+                All
               </Text>
-            </View>
-          </Scroll>
-        ) : null}
+            </Button>
+            <Button
+              onPress={() => setFilterMode(true)}
+              class={`rounded-full px-3 py-1 ${onlyChanged() ? "bg-secondary" : ""}`}
+              testID="files-filter-changed"
+            >
+              <Text class={`text-[12px] font-medium ${onlyChanged() ? "text-foreground" : "text-muted-foreground"}`}>
+                Changed
+              </Text>
+            </Button>
+          </View>
+        </View>
 
         {err() ? (
           <View class="rounded-2xl bg-bad/15 px-4 py-3">
@@ -1296,39 +1441,69 @@ function FilesScreen(props: { rootId?: string; path?: string; title?: string }) 
 
         {loading() ? (
           <View class="items-center justify-center rounded-[20px] bg-card py-10">
-            <Text class="text-[14px] text-muted-foreground">正在读取目录…</Text>
+            <Text class="text-[14px] text-muted-foreground">正在同步目录树…</Text>
           </View>
-        ) : items().length ? (
+        ) : treeRows().length ? (
           <View class="overflow-hidden rounded-[20px] bg-card">
-            {items().map((item, i) => (
+            {treeRows().map((row, i) => (
               <Button
                 onPress={() => {
-                  tapHaptic();
-                  if (item.dir) {
-                    nav.push({ name: "files", rootId: activeRoot(), path: item.path, title: item.name });
+                  if (row.item.dir) {
+                    toggleFolder(row.item.path);
                   } else {
-                    nav.push({ name: "preview", rootId: activeRoot(), path: item.path, title: item.name });
+                    tapHaptic();
+                    nav.push({ name: "preview", rootId: activeRoot(), path: row.item.path, title: row.item.name });
                   }
                 }}
-                class={`min-h-13 flex-row items-center gap-3 px-4 py-3 active:bg-secondary ${i === 0 ? "" : "border-t border-separator"}`}
-                testID={`file-${item.name}`}
+                style={{ paddingLeft: 12 + row.depth * 18, paddingRight: 14 }}
+                class={`min-h-11 flex-row items-center gap-2.5 py-2.5 active:bg-secondary ${i === 0 ? "" : "border-t border-separator"}`}
+                testID={`file-${row.item.path}`}
               >
-                <Image src={fileEntryIconFor(item.kind, item.dir)} style={{ width: 22, height: 22 }} />
+                {row.item.dir ? (
+                  <Icon
+                    src={row.isOpen ? chevronDownIcon : chevronIcon}
+                    size={12}
+                    class="tint-muted-foreground"
+                  />
+                ) : (
+                  <View style={{ width: 12 }} />
+                )}
+                <Image src={fileEntryIconFor(row.item.kind, row.item.dir)} style={{ width: 19, height: 19 }} />
                 <View class="flex-1">
-                  <Text class="text-[15px] font-medium text-card-foreground" style={{ numberOfLines: 1 }}>{item.name}</Text>
+                  <Text
+                    class={`text-[14.5px] ${row.item.dir ? "font-medium text-card-foreground" : "text-card-foreground"}`}
+                    style={{ numberOfLines: 1 }}
+                  >
+                    {row.item.name}
+                  </Text>
                 </View>
-                {!item.dir ? (
-                  <Text class="font-mono text-[12px] text-muted-foreground" style={{ fontVariant: ["tabular-nums"] }}>
-                    {fmtBytes(item.size)}
+                {row.isLoading ? (
+                  <Text class="text-[11px] text-muted-foreground">…</Text>
+                ) : null}
+                {row.item.dir && !row.isOpen && row.hasChangedChildren ? (
+                  <View class="h-1.5 w-1.5 rounded-full bg-[#f5a623]" />
+                ) : null}
+                {!row.item.dir && row.mark ? (
+                  <Text
+                    class={`font-mono text-[12px] font-bold ${MARK_COLOR[row.mark] ?? "text-[#f5a623]"}`}
+                    style={{ fontVariant: ["tabular-nums"] }}
+                  >
+                    {row.mark}
                   </Text>
                 ) : null}
-                <Icon src={chevronIcon} size={14} class="tint-muted-foreground" />
+                {!row.item.dir ? (
+                  <Text class="font-mono text-[11.5px] text-muted-foreground" style={{ fontVariant: ["tabular-nums"] }}>
+                    {fmtBytes(row.item.size)}
+                  </Text>
+                ) : null}
               </Button>
             ))}
           </View>
         ) : (
           <View class="items-center justify-center rounded-[20px] bg-card py-8">
-            <Text class="text-[14px] text-muted-foreground">这个文件夹是空的</Text>
+            <Text class="text-[14px] text-muted-foreground">
+              {onlyChanged() ? "当前没有未提交的变更文件" : "这个文件夹是空的"}
+            </Text>
           </View>
         )}
       </Scroll>
@@ -1614,7 +1789,7 @@ function App() {
           ) : route.name === "settings" ? (
             <SettingsScreen />
           ) : route.name === "files" ? (
-            <FilesScreen rootId={route.rootId} path={route.path} title={route.title} />
+            <FilesScreen rootId={route.rootId} address={route.address} path={route.path} title={route.title} />
           ) : route.name === "preview" ? (
             <PreviewScreen rootId={route.rootId} path={route.path} title={route.title} />
           ) : (

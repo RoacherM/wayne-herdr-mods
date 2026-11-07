@@ -12,7 +12,8 @@
  */
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, open as fsOpen, readdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
+import { mkdir, open as fsOpen, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { basename, extname, join, relative, resolve, sep } from 'node:path';
 
 export const MAX_SLICE_BYTES = 64 * 1024;
@@ -46,8 +47,9 @@ const MIME_BY_EXT = {
 
 const EXEC_ENV = {
   ...process.env,
-  PATH: `/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${process.env.PATH ?? ''}`,
+  PATH: `${join(homedir(), '.local', 'bin')}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${process.env.PATH ?? ''}`,
 };
+const HERDR_APP_HOME = process.env.HERDR_APP_HOME || join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'herdr-app');
 
 function runBin(bin, args, timeout = 30_000) {
   return new Promise((res, rej) => {
@@ -82,7 +84,7 @@ function isInsideRoot(target, root) {
   return target === root || target.startsWith(root + sep);
 }
 
-export function createFiles({ dir, terminals, extraRoots = [], log = () => {} }) {
+export function createFiles({ dir, terminals, extraRoots = [], syncApp = false, log = () => {} }) {
   const cacheDir = join(dir, 'cache', 'previews');
   const previews = new Map(); // previewId -> { filePath, rootReal, mime, name, total, createdAt }
   const inFlight = new Map(); // key -> Promise
@@ -131,11 +133,12 @@ export function createFiles({ dir, terminals, extraRoots = [], log = () => {} })
 
     for (const t of list) {
       const rawT = terminals?.get?.(t.address) ?? t;
-      const folder = rawT.foreground?.cwd ?? rawT.cwd ?? t.cwd;
+      const spaceForT = layout.find((sp) => (sp.tabs ?? []).some((tab) => (tab.terminals ?? []).includes(t.address)));
+      const folder = rawT.foreground?.cwd || rawT.cwd || t.cwd || spaceForT?.folder;
       if (!folder) continue;
       out.push({
         id: `term:${t.address}`,
-        name: t.where ? String(t.where).replace(/ \/ \d+$/, '') : (basename(folder) || t.address),
+        name: basename(folder) || t.address,
         folder,
       });
     }
@@ -151,8 +154,7 @@ export function createFiles({ dir, terminals, extraRoots = [], log = () => {} })
   async function resolveSafe(rootId, rawRelPath = '') {
     const allRoots = collectRoots();
     if (!allRoots.length) throw new Error('当前没有可浏览的工作区目录');
-    const matched = (rootId ? allRoots.find((r) => r.id === String(rootId)) : allRoots[0]) ?? allRoots[0];
-    const root = allRoots.find((r) => r.folder === matched.folder) ?? matched;
+    const root = (rootId ? allRoots.find((r) => r.id === String(rootId)) : allRoots[0]) ?? allRoots[0];
 
     let rootReal;
     try {
@@ -203,8 +205,55 @@ export function createFiles({ dir, terminals, extraRoots = [], log = () => {} })
     return { roots: valid };
   }
 
-  async function list({ rootId, path: relPath = '' } = {}) {
-    const { root, rootReal, targetReal, relPath: normalizedRel } = await resolveSafe(rootId, relPath);
+  async function gitMarksForRoot(rootReal) {
+    try {
+      const topOut = await runBin('git', ['-C', rootReal, 'rev-parse', '--show-toplevel'], 4_000);
+      const topReal = await realpath(topOut.stdout.trim());
+      const prefix = topReal === rootReal ? '' : relative(topReal, rootReal).split(sep).join('/');
+      const { stdout } = await runBin('git', [
+        '-C', rootReal,
+        '--no-optional-locks',
+        '-c', 'core.fsmonitor=false',
+        'status', '--porcelain=v1', '-z',
+        '--no-renames', '--untracked-files=all',
+      ], 6_000);
+      const marks = {};
+      for (const rec of stdout.split('\0')) {
+        if (rec.length < 4) continue;
+        const xy = rec.slice(0, 2);
+        const rawPath = rec.slice(3);
+        let relInside = rawPath;
+        if (prefix) {
+          if (rawPath === prefix) relInside = '';
+          else if (rawPath.startsWith(`${prefix}/`)) relInside = rawPath.slice(prefix.length + 1);
+          else continue;
+        }
+        relInside = relInside.replace(/\/+$/, '');
+        if (!relInside) continue;
+        let mark = 'M';
+        if (xy === '??') mark = 'U';
+        else if (xy.includes('D')) mark = 'D';
+        else if (xy.includes('A')) mark = 'A';
+        marks[relInside] = mark;
+      }
+      return marks;
+    } catch {
+      return {};
+    }
+  }
+
+  async function readSharedExpanded(rootReal) {
+    try {
+      const raw = JSON.parse(await readFile(join(HERDR_APP_HOME, 'shared.json'), 'utf8'));
+      const map = raw?.['my-files/folders'];
+      const list = Array.isArray(map?.[rootReal]) ? map[rootReal] : [];
+      return list.filter((p) => typeof p === 'string' && !hasForbiddenSegment(p));
+    } catch {
+      return [];
+    }
+  }
+
+  async function readDirItems(rootReal, targetReal, normalizedRel) {
     const dirEntries = await readdir(targetReal, { withFileTypes: true });
     const filtered = dirEntries
       .filter((e) => e.name !== '.git' && e.name !== '.DS_Store')
@@ -244,12 +293,114 @@ export function createFiles({ dir, terminals, extraRoots = [], log = () => {} })
       return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
     });
 
+    return { items, truncated: filtered.length > items.length };
+  }
+
+  async function panel({ address, rootId, open, folders, onlyChanged } = {}) {
+    let rootReal = null;
+    try {
+      const resolved = await resolveSafe(rootId || (address ? `term:${address}` : undefined), '');
+      rootReal = resolved.rootReal;
+    } catch {}
+
+    if (syncApp) {
+      if (rootReal && (Array.isArray(folders) || typeof onlyChanged === 'boolean')) {
+        try {
+          const syncDir = join(HERDR_APP_HOME, 'data', 'my-files');
+          await mkdir(syncDir, { recursive: true });
+          const payload = {
+            root: rootReal,
+            folders: Array.isArray(folders) ? folders.map(String) : undefined,
+            onlyChanged: typeof onlyChanged === 'boolean' ? onlyChanged : undefined,
+            ts: Date.now(),
+          };
+          await writeFile(join(syncDir, 'phone-sync.json'), JSON.stringify(payload));
+          await runBin('herdr-app', ['do', 'my-files.sync'], 3_000).catch(() => {});
+        } catch (err) {
+          log(`files.panel sync error: ${err?.message ?? err}`);
+        }
+      }
+
+      if (open === true) {
+        try {
+          if (address) {
+            const layout = terminals?.layout?.() ?? [];
+            for (const s of layout) {
+              for (const tab of s.tabs ?? []) {
+                if ((tab.terminals ?? []).includes(address)) {
+                  await runBin('herdr-app', ['do', 'space.select', JSON.stringify({ id: s.id })], 3_000).catch(() => {});
+                  await runBin('herdr-app', ['do', 'tab.select', JSON.stringify({ id: tab.id })], 3_000).catch(() => {});
+                  await runBin('herdr-app', ['do', 'pane.focus', JSON.stringify({ terminal: address })], 3_000).catch(() => {});
+                  break;
+                }
+              }
+            }
+          }
+          await runBin('herdr-app', ['do', 'layout.select', JSON.stringify({ stack: 'panel-body', child: 'files' })], 3_000).catch(() => {});
+          await runBin('herdr-app', ['do', 'layout.show', JSON.stringify({ id: 'panel' })], 3_000).catch(() => {});
+        } catch (err) {
+          log(`files.panel open error: ${err?.message ?? err}`);
+        }
+      } else if (open === false) {
+        try {
+          await runBin('herdr-app', ['do', 'layout.hide', JSON.stringify({ id: 'panel' })], 3_000).catch(() => {});
+        } catch {}
+      }
+    }
+
+    return { ok: true, root: rootReal };
+  }
+
+  async function list({ rootId, path: relPath = '', syncPanel = false, address } = {}) {
+    const { root, rootReal, targetReal, relPath: normalizedRel } = await resolveSafe(rootId, relPath);
+    const { items, truncated } = await readDirItems(rootReal, targetReal, normalizedRel);
+
+    if (syncPanel) {
+      panel({ address: address || (String(root.id).startsWith('term:') ? String(root.id).slice(5) : undefined), rootId: root.id, open: true }).catch(() => {});
+    }
+
+    if (normalizedRel === '') {
+      const [marks, expandedFolders] = await Promise.all([
+        gitMarksForRoot(rootReal),
+        readSharedExpanded(rootReal),
+      ]);
+      const toPreload = new Set(expandedFolders);
+      for (const changedPath of Object.keys(marks)) {
+        const parts = changedPath.split('/');
+        let cur = '';
+        for (let i = 0; i < parts.length - 1; i++) {
+          cur = cur ? `${cur}/${parts[i]}` : parts[i];
+          if (toPreload.size < 20) toPreload.add(cur);
+        }
+      }
+      const subfolders = {};
+      for (const subRel of [...toPreload].slice(0, 20)) {
+        try {
+          const subResolved = await resolveSafe(root.id, subRel);
+          if (subResolved.relPath) {
+            const subDir = await readDirItems(rootReal, subResolved.targetReal, subResolved.relPath);
+            subfolders[subResolved.relPath] = subDir.items;
+          }
+        } catch {}
+      }
+      return {
+        rootId: root.id,
+        rootName: root.name,
+        path: normalizedRel,
+        items,
+        truncated,
+        marks,
+        expandedFolders,
+        subfolders,
+      };
+    }
+
     return {
       rootId: root.id,
       rootName: root.name,
       path: normalizedRel,
       items,
-      truncated: filtered.length > items.length,
+      truncated,
     };
   }
 
@@ -610,5 +761,5 @@ export function createFiles({ dir, terminals, extraRoots = [], log = () => {} })
     }
   }
 
-  return { roots, list, open, slice };
+  return { roots, list, open, slice, panel };
 }

@@ -661,6 +661,7 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
     'files.list': (peer, p) => { if (!fileBrowser) throw new Error('文件预览不可用'); return fileBrowser.list(p); },
     'files.open': (peer, p) => { if (!fileBrowser) throw new Error('文件预览不可用'); return fileBrowser.open(p); },
     'files.slice': (peer, p) => { if (!fileBrowser) throw new Error('文件预览不可用'); return fileBrowser.slice(p); },
+    'files.panel': (peer, p) => { if (!fileBrowser) throw new Error('文件预览不可用'); return fileBrowser.panel(p); },
     'device.forget': async (peer) => { await state.removeDevice(peer.device.id); setTimeout(() => getLink()?.close(peer.cid, 'forgotten'), 50); onChange(); return { ok: true }; },
   };
 

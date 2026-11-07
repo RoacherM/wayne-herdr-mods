@@ -11,11 +11,13 @@
 //     herdr-app do pane.split '{"direction":"right","mod":"my-files","props":{"file":"/abs/path.md"}}'
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState, TextView, set_theme } from "gpui-base";
-import { spaces, panes, focused, props, exec, run, shared, setShared, readTextFile, writeTextFile, watchFolder, theme, settings, window, appHome, openOverlay, closeOverlay, notify } from "herdr";
+import { spaces, panes, focused, props, exec, run, shared, setShared, readTextFile, writeTextFile, watchFolder, nextCommand, theme, settings, window, appHome, openOverlay, closeOverlay, notify } from "herdr";
 import { locate, FILE_TABS, withFileTab, fileTabOf, newTabId, linkTarget } from "./state.js";
 
 const MOD = "mods/my-files";
 const CACHE = `${MOD}/.cache`;
+const PHONE_FOLDERS = "my-files/folders";
+const PHONE_SYNC_FILE = "data/my-files/phone-sync.json";
 const PER_FOLDER = 500, TOTAL = 5000;
 let appliedSelection = null, syncingSelection = false;
 
@@ -134,6 +136,48 @@ export default class MyFiles extends View {
     if (props()?.menu) return;
     this.refresh(cx);
     cx.timer.every(10000, (cx) => this.refresh(cx));
+    if (!props()?.file) {
+      cx.spawn(async (cx) => {
+        for (;;) {
+          const cmd = await nextCommand();
+          if (cmd === "sync") await this.syncFromPhone(cx);
+        }
+      });
+    }
+  }
+
+  saveSharedFolders() {
+    if (!this.root) return;
+    const prev = shared(PHONE_FOLDERS);
+    const map = prev && typeof prev === "object" ? { ...prev } : {};
+    map[this.root] = [...this.folders];
+    setShared(PHONE_FOLDERS, map);
+  }
+
+  async applyPhoneFolders(list, cx) {
+    this.folders = new Set(list.map(String));
+    this.saveSharedFolders();
+    const context = this.context;
+    if (!context) return;
+    for (const path of this.folders) {
+      if (!this.entries.has(path) && !this.pending.has(path)) {
+        await this.loadFolder(path, context).catch(() => {});
+      }
+    }
+  }
+
+  async syncFromPhone(cx) {
+    try {
+      const raw = await readTextFile(`${appHome()}/${PHONE_SYNC_FILE}`);
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (data.onlyChanged !== undefined) this.onlyChanged = Boolean(data.onlyChanged);
+      const list = Array.isArray(data.folders)
+        ? (!data.root || data.root === this.root ? data.folders : null)
+        : (this.root && Array.isArray(data.folders?.[this.root]) ? data.folders[this.root] : null);
+      if (list) await this.applyPhoneFolders(list, cx);
+      cx.notify();
+    } catch {}
   }
 
   watch(root, cx) {
@@ -178,7 +222,8 @@ export default class MyFiles extends View {
     if (next !== this.context?.key) {
       if (this.context) this.saved.set(this.context.key, { folders: this.folders });
       const saved = this.saved.get(next);
-      this.context = { key: next, cwd, on }; this.root = cwd; this.on = on; this.entries = new Map(); this.folders = new Set(saved?.folders);
+      const synced = cwd && Array.isArray(shared(PHONE_FOLDERS)?.[cwd]) ? shared(PHONE_FOLDERS)[cwd] : [];
+      this.context = { key: next, cwd, on }; this.root = cwd; this.on = on; this.entries = new Map(); this.folders = new Set(saved?.folders ?? synced);
       this.pending = new Set(); this.marks = {}; this.watched = null; this.error = null; this.limited = false; this.loading = false;
       this.show(file ?? null, cx);
     }
@@ -227,6 +272,7 @@ export default class MyFiles extends View {
         });
       }
     }
+    this.saveSharedFolders();
     cx.notify();
   }
 

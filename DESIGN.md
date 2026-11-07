@@ -786,11 +786,16 @@ probe 结束时 Mac 焦点停在 herdr-relay 工作区（因为 A 抢过焦点�
 
 手机在查看终端之余，常需要直接查看当前工作区里的代码、Markdown、截图、PDF/Office 文档以及录屏视频。由于连接可能走 Cloudflare 加密中继或蜂窝弱网，直接在链路上传输数十 MB 的原图或原始视频会阻塞终端打字回显（`term.input` / `term.out`）。
 
-### 1. 路径沙箱（`host/files.js`）
+### 1. 与 Mac `Herdr.app` 对齐的三栏心智与路径沙箱（`host/files.js`、`herdr-app/mods/my-files/main.js`）
 
-- 手机**不能**传入任意绝对路径。`files.roots` 只从当前 `herdr-core` 的工作区（优先取首终端 `foreground?.cwd ?? cwd`，回退 `space.folder`）和独立终端工作目录（`term:<address>`）收集根目录并分配 `rootId`；当传入 `term:<address>` 与某工作区同目录时自动归并到该工作区 `rootId`，使顶部工作区胶囊保持高亮。
-- `files.list {rootId, path}` 与 `files.open {rootId, path}` 先对根目录和目标路径分别做 `fs.realpath`，校验目标 `realpath` 严格位于根目录 `realpath` 内部（阻断 `../` 越界与指向工作区外部的符号链接），并拒绝列出或打开 `.git` 与 `.DS_Store`。
-- 入口与图标（`ios/App.tsx`）：iOS `UINavigationBar` 内自定义 `<Button>` 命中区为 `0×0`，因此文件夹入口放在首页每个工作区标题右侧的 `[📁 文件]` 胶囊按钮、顶部快捷栏，以及终端页底部工具栏 `+` 按钮旁；图标直接由 macOS 系统 `NSImage(systemSymbolName:)` 渲染 `@3x` Apple SF Symbols（`folder.fill` 天空蓝 `#389CFF`、`doc.text.fill`、`photo.fill`、`play.rectangle.fill`），点进子目录使用 `nav.push` 原生推页并支持左滑返回。
+- **三栏一比一映射**：
+  1. **主页（`HomeScreen`）= Mac 左边栏（`my-tabs`）**：只展示工作区与终端列表，不放置任何文件夹按钮。
+  2. **终端页（`TermScreen`）= Mac 中间对话框**：底部输入栏保持纯粹（`[+]`、`[按住 说话]`、`[⌨]`）；右上角导航栏通过 `nsh` 原生 `ios={{ headerRightSymbol: "folder" }}` 挂载系统原生 `UIBarButtonItem` 文件夹按钮。
+  3. **文件树页（`FilesScreen`）= Mac 右侧文件树（`my-files`）**：严格按当前终端 `term:<address>` 的 `foreground?.cwd ?? cwd` 打开，**绝不混入其他 session 的目录**；采用与 Mac `my-files` 相同的 `All` / `Changed` 过滤栏、Git 状态标记（`M`/`A`/`D`/`U`）与内联展开目录树（`▾`/`▸` + 深度缩进）。
+- **手机与 Mac 右侧文件树双向同步（`files.panel` + `my-files.sync`）**：
+  - 在手机终端右上角点开文件树时，`files.list {rootId: "term:<addr>", syncPanel: true, address}` 调用 `herdr-app do` 自动聚焦 Mac 对应终端并展开 Mac 右侧 `my-files` 面板（`layout.select {stack:"panel-body",child:"files"}` + `layout.show {id:"panel"}`），同时预读 `~/.config/herdr-app/shared.json` 中已展开的目录与 Git 变更父目录。
+  - 在手机上展开/收起子目录或切换 `All` / `Changed` 时，`files.panel {rootId, folders, onlyChanged}` 写入 `~/.config/herdr-app/data/my-files/phone-sync.json` 并触发 `herdr-app do my-files.sync`，Mac 右侧文件树实时同步展开状态与过滤模式；手机关闭文件树返回终端时，`files.panel {open: false}` 自动收起 Mac 右侧面板（`layout.hide {id:"panel"}`）。
+- **路径沙箱**：`files.list` 与 `files.open` 对根目录和目标路径分别做 `fs.realpath`，校验目标严格位于当前工作区内部（阻断 `../` 越界与外部软链），并拒绝访问 `.git` 与 `.DS_Store`。
 
 ### 2. 按文件类型硬件预处理（Mac 端缓存于 `<dataDir>/cache/previews/`）
 
