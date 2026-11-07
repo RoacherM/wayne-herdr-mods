@@ -1,11 +1,52 @@
 // The Swift host of the native Herdr app: one NshAppView, full screen, running ios/App.tsx,
-// plus native bridges for hold-to-talk audio recording (voice.*) and camera QR scanning (qr.scan).
+// plus native bridges for hold-to-talk audio recording (voice.*), camera QR scanning (qr.scan),
+// and local status notifications (notify.*).
 import AVFoundation
 import NativeShell
 import UIKit
+import UserNotifications
+
+private final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
+  static let shared = NotificationBridge()
+  var pendingTap: [String: String]?
+
+  func install() {
+    UNUserNotificationCenter.current().delegate = self
+  }
+
+  func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    willPresent notification: UNNotification,
+    withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+  ) {
+    completionHandler([.banner, .list, .sound])
+  }
+
+  func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    didReceive response: UNNotificationResponse,
+    withCompletionHandler completionHandler: @escaping () -> Void
+  ) {
+    let info = response.notification.request.content.userInfo
+    let desktopId = info["desktopId"] as? String ?? ""
+    let address = info["address"] as? String ?? ""
+    if !address.isEmpty {
+      pendingTap = ["desktopId": desktopId, "address": address]
+    }
+    completionHandler()
+  }
+}
 
 @main
 final class AppDelegate: UIResponder, UIApplicationDelegate {
+  func application(
+    _ application: UIApplication,
+    didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+  ) -> Bool {
+    NotificationBridge.shared.install()
+    return true
+  }
+
   func application(
     _ application: UIApplication,
     configurationForConnecting session: UISceneSession,
@@ -19,6 +60,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
 final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
   var window: UIWindow?
+  private var bgTask: UIBackgroundTaskIdentifier = .invalid
 
   func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
     guard let scene = scene as? UIWindowScene else { return }
@@ -26,6 +68,21 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     window.rootViewController = ShellController()
     window.makeKeyAndVisible()
     self.window = window
+  }
+
+  func sceneDidEnterBackground(_ scene: UIScene) {
+    guard bgTask == .invalid else { return }
+    bgTask = UIApplication.shared.beginBackgroundTask(withName: "HerdrRelayWatch") { [weak self] in
+      guard let self, self.bgTask != .invalid else { return }
+      UIApplication.shared.endBackgroundTask(self.bgTask)
+      self.bgTask = .invalid
+    }
+  }
+
+  func sceneWillEnterForeground(_ scene: UIScene) {
+    guard bgTask != .invalid else { return }
+    UIApplication.shared.endBackgroundTask(bgTask)
+    bgTask = .invalid
   }
 }
 
@@ -141,6 +198,64 @@ final class ShellController: UIViewController {
           self.present(scanner, animated: true)
         }
       }
+    }
+
+    app.handle("notify.status") { _, reply in
+      UNUserNotificationCenter.current().getNotificationSettings { settings in
+        let status: String
+        switch settings.authorizationStatus {
+        case .authorized, .provisional, .ephemeral: status = "granted"
+        case .denied: status = "denied"
+        default: status = "prompt"
+        }
+        DispatchQueue.main.async {
+          reply.resolve(["permission": status])
+        }
+      }
+    }
+
+    app.handle("notify.request") { _, reply in
+      UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, err in
+        DispatchQueue.main.async {
+          if let err {
+            reply.reject("通知权限请求失败：\(err.localizedDescription)")
+            return
+          }
+          reply.resolve(["granted": granted, "permission": granted ? "granted" : "denied"])
+        }
+      }
+    }
+
+    app.handle("notify.send") { args, reply in
+      let dict = args as? [String: Any] ?? [:]
+      let title = dict["title"] as? String ?? "Herdr"
+      let body = dict["body"] as? String ?? ""
+      let tag = dict["tag"] as? String ?? UUID().uuidString
+      let desktopId = dict["desktopId"] as? String ?? ""
+      let address = dict["address"] as? String ?? ""
+
+      let content = UNMutableNotificationContent()
+      content.title = title
+      content.body = body
+      content.sound = .default
+      content.userInfo = ["desktopId": desktopId, "address": address]
+
+      let req = UNNotificationRequest(identifier: tag, content: content, trigger: nil)
+      UNUserNotificationCenter.current().add(req) { err in
+        DispatchQueue.main.async {
+          if let err {
+            reply.reject(err.localizedDescription)
+          } else {
+            reply.resolve(["ok": true])
+          }
+        }
+      }
+    }
+
+    app.handle("notify.consumeTap") { _, reply in
+      let tap = NotificationBridge.shared.pendingTap
+      NotificationBridge.shared.pendingTap = nil
+      reply.resolve(tap)
     }
   }
 

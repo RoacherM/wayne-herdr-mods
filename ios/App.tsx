@@ -3,9 +3,11 @@ import { cleanup, Clipboard, computed, effect, host, Image, Keyboard, lifecycle,
 import type { InputRef, WebViewRef } from "nsh/types";
 import { Button, createNavStack, Input, NavPage, NavStack } from "nsh/base";
 import {
-  addingMac, boot, cancelPair, desktops, forget, info, list, notify, paired, pairWith,
-  problem, refresh, rpc, sas, sendImage, setStreamListener, status, switchDesktop, transcribeAudio, wake,
-  type Saved, type Space, type Terminal,
+  activeTermAddress, addingMac, boot, cancelPair, consumePendingNotificationTap, desktops,
+  disableNotifications, enableNotifications, forget, info, list, macStatuses, notify,
+  notifyEnabled, notifyPermission, paired, pairWith, problem, refresh, refreshNotifyStatus,
+  rpc, sas, sendImage, sendTestNotification, setStreamListener, status, switchDesktop,
+  transcribeAudio, wake, type Saved, type Space, type Terminal,
 } from "./src/conn";
 import { PROG_ICONS } from "./src/prog-icons";
 import { TERM_HTML } from "./src/term-html";
@@ -297,7 +299,24 @@ function Group(props: { title: string; items: GroupItem[]; space?: Space; needs?
 }
 
 function HomeScreen() {
-  effect(() => { if (lifecycle() === "active") wake(); });
+  async function checkNotificationTap() {
+    const tap = await consumePendingNotificationTap();
+    if (!tap?.address) return;
+    if (tap.desktopId && tap.desktopId !== paired()?.desktopId) {
+      await switchDesktop(tap.desktopId);
+    }
+    nav.push({ name: "term", address: tap.address });
+  }
+
+  effect(() => {
+    if (lifecycle() === "active") {
+      wake();
+      refreshNotifyStatus();
+      checkNotificationTap();
+    }
+  });
+  checkNotificationTap();
+
   const statusInfo = computed(() => {
     const s = status();
     const core = list().core;
@@ -357,20 +376,34 @@ function HomeScreen() {
       }
     >
       <Scroll class="flex-1 bg-background" contentClass="gap-4 px-4 pb-10 pt-2">
-        {desktops().length > 1 ? (
-          <Scroll horizontal scrollbar={false} class="flex-none" contentClass="flex-row gap-2">
-            {desktops().map((d: Saved) => {
-              const active = d.desktopId === paired()?.desktopId;
-              return (
-                <Button onPress={() => switchDesktop(d.desktopId)}
-                  class={`h-9 flex-row items-center gap-1.5 rounded-full px-4 ${active ? "bg-primary" : "bg-card"}`}
-                  testID={`mac-${d.desktopId}`}>
-                  <Text class={`text-[14px] font-medium ${active ? "text-primary-foreground" : "text-card-foreground"}`}>{d.desktopName || "Mac"}</Text>
-                </Button>
-              );
-            })}
-          </Scroll>
-        ) : null}
+        {/* Multi-Mac pill bar: always visible so switching Macs or pairing a 2nd/3rd Mac is 1 tap away */}
+        <Scroll horizontal scrollbar={false} class="flex-none" contentClass="flex-row items-center gap-2">
+          {desktops().map((d: Saved) => {
+            const active = d.desktopId === paired()?.desktopId;
+            const st = active ? status() : (macStatuses()[d.desktopId] ?? "idle");
+            const dotClass = STATUS_DOT[st] ?? "bg-idle";
+            return (
+              <Button
+                onPress={() => { tapHaptic(); switchDesktop(d.desktopId); }}
+                class={`h-9 flex-row items-center gap-2 rounded-full px-4 active:opacity-80 ${active ? "bg-primary" : "bg-card"}`}
+                testID={`mac-${d.desktopId}`}
+              >
+                <View class={`h-2 w-2 rounded-full ${dotClass}`} />
+                <Text class={`text-[14px] font-semibold ${active ? "text-primary-foreground" : "text-card-foreground"}`}>
+                  {d.desktopName || "Mac"}
+                </Text>
+              </Button>
+            );
+          })}
+          <Button
+            onPress={() => { tapHaptic(); addingMac.set(true); }}
+            class="h-9 flex-row items-center gap-1.5 rounded-full bg-card px-3.5 active:bg-secondary"
+            testID="home-add-mac"
+          >
+            <Icon src={plusIcon} size={14} class="tint-muted-foreground" />
+            <Text class="text-[13.5px] font-medium text-muted-foreground">配对新电脑</Text>
+          </Button>
+        </Scroll>
 
         {/* Soft rounded status & settings card (guarantees 100% reliable touch target + shows cute Bauhaus sheep icon) */}
         <Button
@@ -387,7 +420,7 @@ function HomeScreen() {
               <Text class="text-[15px] font-semibold text-card-foreground" testID="status">{statusInfo().text}</Text>
             </View>
             <Text class="text-[12.5px] text-muted-foreground" style={{ numberOfLines: 1 }}>
-              {problem() || `${list().terminals.length} 个终端 · 端到端加密`}
+              {problem() || `${list().terminals.length} 个终端 · ${notifyEnabled() ? "通知已开启" : "端到端加密"}`}
             </Text>
           </View>
           <View class="flex-row items-center gap-1">
@@ -428,38 +461,134 @@ function Field(props: { label: string; value: string; last?: boolean }) {
 }
 
 function SettingsScreen() {
+  const feedback = signal("");
+  effect(() => { refreshNotifyStatus(); });
+
+  async function toggleNotify() {
+    tapHaptic();
+    feedback.set("");
+    try {
+      if (notifyEnabled() && notifyPermission() === "granted") {
+        await disableNotifications();
+        feedback.set("已暂停状态通知");
+      } else {
+        const ok = await enableNotifications();
+        feedback.set(ok ? "通知已开启：agent 等你确认、完成或出错时会提醒你" : "没有通知权限：请在 iPhone 设置 ▸ Herdr ▸ 通知 里打开");
+      }
+    } catch (e: any) {
+      feedback.set(e.message || "通知设置失败");
+    }
+  }
+
+  async function testNotify() {
+    tapHaptic();
+    feedback.set("");
+    try {
+      await sendTestNotification();
+      feedback.set("已发送测试通知（顶部横幅）");
+    } catch (e: any) {
+      feedback.set(e.message || "发送测试通知失败");
+    }
+  }
+
+  const pushOn = computed(() => notifyEnabled() && notifyPermission() === "granted");
+
   return (
     <NavPage title="设置" headerClass="bg-background">
       <Scroll class="flex-1 bg-background" contentClass="gap-5 px-4 pt-2 pb-10">
         <View class="gap-1.5">
           <View class="overflow-hidden rounded-[20px] bg-card">
-            <Field label="电脑" value={paired()?.desktopName ?? "Mac"} />
-            <Field label="这台设备" value={info()?.deviceName ?? "—"} />
+            <Field label="当前电脑" value={paired()?.desktopName ?? "Mac"} />
+            <Field label="这台设备" value={info()?.deviceName ?? "Herdr iPhone"} />
             <Field label="中继" value={(paired()?.relay ?? "—").replace(/^https?:\/\//, "")} last />
           </View>
           <Text class="px-2 text-[12.5px] leading-snug text-muted-foreground">消息端到端加密，中继只转发看不懂的密文。</Text>
         </View>
+
+        {/* Status Notification Card */}
         <View class="gap-2">
-          <Text class="px-2 text-[13px] font-semibold text-muted-foreground">已配对的 Mac</Text>
+          <Text class="px-2 text-[13px] font-semibold text-muted-foreground">状态通知</Text>
+          <View class="gap-3 rounded-[20px] bg-card p-4">
+            <View class="flex-row items-center justify-between">
+              <View class="flex-row items-center gap-2">
+                <View class={`h-2 w-2 rounded-full ${pushOn() ? "bg-ok" : "bg-idle"}`} />
+                <Text class="text-[15.5px] font-semibold text-card-foreground">
+                  {pushOn() ? "通知已开启" : notifyPermission() === "denied" ? "系统通知权限未开启" : "通知未开启"}
+                </Text>
+              </View>
+            </View>
+            <Text class="text-[13px] leading-snug text-muted-foreground">
+              当已配对电脑上的 agent 等你确认（permission / question）、完成任务、出错或退出时推送提醒，点通知直达对应终端。
+            </Text>
+            {feedback() ? (
+              <View class="rounded-2xl bg-secondary px-3.5 py-2.5">
+                <Text class="text-[13px] text-foreground">{feedback()}</Text>
+              </View>
+            ) : null}
+            <View class="flex-row gap-2.5 pt-0.5">
+              <Button
+                onPress={toggleNotify}
+                class={`h-10 flex-1 items-center justify-center rounded-full active:opacity-80 ${pushOn() ? "bg-secondary" : "bg-primary"}`}
+                testID="toggle-notify"
+              >
+                <Text class={`text-[14.5px] font-semibold ${pushOn() ? "text-foreground" : "text-primary-foreground"}`}>
+                  {pushOn() ? "暂停通知" : "开启通知"}
+                </Text>
+              </Button>
+              <Button
+                onPress={testNotify}
+                class="h-10 flex-1 items-center justify-center rounded-full bg-secondary active:opacity-80"
+                testID="test-notify"
+              >
+                <Text class="text-[14.5px] font-semibold text-foreground">发一条测试</Text>
+              </Button>
+            </View>
+          </View>
+        </View>
+
+        {/* Multi-Mac Management Card */}
+        <View class="gap-2">
+          <Text class="px-2 text-[13px] font-semibold text-muted-foreground">
+            已配对的电脑（{desktops().length} 台）
+          </Text>
           <View class="overflow-hidden rounded-[20px] bg-card">
             {desktops().map((d: Saved, i: number) => {
               const active = d.desktopId === paired()?.desktopId;
+              const st = active ? status() : (macStatuses()[d.desktopId] ?? "idle");
+              const dotClass = STATUS_DOT[st] ?? "bg-idle";
+              const stLabel = active ? "当前" : (STATUS_TEXT[st] ?? "切换");
               return (
-                <Button onPress={() => { switchDesktop(d.desktopId); nav.pop(); }}
-                  class={`ml-4 min-h-11 flex-row items-center gap-3 py-2.5 pr-4 ${i === desktops().length - 1 ? "" : "border-b border-separator"}`}>
-                  <View class={`h-2 w-2 rounded-full ${active ? "bg-ok" : "bg-idle"}`} />
-                  <Text class="flex-1 text-[15.5px] text-card-foreground" style={{ numberOfLines: 1 }}>{d.desktopName || "Mac"}</Text>
-                  <Text class="text-[13.5px] text-muted-foreground">{active ? "当前" : "切换"}</Text>
-                </Button>
+                <View class={`ml-4 min-h-12 flex-row items-center gap-3 py-2.5 pr-4 ${i === desktops().length - 1 ? "" : "border-b border-separator"}`}>
+                  <Button
+                    onPress={() => { tapHaptic(); switchDesktop(d.desktopId); nav.pop(); }}
+                    class="flex-1 flex-row items-center gap-2.5 py-1 active:opacity-60"
+                  >
+                    <View class={`h-2 w-2 rounded-full ${dotClass}`} />
+                    <View class="flex-1">
+                      <Text class="text-[15.5px] font-medium text-card-foreground" style={{ numberOfLines: 1 }}>{d.desktopName || "Mac"}</Text>
+                      <Text class="text-[12px] text-muted-foreground">{active ? "当前正在查看" : `${stLabel} · 点此切换`}</Text>
+                    </View>
+                  </Button>
+                  {desktops().length > 1 ? (
+                    <Button
+                      onPress={() => { tapHaptic(); forget(d.desktopId); }}
+                      class="rounded-full bg-secondary px-3 py-1.5 active:opacity-60"
+                    >
+                      <Text class="text-[12.5px] font-medium text-destructive">移除</Text>
+                    </Button>
+                  ) : (
+                    <Text class="text-[13.5px] text-muted-foreground">当前</Text>
+                  )}
+                </View>
               );
             })}
           </View>
-          <Button onPress={() => { nav.pop(); addingMac.set(true); }} class="h-11 items-center justify-center rounded-full bg-card active:bg-secondary" testID="add-mac">
-            <Text class="text-[15px] font-semibold text-foreground">配对另一台 Mac</Text>
+          <Button onPress={() => { tapHaptic(); nav.pop(); addingMac.set(true); }} class="h-11 items-center justify-center rounded-full bg-card active:bg-secondary" testID="add-mac">
+            <Text class="text-[15px] font-semibold text-foreground">＋ 配对另一台电脑</Text>
           </Button>
         </View>
-        <Button onPress={async () => { nav.pop(); await forget(); }} class="h-11 items-center justify-center rounded-full bg-card active:bg-secondary">
-          <Text class="text-[15px] font-semibold text-destructive">取消配对</Text>
+        <Button onPress={async () => { tapHaptic(); nav.pop(); await forget(); }} class="h-11 items-center justify-center rounded-full bg-card active:bg-secondary">
+          <Text class="text-[15px] font-semibold text-destructive">取消当前电脑配对</Text>
         </Button>
       </Scroll>
     </NavPage>
@@ -602,6 +731,7 @@ function TermScreen(props: { address: string }) {
     } catch (e: any) { notice.set(`打不开：${e.message}`); } finally { opening = false; }
   }
 
+  activeTermAddress.set(address);
   setStreamListener(onStream);
   effect(() => { if (webReady() && status() === "ready" && s === null) open(); else if (status() !== "ready") s = null; });
   effect(() => { const t = term(); if (t && opened && !sized) post({ t: "size", cols: t.cols, rows: t.rows }); });
@@ -614,6 +744,7 @@ function TermScreen(props: { address: string }) {
   });
   cleanup(() => {
     closed = true;
+    if (activeTermAddress() === address) activeTermAddress.set(null);
     clearTimeout(bootTimer);
     clearTimeout(litTimer);
     stopRepeat();
