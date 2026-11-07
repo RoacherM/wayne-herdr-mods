@@ -72,7 +72,7 @@ async function postLocalNotification(payload: { title: string; body: string; tag
 }
 
 function observeTerminals(desktopId: string, desktopName: string | undefined, terminals: Terminal[]) {
-  const prefix = desktops().length > 1 ? `[${desktopName || "Mac"}] ` : "";
+  const hostSuffix = desktops().length > 1 ? ` · ${desktopName || "Mac"}` : "";
   const prevMap = watchedByMac.get(desktopId);
   const now = Date.now();
 
@@ -113,16 +113,16 @@ function observeTerminals(desktopId: string, desktopName: string | undefined, te
     if (is === "blocked") {
       const what = ({ permission: "等你确认", question: "在问你问题", auth: "需要登录" } as Record<string, string>)[t.kind ?? ""] ?? "等你处理";
       postLocalNotification({
-        title: `${prefix}✋ ${what}`,
-        body: [label, t.msg].filter(Boolean).join("：").slice(0, 160),
+        title: `${what}${hostSuffix}`,
+        body: [label, t.msg].filter(Boolean).join(" — ").slice(0, 160),
         tag: `need-${desktopId}-${t.address}`,
         desktopId,
         address: t.address,
       });
     } else if (is === "error") {
       postLocalNotification({
-        title: `${prefix}⚠️ 出错`,
-        body: [label, t.msg].filter(Boolean).join("：").slice(0, 160),
+        title: `运行出错${hostSuffix}`,
+        body: [label, t.msg].filter(Boolean).join(" — ").slice(0, 160),
         tag: `err-${desktopId}-${t.address}`,
         desktopId,
         address: t.address,
@@ -131,7 +131,7 @@ function observeTerminals(desktopId: string, desktopName: string | undefined, te
       const ranMs = prev?.workingSince ? now - prev.workingSince : MIN_RUN_MS;
       if (ranMs >= MIN_RUN_MS || lifecycle() !== "active" || paired()?.desktopId !== desktopId) {
         postLocalNotification({
-          title: `${prefix}✅ 完成`,
+          title: `任务完成${hostSuffix}`,
           body: label,
           tag: `done-${desktopId}-${t.address}`,
           desktopId,
@@ -145,7 +145,7 @@ function observeTerminals(desktopId: string, desktopName: string | undefined, te
   for (const [addr, prev] of prevMap.entries()) {
     if (!currentAddrs.has(addr) && prev.state && prev.state !== "idle") {
       postLocalNotification({
-        title: `${prefix}⏹ 已退出`,
+        title: `终端已退出${hostSuffix}`,
         body: prev.label,
         tag: `exit-${desktopId}-${addr}`,
         desktopId,
@@ -193,8 +193,8 @@ export async function sendTestNotification() {
   const active = paired();
   const firstAddr = list().terminals[0]?.address ?? "";
   await host.call("notify.send", {
-    title: "✋ 等你确认（测试通知）",
-    body: `${active?.desktopName || "Mac"} · 点这条通知会直接打开 Herdr 终端`,
+    title: `等你确认 · ${active?.desktopName || "Mac"}`,
+    body: "claude · herdr-anywhere — 点这条通知会直接打开对应终端",
     tag: `test-${Date.now()}`,
     desktopId: active?.desktopId ?? "",
     address: firstAddr,
