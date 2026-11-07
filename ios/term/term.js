@@ -215,7 +215,14 @@ window.addEventListener('message', (e) => {
   }
 });
 window.addEventListener('error', (e) => post({ t: 'log', m: String(e.message) }));
-requestAnimationFrame(() => {
+function bootReady(tries = 0) {
+  const fit = fitNow();
+  if (!fit && tries < 15) {
+    requestAnimationFrame(() => bootReady(tries + 1));
+    return;
+  }
+  if (fit && cols === 80 && rows === 24) resizeTo(fit.cols, fit.rows);
   layout();
-  post({ t: 'ready', fit: fitNow() });
-});
+  post({ t: 'ready', fit });
+}
+requestAnimationFrame(() => bootReady(0));

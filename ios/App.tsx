@@ -11,6 +11,8 @@ import { PROG_ICONS } from "./src/prog-icons";
 import { TERM_HTML } from "./src/term-html";
 import { LiveLine, PASTE_LF, pasteText } from "../app/src/live-line.js";
 import { agentKeys, combo, keyOfChar, MODS } from "../app/src/agent-keys.js";
+import bauhausArch from "./assets/bauhaus-arch.png";
+import chevronIcon from "./assets/chevron.svg";
 import downIcon from "./assets/down.svg";
 import gearIcon from "./assets/gear.svg";
 import herdrIcon from "./assets/herdr-icon.png";
@@ -27,10 +29,10 @@ const KIND_TEXT: Record<string, string> = { permission: "等你确认", question
 const STATUS_TEXT: Record<string, string> = { connecting: "连接中…", offline: "电脑离线", ready: "已连接", error: "连接出错", idle: "未连接" };
 const STATUS_DOT: Record<string, string> = { ready: "bg-ok", connecting: "bg-warn", offline: "bg-idle", error: "bg-bad", idle: "bg-idle" };
 const TAG_STYLE: Record<string, string> = {
-  working: "bg-warn/15 text-warn",
-  blocked: "bg-warn/20 text-warn",
+  working: "bg-secondary text-foreground",
+  blocked: "bg-foreground text-background",
   error: "bg-bad/15 text-bad",
-  done: "bg-[#28569a]/15 text-[#28569a]",
+  done: "bg-[#879fb0]/20 text-[#688296]",
 };
 
 const SHELLS = new Set(["zsh", "bash", "fish", "sh", "dash", "nu", "pwsh", "powershell", "cmd", "elvish", "xonsh", "tcsh", "csh", "ksh", "ion"]);
@@ -47,18 +49,6 @@ function Icon(props: { src: any; size?: number; color?: string; class?: string }
       class={props.class ?? (props.color ? undefined : "tint-muted-foreground")}
       style={props.color ? { width: n, height: n, tintColor: props.color } : { width: n, height: n }}
     />
-  );
-}
-
-/** Signature Bauhaus triadic architectural rule (Vermilion Red · Ochre Yellow · Cobalt Blue · Hairline). */
-function BauhausRule() {
-  return (
-    <View class="h-[3px] flex-row overflow-hidden rounded-[1px]">
-      <View class="w-7 bg-[#d13b27]" />
-      <View class="w-11 bg-[#e5a93b]" />
-      <View class="w-16 bg-[#28569a]" />
-      <View class="flex-1 bg-border" />
-    </View>
   );
 }
 
@@ -82,24 +72,24 @@ function ProgIcon(props: { t?: Terminal | null; size?: number; dark?: boolean })
       <Image
         src={entry.src}
         class={entry.tint && !props.dark ? "tint-muted-foreground" : undefined}
-        style={entry.tint && props.dark ? { width: n, height: n, tintColor: "#f2efe9" } : { width: n, height: n }}
+        style={entry.tint && props.dark ? { width: n, height: n, tintColor: "#e6e6e2" } : { width: n, height: n }}
       />
     </View>
   );
 }
 
-/** Right-side status indicator matching Herdr.app's sidebar with Bauhaus geometric shapes. */
+/** Right-side status indicator in minimalist monochrome geometry. */
 function StatusMark(props: { state?: string | null }) {
   const st = props.state;
   if (st === "working") {
     return (
       <View class="h-3.5 w-3.5 items-center justify-center">
-        <Image src={spinnerIcon} style={{ width: 14, height: 14, tintColor: "#d98a16" }} />
+        <Image src={spinnerIcon} style={{ width: 14, height: 14, tintColor: "#879fb0" }} />
       </View>
     );
   }
-  if (st === "done") return <View class="h-2 w-2 rounded-[2px] bg-[#28569a]" />;
-  if (st === "idle") return <View class="h-2 w-2 rounded-full border border-idle" />;
+  if (st === "done") return <View class="h-2 w-2 rounded-full bg-[#879fb0]" />;
+  if (st === "idle") return <View class="h-1.5 w-1.5 rounded-full bg-idle/60" />;
   return null;
 }
 
@@ -133,100 +123,129 @@ function PairScreen() {
     } catch (e: any) { problem.set(e.message || "无法打开相机扫码"); }
   }
   return (
-    <Scroll class="flex-1 bg-background" contentClass="grow justify-center px-5 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
+    <Scroll class="flex-1 bg-[#141414]" contentClass="grow justify-between pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
       <If when={sas()} else={
-        <View class="gap-4 py-6">
-          <View class="gap-3">
-            <View class="flex-row items-center gap-3.5">
-              <View class="h-16 w-16 overflow-hidden rounded-[12px] border border-border bg-card">
-                <Image src={herdrIcon} style={{ width: 64, height: 64 }} />
+        <View class="flex-1 justify-between">
+          {/* Upper editorial block (modelled after Native Editor monochrome layout) */}
+          <View class="gap-6 px-6 pt-6">
+            <View class="gap-2.5">
+              <View class="flex-row items-center gap-3">
+                <View class="h-11 w-11 overflow-hidden rounded-[10px] border border-[#2c2c2c] bg-[#1b1c1e]">
+                  <Image src={herdrIcon} style={{ width: 44, height: 44 }} />
+                </View>
+                <Text class="font-mono text-[12px] tracking-[0.06em] text-[#879fb0]">herdr 远程</Text>
               </View>
-              <View class="flex-1 gap-1">
-                <Text class="text-[26px] font-bold text-foreground">herdr 远程</Text>
-                <Text class="text-[13.5px] leading-snug text-muted-foreground">
-                  在手机上看和操作 Mac 上 Herdr 的终端与 agent。端到端加密。
+              <View class="pt-1">
+                <Text class="text-[44px] font-bold leading-[1.02] tracking-[-0.02em] text-[#d4d6d2]">Herdr</Text>
+                <Text class="text-[44px] font-bold leading-[1.02] tracking-[-0.02em] text-[#d4d6d2]">Relay</Text>
+              </View>
+              <Text class="text-[13px] leading-snug text-[#787a76]">
+                在手机上看和操作 Mac 上 Herdr 的终端与 agent。端到端加密。
+              </Text>
+            </View>
+
+            <If when={problem()}>
+              {(p) => (
+                <View class="rounded-[6px] bg-[#2a1c1b] px-3 py-2">
+                  <Text class="text-[13px] text-[#e07a6f]">{p()}</Text>
+                </View>
+              )}
+            </If>
+
+            {/* Minimalist numbered steps matching Native Editor's 01 / 02 / 03 list */}
+            <View class="gap-1.5">
+              <Text class="pb-1 font-mono text-[10.5px] tracking-[0.1em] text-[#6e706c]">STEPS</Text>
+              <View class="flex-row items-baseline gap-3 rounded-[5px] bg-[#222222] px-2.5 py-2">
+                <Text class="font-mono text-[12px] text-[#879fb0]" style={{ fontVariant: ["tabular-nums"] }}>01</Text>
+                <Text class="text-[13px] font-semibold text-[#e6e6e2]">Herdr.app</Text>
+                <Text class="flex-1 font-mono text-[12px] text-[#787a76]" style={{ numberOfLines: 1 }}>
+                  在 Mac 的 Herdr.app 里点标签栏右上角的手机图标，再点「配对新手机」
+                </Text>
+              </View>
+              <View class="flex-row items-baseline gap-3 px-2.5 py-1.5">
+                <Text class="font-mono text-[12px] text-[#666864]" style={{ fontVariant: ["tabular-nums"] }}>02</Text>
+                <Text class="text-[13px] font-semibold text-[#d4d6d2]">Scan QR</Text>
+                <Text class="flex-1 font-mono text-[12px] text-[#787a76]" style={{ numberOfLines: 1 }}>
+                  点下面的按钮扫描 Mac 上的二维码
+                </Text>
+              </View>
+              <View class="flex-row items-baseline gap-3 px-2.5 py-1.5">
+                <Text class="font-mono text-[12px] text-[#666864]" style={{ fontVariant: ["tabular-nums"] }}>03</Text>
+                <Text class="text-[13px] font-semibold text-[#d4d6d2]">Confirm</Text>
+                <Text class="flex-1 font-mono text-[12px] text-[#787a76]" style={{ numberOfLines: 1 }}>
+                  在 Mac 上核对 6 位数字，输入 y 确认
                 </Text>
               </View>
             </View>
-            <BauhausRule />
-          </View>
 
-          <If when={problem()}>
-            {(p) => (
-              <View class="rounded-[10px] border border-bad/30 bg-bad/10 px-3.5 py-2.5">
-                <Text class="text-[13px] text-bad">{p()}</Text>
+            {/* Paste link box in understated monochrome */}
+            <View class="gap-2 pt-1">
+              <View class="flex-row items-center justify-between">
+                <Text class="font-mono text-[12px] text-[#787a76]">或粘贴配对链接</Text>
+                <Button onPress={async () => { const c = await Clipboard.readText(); if (c) text.set(c); }} class="px-1 py-0.5 active:opacity-50">
+                  <Text class="font-mono text-[12px] text-[#879fb0]">从剪贴板粘贴</Text>
+                </Button>
               </View>
-            )}
-          </If>
-
-          <View class="overflow-hidden rounded-[10px] border border-border bg-card">
-            <View class="flex-row items-start gap-3 border-b border-separator px-3.5 py-3">
-              <Text class="w-6 font-mono text-[12px] font-bold text-[#d13b27]" style={{ fontVariant: ["tabular-nums"] }}>01</Text>
-              <Text class="flex-1 text-[13.5px] leading-snug text-card-foreground">在 Mac 的 Herdr.app 里点标签栏右上角的手机图标，再点「配对新手机」</Text>
+              <View class="flex-row items-center gap-2">
+                <View class="flex-1 rounded-[6px] bg-[#1e1e1e] px-3">
+                  <Input value={text()} onChange={(e) => text.set(e.value)} placeholder="https://…/#p=…" autoCapitalize="none" autoCorrect={false}
+                    class="py-2 text-[14px] text-[#e6e6e2]" testID="pair-link" />
+                </View>
+                <Button onPress={() => go()} disabled={busy() || !text()}
+                  class={`h-9 items-center justify-center rounded-[6px] bg-[#2a2a2a] px-4 active:opacity-80 ${!text() ? "opacity-40" : ""}`}>
+                  <Text class="text-[13.5px] font-semibold text-[#e6e6e2]">{busy() ? "连接中…" : "配对"}</Text>
+                </Button>
+              </View>
             </View>
-            <View class="flex-row items-start gap-3 border-b border-separator px-3.5 py-3">
-              <Text class="w-6 font-mono text-[12px] font-bold text-[#d98a16]" style={{ fontVariant: ["tabular-nums"] }}>02</Text>
-              <Text class="flex-1 text-[13.5px] leading-snug text-card-foreground">点下面的按钮扫描 Mac 上的二维码</Text>
-            </View>
-            <View class="flex-row items-start gap-3 px-3.5 py-3">
-              <Text class="w-6 font-mono text-[12px] font-bold text-[#28569a]" style={{ fontVariant: ["tabular-nums"] }}>03</Text>
-              <Text class="flex-1 text-[13.5px] leading-snug text-card-foreground">在 Mac 上核对 6 位数字，输入 y 确认</Text>
-            </View>
-          </View>
 
-          {host.available() ? (
-            <Button onPress={scan} disabled={busy()} class="h-12 flex-row items-center justify-center gap-2 rounded-[10px] bg-primary active:opacity-80" testID="scan-qr">
-              <Icon src={scanIcon} size={18} class="tint-primary-foreground" />
-              <Text class="text-[15px] font-semibold text-primary-foreground">扫描二维码</Text>
-            </Button>
-          ) : null}
-
-          <View class="gap-2.5 rounded-[10px] border border-border bg-card p-3.5">
-            <View class="flex-row items-center justify-between">
-              <Text class="text-[12.5px] font-medium text-muted-foreground">或粘贴配对链接</Text>
-              <Button onPress={async () => { const c = await Clipboard.readText(); if (c) text.set(c); }} class="px-1 py-0.5 active:opacity-50">
-                <Text class="text-[12.5px] font-semibold text-[#28569a]">从剪贴板粘贴</Text>
+            {addingMac() ? (
+              <Button onPress={cancelPair} class="h-9 items-center justify-center active:opacity-50" testID="cancel-pair">
+                <Text class="text-[13px] text-[#787a76]">取消</Text>
               </Button>
-            </View>
-            <View class="rounded-[8px] border border-separator bg-secondary px-3">
-              <Input value={text()} onChange={(e) => text.set(e.value)} placeholder="https://…/#p=…" autoCapitalize="none" autoCorrect={false}
-                class="py-2.5 text-[15px] text-foreground" testID="pair-link" />
-            </View>
-            <Button onPress={() => go()} disabled={busy() || !text()}
-              class={`h-10 items-center justify-center rounded-[8px] bg-secondary active:opacity-80 ${!text() ? "opacity-40" : ""}`}>
-              <Text class="text-[14.5px] font-semibold text-foreground">{busy() ? "连接中…" : "配对"}</Text>
-            </Button>
+            ) : null}
+            <If when={status() !== "idle" && !problem()}>
+              <Text class="text-[12.5px] text-[#787a76]" testID="pair-status">{STATUS_TEXT[status()] ?? status()}</Text>
+            </If>
           </View>
 
-          {addingMac() ? (
-            <Button onPress={cancelPair} class="h-10 items-center justify-center active:opacity-50" testID="cancel-pair">
-              <Text class="text-[14px] text-muted-foreground">取消</Text>
-            </Button>
-          ) : null}
-          <If when={status() !== "idle" && !problem()}>
-            <Text class="text-center text-[13px] text-muted-foreground" testID="pair-status">{STATUS_TEXT[status()] ?? status()}</Text>
-          </If>
+          {/* Bottom architectural quarter-circle composition (matching Native Editor's bottom-left action + right slate arch) */}
+          <View class="relative mt-4 h-[168px] w-full overflow-hidden">
+            <Image src={bauhausArch} style={{ width: 440, height: 168 }} />
+            <View class="absolute inset-x-0 bottom-0 h-[56px] flex-row items-center">
+              {host.available() ? (
+                <Button onPress={scan} disabled={busy()}
+                  class="h-full w-[172px] flex-row items-center justify-between px-5 active:opacity-75"
+                  testID="scan-qr">
+                  <Text class="text-[16px] font-bold text-[#141414]">扫描二维码</Text>
+                  <Icon src={scanIcon} size={17} color="#647d90" />
+                </Button>
+              ) : (
+                <View class="h-full w-[172px] flex-row items-center justify-between px-5">
+                  <Text class="text-[15px] font-bold text-[#141414]">粘贴链接</Text>
+                </View>
+              )}
+            </View>
+          </View>
         </View>
       }>
         {(code) => (
-          <View class="gap-4 py-8">
+          <View class="flex-1 justify-center gap-5 px-6 py-10">
             <View class="flex-row items-center gap-3">
-              <View class="h-12 w-12 overflow-hidden rounded-[10px] border border-border bg-card">
+              <View class="h-12 w-12 overflow-hidden rounded-[10px] border border-[#2c2c2c] bg-[#1b1c1e]">
                 <Image src={herdrIcon} style={{ width: 48, height: 48 }} />
               </View>
               <View class="flex-1">
-                <Text class="text-[22px] font-bold text-foreground">在 Mac 上确认</Text>
-                <Text class="text-[13px] text-muted-foreground">核对终端里的 6 位数字并输入 y</Text>
+                <Text class="text-[22px] font-bold text-[#e6e6e2]">在 Mac 上确认</Text>
+                <Text class="text-[13px] text-[#787a76]">核对终端里的 6 位数字并输入 y</Text>
               </View>
             </View>
-            <BauhausRule />
-            <View class="my-2 items-center justify-center rounded-[10px] border border-border bg-card px-6 py-6">
-              <Text class="font-mono text-[46px] font-bold tracking-[0.12em] text-foreground" style={{ fontVariant: ["tabular-nums"] }} testID="sas">
+            <View class="my-2 items-center justify-center rounded-[8px] bg-[#1e1e1e] px-6 py-7">
+              <Text class="font-mono text-[46px] font-bold tracking-[0.12em] text-[#e6e6e2]" style={{ fontVariant: ["tabular-nums"] }} testID="sas">
                 {code().length === 6 ? `${code().slice(0, 3)} ${code().slice(3)}` : code()}
               </Text>
             </View>
-            <Button onPress={cancelPair} class="h-11 w-full items-center justify-center rounded-[10px] border border-border bg-card active:bg-secondary" testID="cancel-pair">
-              <Text class="text-[15px] font-medium text-muted-foreground">取消</Text>
+            <Button onPress={cancelPair} class="h-11 w-full items-center justify-center rounded-[8px] bg-[#222222] active:opacity-80" testID="cancel-pair">
+              <Text class="text-[15px] font-medium text-[#d4d6d2]">取消</Text>
             </Button>
           </View>
         )}
@@ -254,7 +273,7 @@ function Row(props: { t: Terminal; first: boolean }) {
           <Text class={`text-[15px] font-semibold ${st === "idle" ? "text-muted-foreground" : "text-card-foreground"}`} style={{ numberOfLines: 1 }}>
             {what}
           </Text>
-          <Text class="font-mono text-[11px] font-medium text-idle">{t.address}</Text>
+          <Text class="font-mono text-[11px] text-idle">{t.address}</Text>
         </View>
         {sub ? <Text class="text-[12.5px] text-muted-foreground" style={{ numberOfLines: 1 }}>{sub}</Text> : null}
       </View>
@@ -270,7 +289,7 @@ function Row(props: { t: Terminal; first: boolean }) {
 
 type GroupItem = { kind: "tab"; label: string } | { kind: "term"; t: Terminal; firstAfterLabel: boolean };
 
-function Group(props: { title: string; items: GroupItem[]; count: number; space?: Space; needs?: boolean }) {
+function Group(props: { index: number; title: string; items: GroupItem[]; count: number; space?: Space; needs?: boolean }) {
   const adding = signal(false);
   async function add() {
     if (adding() || !props.space) return;
@@ -285,25 +304,27 @@ function Group(props: { title: string; items: GroupItem[]; count: number; space?
   return (
     <View class="gap-1.5">
       <View class="min-h-7 flex-row items-center justify-between px-1">
-        <View class="flex-row items-center gap-2">
-          <View class={`h-2 w-2 ${props.needs ? "bg-[#d13b27]" : "bg-[#28569a]"}`} />
-          <Text class={`text-[13px] font-semibold ${props.needs ? "text-[#d13b27]" : "text-foreground"}`}>{props.title}</Text>
+        <View class="flex-row items-baseline gap-2">
           <Text class="font-mono text-[11.5px] text-idle" style={{ fontVariant: ["tabular-nums"] }}>
-            {String(props.count).padStart(2, "0")}
+            {String(props.index).padStart(2, "0")}
+          </Text>
+          <Text class={`text-[13.5px] font-semibold ${props.needs ? "text-foreground" : "text-foreground"}`}>{props.title}</Text>
+          <Text class="font-mono text-[11.5px] text-muted-foreground" style={{ fontVariant: ["tabular-nums"] }}>
+            {props.count}
           </Text>
         </View>
         {props.space ? (
-          <Button onPress={add} disabled={adding()} class="h-7 w-7 items-center justify-center rounded-[6px] border border-border bg-card active:bg-secondary" testID={`add-${props.space.id}`} accessibilityLabel="新建终端">
+          <Button onPress={add} disabled={adding()} class="h-7 w-7 items-center justify-center rounded-[6px] bg-card active:bg-secondary" testID={`add-${props.space.id}`} accessibilityLabel="新建终端">
             <Icon src={plusIcon} size={15} class="tint-foreground" />
           </Button>
         ) : null}
       </View>
       {props.items.length ? (
-        <View class="overflow-hidden rounded-[10px] border border-border bg-card">
+        <View class="overflow-hidden rounded-[8px] border border-border bg-card">
           {props.items.map((item) =>
             item.kind === "tab" ? (
               <View class="border-t border-separator bg-secondary/50 px-3.5 py-1">
-                <Text class="font-mono text-[11px] font-medium text-muted-foreground">{item.label}</Text>
+                <Text class="font-mono text-[11px] text-muted-foreground">{item.label}</Text>
               </View>
             ) : (
               <Row t={item.t} first={item.firstAfterLabel} />
@@ -311,7 +332,7 @@ function Group(props: { title: string; items: GroupItem[]; count: number; space?
           )}
         </View>
       ) : (
-        <View class="rounded-[10px] border border-separator bg-card px-3.5 py-2.5">
+        <View class="rounded-[8px] border border-separator bg-card px-3.5 py-2.5">
           <Text class="text-[13px] text-muted-foreground">没有正在运行的终端</Text>
         </View>
       )}
@@ -376,23 +397,14 @@ function HomeScreen() {
     <NavPage
       title={macName()}
       headerClass="bg-background"
-      headerTitle={
-        <View class="items-center">
-          <Text class="text-[16px] font-semibold text-foreground" style={{ numberOfLines: 1 }}>{macName()}</Text>
-          <View class="flex-row items-center gap-1.5">
-            <View class={`h-2 w-2 rounded-full ${statusInfo().dot}`} />
-            <Text class="text-[11.5px] text-muted-foreground" testID="status">{statusInfo().text}</Text>
-          </View>
-        </View>
-      }
+      ios={{ headerRightSymbol: "gearshape" }}
       headerRight={
-        <Button onPress={() => nav.push({ name: "settings" })} class="h-8 w-8 items-center justify-center rounded-[8px] active:bg-secondary" testID="settings" accessibilityLabel="设置">
+        <Button onPress={() => nav.push({ name: "settings" })} class="h-8 w-8 items-center justify-center rounded-[8px] active:bg-secondary" accessibilityLabel="设置">
           <Icon src={gearIcon} size={19} class="tint-foreground" />
         </Button>
       }
     >
       <Scroll class="flex-1 bg-background" contentClass="gap-4 px-4 pb-10 pt-2">
-        <BauhausRule />
         {desktops().length > 1 ? (
           <Scroll horizontal scrollbar={false} class="flex-none" contentClass="flex-row gap-2">
             {desktops().map((d: Saved) => {
@@ -401,27 +413,52 @@ function HomeScreen() {
                 <Button onPress={() => switchDesktop(d.desktopId)}
                   class={`h-8 flex-row items-center gap-1.5 rounded-[6px] px-3 ${active ? "bg-primary" : "border border-border bg-card"}`}
                   testID={`mac-${d.desktopId}`}>
-                  <View class={`h-1.5 w-1.5 ${active ? "bg-[#e5a93b]" : "bg-idle"}`} />
+                  <View class={`h-1.5 w-1.5 rounded-full ${active ? "bg-[#879fb0]" : "bg-idle"}`} />
                   <Text class={`text-[13px] font-semibold ${active ? "text-primary-foreground" : "text-card-foreground"}`}>{d.desktopName || "Mac"}</Text>
                 </Button>
               );
             })}
           </Scroll>
         ) : null}
+
+        {/* In-page monochrome status & settings bar (100% reliable Yoga touch target + nav headerRightSymbol) */}
+        <Button
+          onPress={() => nav.push({ name: "settings" })}
+          class="flex-row items-center gap-3 rounded-[8px] border border-border bg-card px-3.5 py-2.5 active:bg-secondary"
+          testID="settings"
+        >
+          <View class="h-9 w-9 overflow-hidden rounded-[8px] border border-border bg-[#141414]">
+            <Image src={herdrIcon} style={{ width: 36, height: 36 }} />
+          </View>
+          <View class="flex-1 gap-0.5">
+            <View class="flex-row items-center gap-1.5">
+              <View class={`h-2 w-2 rounded-full ${statusInfo().dot}`} />
+              <Text class="text-[14.5px] font-semibold text-card-foreground" testID="status">{statusInfo().text}</Text>
+            </View>
+            <Text class="font-mono text-[11.5px] text-muted-foreground" style={{ numberOfLines: 1 }}>
+              {problem() || `${list().terminals.length} 个终端 · 端到端加密`}
+            </Text>
+          </View>
+          <View class="flex-row items-center gap-1">
+            <Text class="text-[12.5px] font-medium text-muted-foreground">设置</Text>
+            <Icon src={chevronIcon} size={13} class="tint-muted-foreground" />
+          </View>
+        </Button>
+
         {status() === "offline" ? (
-          <View class="rounded-[10px] border border-warn/30 bg-warn/15 px-3.5 py-2.5">
-            <Text class="text-[13px] text-warn">Mac 离线或后台服务没在运行。恢复后会自动重连。</Text>
+          <View class="rounded-[8px] border border-border bg-card px-3.5 py-2.5">
+            <Text class="text-[13px] text-muted-foreground">Mac 离线或后台服务没在运行。恢复后会自动重连。</Text>
           </View>
         ) : null}
         {status() === "ready" && list().core && list().core !== "online" ? (
-          <View class="rounded-[10px] border border-border bg-card px-3.5 py-2.5">
+          <View class="rounded-[8px] border border-border bg-card px-3.5 py-2.5">
             <Text class="text-[13px] text-muted-foreground">Mac 在线，但 Herdr 没有运行（herdr-core 不在）。打开 Herdr.app 后这里会自动出现终端。</Text>
           </View>
         ) : null}
         {groups().length ? (
-          groups().map((g) => <Group title={g.title} items={g.items} count={g.count} space={g.space} needs={g.needs} />)
+          groups().map((g, idx) => <Group index={idx + 1} title={g.title} items={g.items} count={g.count} space={g.space} needs={g.needs} />)
         ) : (
-          <View class="rounded-[10px] border border-border bg-card px-3.5 py-3">
+          <View class="rounded-[8px] border border-border bg-card px-3.5 py-3">
             <Text class="text-[13px] text-muted-foreground">{status() === "ready" ? "没有正在运行的终端。" : "连接中…"}</Text>
           </View>
         )}
@@ -443,13 +480,12 @@ function SettingsScreen() {
   return (
     <NavPage title="设置" headerClass="bg-background">
       <Scroll class="flex-1 bg-background" contentClass="gap-5 px-4 pt-2 pb-10">
-        <BauhausRule />
         <View class="gap-1.5">
-          <View class="flex-row items-center gap-2 px-1">
-            <View class="h-2 w-2 bg-[#28569a]" />
-            <Text class="text-[12.5px] font-semibold text-foreground">当前设备</Text>
+          <View class="flex-row items-baseline gap-2 px-1">
+            <Text class="font-mono text-[11.5px] text-idle">01</Text>
+            <Text class="text-[13px] font-semibold text-foreground">当前设备</Text>
           </View>
-          <View class="overflow-hidden rounded-[10px] border border-border bg-card">
+          <View class="overflow-hidden rounded-[8px] border border-border bg-card">
             <Field label="电脑" value={paired()?.desktopName ?? "Mac"} />
             <Field label="这台设备" value={info()?.deviceName ?? "—"} />
             <Field label="中继" value={(paired()?.relay ?? "—").replace(/^https?:\/\//, "")} last />
@@ -457,28 +493,28 @@ function SettingsScreen() {
           <Text class="px-1 text-[12px] leading-snug text-muted-foreground">消息端到端加密，中继只转发看不懂的密文。</Text>
         </View>
         <View class="gap-1.5">
-          <View class="flex-row items-center gap-2 px-1">
-            <View class="h-2 w-2 bg-[#e5a93b]" />
-            <Text class="text-[12.5px] font-semibold text-foreground">已配对的 Mac（{desktops().length}）</Text>
+          <View class="flex-row items-baseline gap-2 px-1">
+            <Text class="font-mono text-[11.5px] text-idle">02</Text>
+            <Text class="text-[13px] font-semibold text-foreground">已配对的 Mac（{desktops().length}）</Text>
           </View>
-          <View class="overflow-hidden rounded-[10px] border border-border bg-card">
+          <View class="overflow-hidden rounded-[8px] border border-border bg-card">
             {desktops().map((d: Saved, i: number) => {
               const active = d.desktopId === paired()?.desktopId;
               return (
                 <Button onPress={() => { switchDesktop(d.desktopId); nav.pop(); }}
                   class={`ml-3.5 min-h-11 flex-row items-center gap-3 py-2.5 pr-3.5 ${i === desktops().length - 1 ? "" : "border-b border-separator"}`}>
-                  <View class={`h-2 w-2 ${active ? "bg-ok" : "bg-idle"}`} />
+                  <View class={`h-2 w-2 rounded-full ${active ? "bg-ok" : "bg-idle"}`} />
                   <Text class="flex-1 text-[15px] font-medium text-card-foreground" style={{ numberOfLines: 1 }}>{d.desktopName || "Mac"}</Text>
                   <Text class="font-mono text-[12.5px] text-muted-foreground">{active ? "当前" : "切换"}</Text>
                 </Button>
               );
             })}
           </View>
-          <Button onPress={() => { nav.pop(); addingMac.set(true); }} class="h-11 items-center justify-center rounded-[10px] border border-border bg-card active:bg-secondary" testID="add-mac">
+          <Button onPress={() => { nav.pop(); addingMac.set(true); }} class="h-11 items-center justify-center rounded-[8px] border border-border bg-card active:bg-secondary" testID="add-mac">
             <Text class="text-[14.5px] font-semibold text-foreground">配对另一台 Mac</Text>
           </Button>
         </View>
-        <Button onPress={async () => { nav.pop(); await forget(); }} class="h-11 items-center justify-center rounded-[10px] border border-bad/30 bg-card active:bg-secondary">
+        <Button onPress={async () => { nav.pop(); await forget(); }} class="h-11 items-center justify-center rounded-[8px] border border-bad/30 bg-card active:bg-secondary">
           <Text class="text-[14.5px] font-semibold text-destructive">取消配对</Text>
         </Button>
       </Scroll>
@@ -487,7 +523,7 @@ function SettingsScreen() {
 }
 
 // ------------------------------------------------------------------ terminal ---------------
-const DARK = { bar: "#161614", tint: "#f2efe9" };
+const DARK = { bar: "#141414", tint: "#e6e6e2" };
 // Matches DESIGN.md「键盘栏的顺序」: Esc ← ↑ ↓ → ⏎ ⇧Tab ^C │ agent keys │ ^ ⌥ ⇧ │ Tab 粘贴 换行 1 2 3 y n ^D ^R ^L
 const KEYBAR_FRONT: [string, string][] = [
   ["Esc", "\x1b"], ["←", "left"], ["↑", "up"], ["↓", "down"], ["→", "right"], ["⏎", "\r"], ["⇧Tab", "\x1b[Z"], ["^C", "\x03"],
@@ -526,12 +562,16 @@ function TermScreen(props: { address: string }) {
   const voiceLeftSec = signal(60);
   const mods = signal<string[]>([]);
   const litKey = signal("");
+  const webReady = signal(false);
   let litTimer: any = 0;
   let repeatDelay: any = 0;
   let repeatEvery: any = 0;
   let didRepeat = false;
   let voiceMeterTimer: any = 0;
   let voiceLimitTimer: any = 0;
+  // Wait for WebView to measure phone grid (`ready` with `fit`) before calling `term.open`;
+  // fallback after 250ms in headless `nsh test` where WebView does not run JS.
+  let bootTimer: any = setTimeout(() => webReady.set(true), 250);
 
   let field!: InputRef;
   let web!: WebViewRef;
@@ -539,7 +579,7 @@ function TermScreen(props: { address: string }) {
   let opening = false;
   let pageReady = false;
   let closed = false;
-  let sized = false;
+  let sized = true;
   let opened = false;
   let leads = true;
   let lastFit: { cols: number; rows: number } | null = null;
@@ -604,10 +644,11 @@ function TermScreen(props: { address: string }) {
     opening = true;
     early.length = 0;
     try {
-      const r = (await rpc("term.open", { address, fit: lastFit, lead: leads || !opened })) as {
+      const fit = lastFit;
+      const r = (await rpc("term.open", { address, fit, lead: leads || !opened })) as {
         s: number; cols: number; rows: number; sized?: boolean;
       };
-      fitSent = JSON.stringify(lastFit);
+      fitSent = JSON.stringify(fit);
       if (closed) { rpc("term.close", { s: r.s }).catch(() => {}); return; }
       s = r.s;
       sized = r.sized === true;
@@ -615,12 +656,13 @@ function TermScreen(props: { address: string }) {
       opened = true;
       notice.set("");
       for (const m of early.splice(0)) onStream(m);
+      refit(false);
     } catch (e: any) { notice.set(`打不开：${e.message}`); } finally { opening = false; }
   }
 
   setStreamListener(onStream);
-  effect(() => { if (status() === "ready" && s === null) open(); else if (status() !== "ready") s = null; });
-  effect(() => { const t = term(); if (t && !sized) post({ t: "size", cols: t.cols, rows: t.rows }); });
+  effect(() => { if (webReady() && status() === "ready" && s === null) open(); else if (status() !== "ready") s = null; });
+  effect(() => { const t = term(); if (t && opened && !sized) post({ t: "size", cols: t.cols, rows: t.rows }); });
   effect(() => { if (!blocked()) letGo.set(false); });
   effect(() => { line.hold(held()); sync(); });
   effect(() => {
@@ -630,6 +672,7 @@ function TermScreen(props: { address: string }) {
   });
   cleanup(() => {
     closed = true;
+    clearTimeout(bootTimer);
     clearTimeout(litTimer);
     stopRepeat();
     clearInterval(voiceMeterTimer);
@@ -642,8 +685,11 @@ function TermScreen(props: { address: string }) {
   function fromPage(data: string) {
     let m: any; try { m = JSON.parse(data); } catch { return; }
     if (m.t === "ready") {
+      clearTimeout(bootTimer);
       pageReady = true;
-      if (m.fit) { lastFit = m.fit; refit(false); }
+      if (m.fit) lastFit = m.fit;
+      webReady.set(true);
+      refit(false);
       for (const x of toPage.splice(0)) web.postMessage(x);
     } else if (m.t === "fit") {
       lastFit = m.fit;
@@ -875,12 +921,12 @@ function TermScreen(props: { address: string }) {
   return (
     <NavPage
       title={title()}
-      headerStyle={{ backgroundColor: DARK.bar, color: "#f2efe9", tintColor: DARK.tint }}
+      headerStyle={{ backgroundColor: DARK.bar, color: "#e6e6e2", tintColor: DARK.tint }}
       statusBar={{ foreground: "light" }}
       headerTitle={
         <View class="items-center gap-0.5" accessibilityLabel={title()}>
           <ProgIcon t={term()} size={20} dark />
-          <Text class="text-[11.5px] text-[#8a857c]" style={{ numberOfLines: 1 }}>{subtitle()}</Text>
+          <Text class="text-[11.5px] text-[#787a76]" style={{ numberOfLines: 1 }}>{subtitle()}</Text>
         </View>
       }
     >
@@ -898,16 +944,16 @@ function TermScreen(props: { address: string }) {
                     else if (action === "cancel-voice") stopVoice(true);
                     else if (action === "dismiss") notice.set("");
                   }}
-                  class="max-w-full flex-row items-center gap-2.5 rounded-full border border-[#383630] bg-[#262522]/95 px-3.5 py-1.5"
+                  class="max-w-full flex-row items-center gap-2.5 rounded-full border border-[#323232] bg-[#1e1e1e]/95 px-3.5 py-1.5"
                   testID="term-bubble"
                 >
                   {b().level !== undefined ? (
-                    <View class="h-1.5 w-14 overflow-hidden rounded-full bg-[#383630]">
-                      <View class="h-full rounded-full bg-[#28569a]" style={{ width: Math.round((0.08 + (b().level ?? 0) * 0.92) * 56) }} />
+                    <View class="h-1.5 w-14 overflow-hidden rounded-full bg-[#323232]">
+                      <View class="h-full rounded-full bg-[#879fb0]" style={{ width: Math.round((0.08 + (b().level ?? 0) * 0.92) * 56) }} />
                     </View>
                   ) : null}
-                  {b().busy ? <View class="h-2 w-2 rounded-full bg-[#e5a93b]" /> : null}
-                  <Text class={`text-[13.5px] ${b().warn ? "text-[#e5a93b]" : "text-[#f2efe9]"}`} style={{ numberOfLines: 1 }}>
+                  {b().busy ? <View class="h-2 w-2 rounded-full bg-[#879fb0]" /> : null}
+                  <Text class={`text-[13.5px] ${b().warn ? "text-[#d4d6d2]" : "text-[#e6e6e2]"}`} style={{ numberOfLines: 1 }}>
                     {b().text}
                   </Text>
                 </Button>
@@ -916,15 +962,15 @@ function TermScreen(props: { address: string }) {
           </If>
           <If when={!atLatest()}>
             <Button onPress={() => post({ t: "toLatest" })}
-              class="absolute right-3 bottom-3 h-[38px] w-[38px] items-center justify-center rounded-[10px] border border-[#383630] bg-[#262522]"
+              class="absolute right-3 bottom-3 h-[38px] w-[38px] items-center justify-center rounded-[10px] border border-[#323232] bg-[#1e1e1e]"
               testID="to-latest" accessibilityLabel="回到最新">
-              <Icon src={downIcon} size={20} color="#f2efe9" />
+              <Icon src={downIcon} size={20} color="#e6e6e2" />
             </Button>
           </If>
         </View>
 
-        {/* Braun / Bauhaus control deck matching .term-foot in app/src/main.js */}
-        <View class="gap-2 border-t border-[#2a2925] bg-[#161614] px-2 pt-2 pb-[env(safe-area-inset-bottom)]">
+        {/* Monochrome control deck matching .term-foot in app/src/main.js */}
+        <View class="gap-2 border-t border-[#242424] bg-[#141414] px-2 pt-2 pb-[env(safe-area-inset-bottom)]">
           <Scroll horizontal scrollbar={false} keyboardShouldPersistTaps="always" class="flex-none" contentClass="flex-row items-center gap-1.5 px-0.5">
             {KEYBAR_FRONT.map(([label, seq]) => (
               <Button
@@ -932,58 +978,58 @@ function TermScreen(props: { address: string }) {
                 onPressDown={() => onKeyDown(label, seq)}
                 onPressUp={stopRepeat}
                 testID={seq === "\r" ? "send" : undefined}
-                class={`h-[34px] min-w-[42px] items-center justify-center rounded-[6px] bg-[#262522] px-3 active:bg-[#3a3833] ${litKey() === label ? "border-2 border-[#e5a93b]" : ""}`}>
-                <Text class="text-[15px] font-medium text-[#f2efe9]">{label}</Text>
+                class={`h-[34px] min-w-[42px] items-center justify-center rounded-[6px] bg-[#222222] px-3 active:bg-[#333333] ${litKey() === label ? "border-2 border-[#d4d6d2]" : ""}`}>
+                <Text class="text-[15px] font-medium text-[#e6e6e2]">{label}</Text>
               </Button>
             ))}
             {agentShortcuts().map(([label, names]) => (
               <Button onPress={() => pressNamed(names, label)}
-                class={`h-[34px] min-w-[42px] items-center justify-center rounded-[6px] bg-[#262522] px-3 active:bg-[#3a3833] ${litKey() === label ? "border-2 border-[#e5a93b]" : ""}`}>
-                <Text class="text-[15px] font-medium text-[#f2efe9]">{label}</Text>
+                class={`h-[34px] min-w-[42px] items-center justify-center rounded-[6px] bg-[#222222] px-3 active:bg-[#333333] ${litKey() === label ? "border-2 border-[#d4d6d2]" : ""}`}>
+                <Text class="text-[15px] font-medium text-[#e6e6e2]">{label}</Text>
               </Button>
             ))}
             {named() ? MODS.map((m) => {
               const active = mods().includes(m);
               return (
                 <Button onPress={() => toggleMod(m)}
-                  class={`h-[34px] min-w-[42px] items-center justify-center rounded-[6px] px-3 ${active ? "bg-[#f2efe9]" : "bg-[#262522]"} active:bg-[#3a3833]`}>
-                  <Text class={`text-[15px] font-medium ${active ? "text-[#161614]" : "text-[#f2efe9]"}`}>{MOD_LABELS[m]}</Text>
+                  class={`h-[34px] min-w-[42px] items-center justify-center rounded-[6px] px-3 ${active ? "bg-[#e6e6e2]" : "bg-[#222222]"} active:bg-[#333333]`}>
+                  <Text class={`text-[15px] font-medium ${active ? "text-[#141414]" : "text-[#e6e6e2]"}`}>{MOD_LABELS[m]}</Text>
                 </Button>
               );
             }) : null}
             {KEYBAR_BACK.map(([label, seq]) => (
               <Button onPress={() => onKeyPress(label, seq)}
-                class={`h-[34px] min-w-[42px] items-center justify-center rounded-[6px] bg-[#262522] px-3 active:bg-[#3a3833] ${litKey() === label ? "border-2 border-[#e5a93b]" : ""}`}>
-                <Text class="text-[15px] font-medium text-[#f2efe9]">{label}</Text>
+                class={`h-[34px] min-w-[42px] items-center justify-center rounded-[6px] bg-[#222222] px-3 active:bg-[#333333] ${litKey() === label ? "border-2 border-[#d4d6d2]" : ""}`}>
+                <Text class="text-[15px] font-medium text-[#e6e6e2]">{label}</Text>
               </Button>
             ))}
           </Scroll>
 
           <View class="relative flex-row items-center gap-2 pb-1">
-            <Button onPress={pick} class="h-10 w-10 items-center justify-center rounded-[10px] bg-[#262522] active:bg-[#3a3833]" testID="pick" accessibilityLabel="插入图片">
-              <Icon src={plusIcon} size={21} color="#a6a196" />
+            <Button onPress={pick} class="h-10 w-10 items-center justify-center rounded-[10px] bg-[#222222] active:bg-[#333333]" testID="pick" accessibilityLabel="插入图片">
+              <Icon src={plusIcon} size={21} color="#9a9c98" />
             </Button>
             <Button
               disabled={voiceState() === "busy"}
               onPressDown={() => startVoice()}
               onPressUp={() => { if (voiceState() === "rec") stopVoice(false); }}
               onPress={() => { if (voiceState() === "rec" && Date.now() - recStartedAt >= 400) stopVoice(false); }}
-              class={`h-10 flex-1 flex-row items-center justify-center gap-2 rounded-[10px] ${voiceState() === "rec" ? "bg-[#28569a]" : "bg-[#262522]"} active:bg-[#3a3833] ${voiceState() === "busy" ? "opacity-60" : ""}`}
+              class={`h-10 flex-1 flex-row items-center justify-center gap-2 rounded-[10px] ${voiceState() === "rec" ? "bg-[#879fb0]" : "bg-[#222222]"} active:bg-[#333333] ${voiceState() === "busy" ? "opacity-60" : ""}`}
               testID="voice"
               accessibilityLabel="按住说话"
             >
-              <View class={`h-2 w-2 rounded-full ${voiceState() === "rec" ? "bg-[#e5a93b]" : voiceOk() ? "bg-[#d13b27]" : "bg-[#757067]"}`} />
-              <Text class={`text-[15px] font-semibold tracking-[0.02em] ${voiceState() === "rec" ? "text-[#f2efe9]" : voiceOk() ? "text-[#f2efe9]" : "text-[#757067]"}`}>
+              <View class={`h-2 w-2 rounded-full ${voiceState() === "rec" ? "bg-[#141414]" : voiceOk() ? "bg-[#879fb0]" : "bg-[#555753]"}`} />
+              <Text class={`text-[15px] font-semibold tracking-[0.02em] ${voiceState() === "rec" ? "text-[#141414]" : voiceOk() ? "text-[#e6e6e2]" : "text-[#666864]"}`}>
                 {voiceState() === "rec" ? "松开 输入" : voiceState() === "busy" ? "识别中…" : "按住 说话"}
               </Text>
             </Button>
             <Button
               onPress={() => { if (focused()) Keyboard.dismiss(); else field.focus(); }}
-              class={`h-10 w-10 items-center justify-center rounded-[10px] ${focused() ? "bg-[#f2efe9]" : "bg-[#262522]"} active:bg-[#3a3833]`}
+              class={`h-10 w-10 items-center justify-center rounded-[10px] ${focused() ? "bg-[#e6e6e2]" : "bg-[#222222]"} active:bg-[#333333]`}
               testID="kbd-toggle"
               accessibilityLabel="键盘"
             >
-              <Icon src={kbdIcon} size={21} color={focused() ? "#161614" : "#a6a196"} />
+              <Icon src={kbdIcon} size={21} color={focused() ? "#141414" : "#9a9c98"} />
             </Button>
             {/* Invisible focusable input field (matches .term-keys in app/src/app.css) */}
             <Input
