@@ -788,8 +788,9 @@ probe 结束时 Mac 焦点停在 herdr-relay 工作区（因为 A 抢过焦点�
 
 ### 1. 路径沙箱（`host/files.js`）
 
-- 手机**不能**传入任意绝对路径。`files.roots` 只从当前 `herdr-core` 的工作区（`space.folder`）和终端工作目录（`t.foreground?.cwd ?? t.cwd`）收集根目录并分配 `rootId`。
+- 手机**不能**传入任意绝对路径。`files.roots` 只从当前 `herdr-core` 的工作区（优先取首终端 `foreground?.cwd ?? cwd`，回退 `space.folder`）和独立终端工作目录（`term:<address>`）收集根目录并分配 `rootId`；当传入 `term:<address>` 与某工作区同目录时自动归并到该工作区 `rootId`，使顶部工作区胶囊保持高亮。
 - `files.list {rootId, path}` 与 `files.open {rootId, path}` 先对根目录和目标路径分别做 `fs.realpath`，校验目标 `realpath` 严格位于根目录 `realpath` 内部（阻断 `../` 越界与指向工作区外部的符号链接），并拒绝列出或打开 `.git` 与 `.DS_Store`。
+- 入口与图标（`ios/App.tsx`）：iOS `UINavigationBar` 内自定义 `<Button>` 命中区为 `0×0`，因此文件夹入口放在首页每个工作区标题右侧的 `[📁 文件]` 胶囊按钮、顶部快捷栏，以及终端页底部工具栏 `+` 按钮旁；图标直接由 macOS 系统 `NSImage(systemSymbolName:)` 渲染 `@3x` Apple SF Symbols（`folder.fill` 天空蓝 `#389CFF`、`doc.text.fill`、`photo.fill`、`play.rectangle.fill`），点进子目录使用 `nav.push` 原生推页并支持左滑返回。
 
 ### 2. 按文件类型硬件预处理（Mac 端缓存于 `<dataDir>/cache/previews/`）
 

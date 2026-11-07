@@ -114,27 +114,25 @@ export function createFiles({ dir, terminals, extraRoots = [], log = () => {} })
 
   function collectRoots() {
     const out = [];
-    const seenFolder = new Set();
     const list = terminals?.list?.() ?? [];
     const layout = terminals?.layout?.() ?? [];
     const byAddr = new Map(list.map((t) => [t.address, t]));
 
     for (const space of layout) {
-      const first = (space.tabs ?? [])
-        .flatMap((tab) => tab.terminals ?? [])
-        .map((a) => terminals?.get?.(a) ?? byAddr.get(a))
-        .find(Boolean);
-      const folder = space.folder ?? first?.foreground?.cwd ?? first?.cwd;
+      const spaceAddrs = (space.tabs ?? []).flatMap((tab) => tab.terminals ?? []);
+      const first = spaceAddrs.map((a) => terminals?.get?.(a) ?? byAddr.get(a)).find(Boolean);
+      const firstProj = spaceAddrs.map((a) => byAddr.get(a)).find(Boolean);
+      const folder = first?.foreground?.cwd ?? first?.cwd ?? space.folder;
       if (!folder) continue;
-      const name = space.name || basename(folder) || space.id || '工作区';
+      const whereLabel = firstProj?.where ? String(firstProj.where).replace(/ \/ \d+$/, '') : '';
+      const name = space.name || whereLabel || basename(folder) || space.id || '工作区';
       out.push({ id: String(space.id), name, folder });
-      seenFolder.add(folder);
     }
 
     for (const t of list) {
-      const folder = t.foreground?.cwd ?? t.cwd;
-      if (!folder || seenFolder.has(folder)) continue;
-      seenFolder.add(folder);
+      const rawT = terminals?.get?.(t.address) ?? t;
+      const folder = rawT.foreground?.cwd ?? rawT.cwd ?? t.cwd;
+      if (!folder) continue;
       out.push({
         id: `term:${t.address}`,
         name: t.where ? String(t.where).replace(/ \/ \d+$/, '') : (basename(folder) || t.address),
@@ -153,8 +151,8 @@ export function createFiles({ dir, terminals, extraRoots = [], log = () => {} })
   async function resolveSafe(rootId, rawRelPath = '') {
     const allRoots = collectRoots();
     if (!allRoots.length) throw new Error('当前没有可浏览的工作区目录');
-    const root = (rootId ? allRoots.find((r) => r.id === String(rootId)) : allRoots[0]) ?? null;
-    if (!root) throw new Error('未知的工作区目录');
+    const matched = (rootId ? allRoots.find((r) => r.id === String(rootId)) : allRoots[0]) ?? allRoots[0];
+    const root = allRoots.find((r) => r.folder === matched.folder) ?? matched;
 
     let rootReal;
     try {
@@ -191,10 +189,15 @@ export function createFiles({ dir, terminals, extraRoots = [], log = () => {} })
   async function roots() {
     const all = collectRoots();
     const valid = [];
+    const seenFolders = new Set();
     for (const r of all) {
+      if (seenFolders.has(r.folder)) continue;
       try {
         const st = await stat(r.folder);
-        if (st.isDirectory()) valid.push({ id: r.id, name: r.name, folder: basename(r.folder) || r.folder });
+        if (st.isDirectory()) {
+          seenFolders.add(r.folder);
+          valid.push({ id: r.id, name: r.name, folder: basename(r.folder) || r.folder });
+        }
       } catch {}
     }
     return { roots: valid };

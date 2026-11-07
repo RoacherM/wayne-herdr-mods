@@ -48,11 +48,14 @@ test('roots, list, path sandboxing, text/image/video open and 64KB slice streami
   const files = createFiles({ dir: dataDir, terminals: fakeTerminals });
 
   try {
-    // 1. Roots discovery
+    // 1. Roots discovery (UI roots deduplicated, and term:<addr> canonicalizes to space root)
     const { roots } = await files.roots();
     assert.equal(roots.length, 1);
     assert.equal(roots[0].id, 's1');
     assert.equal(roots[0].name, 'herdr-relay');
+    const byTermRoot = await files.list({ rootId: 'term:t1', path: '' });
+    assert.equal(byTermRoot.rootId, 's1');
+    assert.equal(byTermRoot.items.length, 2);
 
     // 2. Directory listing (folders first, hides .git, .DS_Store, and outside symlinks)
     const rootList = await files.list({ rootId: 's1', path: '' });

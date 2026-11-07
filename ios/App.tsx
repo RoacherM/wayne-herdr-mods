@@ -14,16 +14,21 @@ import { TERM_HTML } from "./src/term-html";
 import { LiveLine, PASTE_LF, pasteText } from "../app/src/live-line.js";
 import { agentKeys, combo, keyOfChar, MODS } from "../app/src/agent-keys.js";
 import chevronIcon from "./assets/chevron.svg";
+import docIosIcon from "./assets/doc-ios.png";
 import downIcon from "./assets/down.svg";
 import fileTextIcon from "./assets/file-text.svg";
+import folderIosIcon from "./assets/folder-ios.png";
+import folderWhiteIcon from "./assets/folder-white.png";
 import folderIcon from "./assets/folder.svg";
 import gearIcon from "./assets/gear.svg";
 import herdrIcon from "./assets/herdr-icon.png";
 import kbdIcon from "./assets/kbd.svg";
+import photoIosIcon from "./assets/photo-ios.png";
 import photoIcon from "./assets/photo.svg";
 import plusIcon from "./assets/plus.svg";
 import scanIcon from "./assets/scan.svg";
 import spinnerIcon from "./assets/spinner.svg";
+import videoIosIcon from "./assets/video-ios.png";
 import videoIcon from "./assets/video.svg";
 
 type Route =
@@ -276,24 +281,33 @@ function Group(props: { title: string; items: GroupItem[]; space?: Space; needs?
       nav.push({ name: "term", address });
     } catch (e: any) { problem.set(e.message); } finally { adding.set(false); }
   }
+  const firstTerm = props.items.find((x): x is { kind: "term"; t: Terminal; firstAfterLabel: boolean } => x.kind === "term")?.t;
+  const groupRootId = props.space?.id ?? (firstTerm ? `term:${firstTerm.address}` : "");
+  function openFiles() {
+    tapHaptic();
+    nav.push({ name: "files", rootId: groupRootId || undefined, path: "", title: props.title });
+  }
   return (
     <View class="gap-2">
-      <View class="min-h-7 flex-row items-center justify-between px-1">
-        <Text class={`text-[13px] font-medium ${props.needs ? "text-foreground" : "text-muted-foreground"}`}>{props.title}</Text>
+      <View class="min-h-8 flex-row items-center gap-2 px-1">
+        <Text class={`flex-1 text-[13px] font-medium ${props.needs ? "text-foreground" : "text-muted-foreground"}`} style={{ numberOfLines: 1 }}>
+          {props.title}
+        </Text>
+        {groupRootId ? (
+          <Button
+            onPress={openFiles}
+            class="h-8 flex-row items-center gap-1.5 rounded-full bg-card px-3 active:bg-secondary"
+            testID={`files-${groupRootId}`}
+            accessibilityLabel="浏览文件"
+          >
+            <Image src={folderIosIcon} style={{ width: 17, height: 17 }} />
+            <Text class="text-[12.5px] font-medium text-card-foreground">文件</Text>
+          </Button>
+        ) : null}
         {props.space ? (
-          <View class="flex-row items-center gap-1.5">
-            <Button
-              onPress={() => { tapHaptic(); nav.push({ name: "files", rootId: props.space!.id, path: "", title: props.title }); }}
-              class="h-7 w-7 items-center justify-center rounded-full bg-card active:bg-secondary"
-              testID={`files-${props.space.id}`}
-              accessibilityLabel="浏览文件"
-            >
-              <Icon src={folderIcon} size={15} class="tint-muted-foreground" />
-            </Button>
-            <Button onPress={add} disabled={adding()} class="h-7 w-7 items-center justify-center rounded-full bg-card active:bg-secondary" testID={`add-${props.space.id}`} accessibilityLabel="新建终端">
-              <Icon src={plusIcon} size={16} class="tint-muted-foreground" />
-            </Button>
-          </View>
+          <Button onPress={add} disabled={adding()} class="h-8 w-8 items-center justify-center rounded-full bg-card active:bg-secondary" testID={`add-${props.space.id}`} accessibilityLabel="新建终端">
+            <Icon src={plusIcon} size={16} class="tint-muted-foreground" />
+          </Button>
         ) : null}
       </View>
       {props.items.length ? (
@@ -1028,16 +1042,6 @@ function TermScreen(props: { address: string }) {
           <Text class="text-[12px] text-[#8d8d93]" style={{ numberOfLines: 1 }}>{subtitle()}</Text>
         </View>
       }
-      headerRight={
-        <Button
-          onPress={() => { tapHaptic(); nav.push({ name: "files", rootId: spaceIdForTerm(), path: "", title: base(term()?.cwd) || title() }); }}
-          class="h-8 w-8 items-center justify-center rounded-full active:bg-[#2c2c2e]"
-          testID="term-files"
-          accessibilityLabel="浏览工作区文件"
-        >
-          <Icon src={folderIcon} size={18} color="#f2f2f7" />
-        </Button>
-      }
     >
       <View class="flex-1 bg-[#0b0b0c] pb-[env(keyboard-inset-height)]">
         {/* Terminal stage + floating status bubble + scroll-to-latest button */}
@@ -1120,6 +1124,14 @@ function TermScreen(props: { address: string }) {
               <Icon src={plusIcon} size={21} color="#aeaeb2" />
             </Button>
             <Button
+              onPress={() => { tapHaptic(); nav.push({ name: "files", rootId: spaceIdForTerm(), path: "", title: base(term()?.cwd) || title() }); }}
+              class="h-10 w-10 items-center justify-center rounded-full bg-[#2c2c2e] active:bg-[#48484a]"
+              testID="term-files"
+              accessibilityLabel="浏览工作区文件"
+            >
+              <Image src={folderWhiteIcon} style={{ width: 20, height: 20 }} />
+            </Button>
+            <Button
               disabled={voiceState() === "busy"}
               onPressDown={() => startVoice()}
               onPressUp={() => { if (voiceState() === "rec") stopVoice(false); }}
@@ -1184,11 +1196,11 @@ function fmtDuration(sec?: number) {
   return `${m}:${s < 10 ? "0" : ""}${s}`;
 }
 
-function fileIconFor(kind: string, dir: boolean) {
-  if (dir) return folderIcon;
-  if (kind === "image") return photoIcon;
-  if (kind === "video" || kind === "audio") return videoIcon;
-  return fileTextIcon;
+function fileEntryIconFor(kind: string, dir: boolean) {
+  if (dir) return folderIosIcon;
+  if (kind === "image") return photoIosIcon;
+  if (kind === "video" || kind === "audio") return videoIosIcon;
+  return docIosIcon;
 }
 
 function FilesScreen(props: { rootId?: string; path?: string; title?: string }) {
@@ -1199,16 +1211,19 @@ function FilesScreen(props: { rootId?: string; path?: string; title?: string }) 
   const items = signal<FileEntry[]>([]);
   const loading = signal<boolean>(true);
   const err = signal<string>("");
+  let initialTriggered = false;
 
-  async function loadDir(rId = activeRoot(), p = curPath()) {
+  async function loadDir(rId: string, p: string) {
     if (status() !== "ready") return;
     loading.set(true);
     err.set("");
     try {
-      if (!roots().length) {
+      let curRoots = roots();
+      if (!curRoots.length) {
         const rr = (await rpc("files.roots", {}, 15_000)) as { roots: RootEntry[] };
-        roots.set(rr.roots ?? []);
-        if (!rId && rr.roots?.length) rId = rr.roots[0].id;
+        curRoots = rr.roots ?? [];
+        roots.set(curRoots);
+        if (!rId && curRoots.length) rId = curRoots[0].id;
       }
       const res = (await rpc("files.list", { rootId: rId || undefined, path: p }, 20_000)) as {
         rootId: string; rootName: string; path: string; items: FileEntry[];
@@ -1225,7 +1240,10 @@ function FilesScreen(props: { rootId?: string; path?: string; title?: string }) 
   }
 
   effect(() => {
-    if (status() === "ready") loadDir(activeRoot(), curPath());
+    if (status() === "ready" && !initialTriggered) {
+      initialTriggered = true;
+      loadDir(props.rootId ?? "", props.path ?? "");
+    }
   });
 
   const segments = computed(() => {
@@ -1241,7 +1259,7 @@ function FilesScreen(props: { rootId?: string; path?: string; title?: string }) 
   return (
     <NavPage title={pageTitle()} headerClass="bg-background">
       <Scroll class="flex-1 bg-background" contentClass="gap-4 px-4 pt-2 pb-10">
-        {roots().length > 1 ? (
+        {!curPath() && roots().length > 1 ? (
           <Scroll horizontal scrollbar={false} class="flex-none" contentClass="flex-row items-center gap-2">
             {roots().map((r) => {
               const on = r.id === activeRoot();
@@ -1250,7 +1268,7 @@ function FilesScreen(props: { rootId?: string; path?: string; title?: string }) 
                   onPress={() => { tapHaptic(); loadDir(r.id, ""); }}
                   class={`h-9 flex-row items-center gap-2 rounded-full px-4 active:opacity-80 ${on ? "bg-primary" : "bg-card"}`}
                 >
-                  <Icon src={folderIcon} size={15} class={on ? "tint-primary-foreground" : "tint-muted-foreground"} />
+                  <Image src={on ? folderWhiteIcon : folderIosIcon} style={{ width: 17, height: 17 }} />
                   <Text class={`text-[14px] font-medium ${on ? "text-primary-foreground" : "text-card-foreground"}`}>{r.name}</Text>
                 </Button>
               );
@@ -1258,30 +1276,17 @@ function FilesScreen(props: { rootId?: string; path?: string; title?: string }) 
           </Scroll>
         ) : null}
 
-        {/* Breadcrumb bar */}
-        <Scroll horizontal scrollbar={false} class="flex-none" contentClass="flex-row items-center gap-1.5 px-1">
-          <Button
-            onPress={() => { if (curPath()) { tapHaptic(); loadDir(activeRoot(), ""); } }}
-            class="rounded-full bg-card px-3 py-1 active:bg-secondary"
-          >
-            <Text class={`text-[13px] font-medium ${curPath() ? "text-muted-foreground" : "text-foreground"}`}>{rootName()}</Text>
-          </Button>
-          {segments().map((seg, idx) => {
-            const targetPath = segments().slice(0, idx + 1).join("/");
-            const isLast = idx === segments().length - 1;
-            return (
-              <View class="flex-row items-center gap-1.5">
-                <Text class="text-[12px] text-idle">/</Text>
-                <Button
-                  onPress={() => { if (!isLast) { tapHaptic(); loadDir(activeRoot(), targetPath); } }}
-                  class="rounded-full bg-card px-3 py-1 active:bg-secondary"
-                >
-                  <Text class={`text-[13px] font-medium ${isLast ? "text-foreground" : "text-muted-foreground"}`}>{seg}</Text>
-                </Button>
-              </View>
-            );
-          })}
-        </Scroll>
+        {/* Breadcrumb bar when inside a subfolder */}
+        {curPath() ? (
+          <Scroll horizontal scrollbar={false} class="flex-none" contentClass="flex-row items-center gap-1.5 px-1">
+            <View class="flex-row items-center gap-1.5 rounded-full bg-card px-3 py-1.5">
+              <Image src={folderIosIcon} style={{ width: 15, height: 15 }} />
+              <Text class="font-mono text-[12.5px] text-muted-foreground" style={{ numberOfLines: 1 }}>
+                {rootName()} / {curPath()}
+              </Text>
+            </View>
+          </Scroll>
+        ) : null}
 
         {err() ? (
           <View class="rounded-2xl bg-bad/15 px-4 py-3">
@@ -1300,15 +1305,15 @@ function FilesScreen(props: { rootId?: string; path?: string; title?: string }) 
                 onPress={() => {
                   tapHaptic();
                   if (item.dir) {
-                    loadDir(activeRoot(), item.path);
+                    nav.push({ name: "files", rootId: activeRoot(), path: item.path, title: item.name });
                   } else {
                     nav.push({ name: "preview", rootId: activeRoot(), path: item.path, title: item.name });
                   }
                 }}
-                class={`min-h-12 flex-row items-center gap-3 px-4 py-3 active:bg-secondary ${i === 0 ? "" : "border-t border-separator"}`}
+                class={`min-h-13 flex-row items-center gap-3 px-4 py-3 active:bg-secondary ${i === 0 ? "" : "border-t border-separator"}`}
                 testID={`file-${item.name}`}
               >
-                <Icon src={fileIconFor(item.kind, item.dir)} size={18} class="tint-muted-foreground" />
+                <Image src={fileEntryIconFor(item.kind, item.dir)} style={{ width: 22, height: 22 }} />
                 <View class="flex-1">
                   <Text class="text-[15px] font-medium text-card-foreground" style={{ numberOfLines: 1 }}>{item.name}</Text>
                 </View>
