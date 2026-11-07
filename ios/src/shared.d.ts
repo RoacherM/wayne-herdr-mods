@@ -20,6 +20,8 @@ declare module "*/app/src/link.js" {
 declare module "*/app/src/live-line.js" {
   export const PASTE_LF: string;
   export const pasteText: (text: string) => string;
+  export const IMAGE_GAP_MS: number;
+  export const imageInput: (path: string, i: number, n: number) => { d: string; after: number };
   export class LiveLine {
     constructor(write: (data: string) => void);
     value: string;
@@ -33,6 +35,9 @@ declare module "*/app/src/live-line.js" {
     submit(): boolean;
     backspace(): boolean;
   }
+}
+declare module "*/app/src/lead.js" {
+  export const leadsAfterSize: (leads: boolean, fitSent: string, size: { cols: number; rows: number }) => boolean;
 }
 declare module "*/app/src/agent-keys.js" {
   export type AgentKey = [label: string, names: string[], what: string];

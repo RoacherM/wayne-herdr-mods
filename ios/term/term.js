@@ -46,7 +46,7 @@ if (xterm.textarea) xterm.textarea.focus = () => {};
 const cellNow = () => xterm._core?._renderService?.dimensions?.css?.cell;
 
 // ---- phone grid (fit): rows are counted with the keyboard down so popping the keyboard never redraws.
-let lastWidth = 0, fullHeight = 0, lastFitKey = '';
+let lastWidth = 0, fullHeight = 0, lastFitKey = '', booted = false; // no 'fit' before 'ready': it carries the first grid
 function fitNow() {
   const cell = cellNow();
   const w = viewport.clientWidth - PAD_X, h = viewport.clientHeight - PAD_Y;
@@ -56,6 +56,7 @@ function fitNow() {
   return { cols: Math.floor(w / cell.width), rows: Math.floor((fullHeight || h) / cell.height) };
 }
 function reportFit() {
+  if (!booted) return;
   const fit = fitNow();
   if (!fit) return;
   const key = `${fit.cols}x${fit.rows}`;
@@ -222,6 +223,8 @@ function bootReady(tries = 0) {
     return;
   }
   if (fit && cols === 80 && rows === 24) resizeTo(fit.cols, fit.rows);
+  lastFitKey = fit ? `${fit.cols}x${fit.rows}` : ''; // 'ready' carries this grid: no 'fit' for it as well
+  booted = true;
   layout();
   post({ t: 'ready', fit });
 }

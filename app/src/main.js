@@ -16,7 +16,8 @@ import { touchScroll } from './touch-scroll.js';
 import { atomic, SYNC_ON } from './paint.js';
 import { textStyle } from './text-style.js';
 import { coastSteps } from '../../shared/coast.js';
-import { LiveLine, PASTE_LF, pasteText } from './live-line.js';
+import { leadsAfterSize } from './lead.js';
+import { LiveLine, PASTE_LF, imageInput, pasteText } from './live-line.js';
 import { MAX_MS, shrinkImage, startRecording, transcribe, upload, voiceSupported } from './voice.js';
 import { createMetrics } from './metrics.js';
 import { progIcon, statusIcon } from './prog-icons.js';
@@ -415,8 +416,6 @@ const MOUSE_REPORT = /^(\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[M[\s\S]{3})+$/; // SGR, or 
 // Hardware keys that go to the program as keys, not into the line.
 const HW_KEYS = { Escape: '\x1b', Tab: '\t', ArrowUp: 'up', ArrowDown: 'down', ArrowRight: 'right', ArrowLeft: 'left' };
 const TERM_THEME = { background: '#0b0b0c', foreground: '#e6e6e1', cursor: '#e6e6e1', selectionBackground: '#3a3a36' };
-const IMAGE_GAP_MS = 400; // Claude Code / Codex read the file before the next paste lands
-const quotePath = (p) => (/\s/.test(p) ? `"${p}"` : p);
 
 function openTerm(address) {
   app.term?.dispose();
@@ -732,7 +731,7 @@ function openTerm(address) {
       // In order with the bytes: those before were drawn for the old grid, the repaint after for
       // this one. Nothing is drawn from here until that repaint is done (sync on, see write()).
       xterm.write(SYNC_ON, () => resizeTo(msg.cols, msg.rows));
-      leads = fitSent === JSON.stringify({ cols: msg.cols, rows: msg.rows });
+      leads = leadsAfterSize(leads, fitSent, msg);
     }
     else if (msg.ev === 'closed') {
       page.s = null;
@@ -963,8 +962,8 @@ function openTerm(address) {
         const id = await upload(app.link, blob);
         const { path } = await app.link.rpc('image.put', { id, address, name: file.name || 'image' }, 30_000);
         line.commit(); sync();
-        out(pasteText(quotePath(path)), IMAGE_GAP_MS);
-        out(' ');
+        const { d, after } = imageInput(path, i, files.length);
+        out(d, after);
       }
     } catch (e) { toast(`图片没发出去：${e.message}`, 'err'); } finally { setStatus('uploading', ''); }
   }

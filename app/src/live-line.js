@@ -21,6 +21,17 @@ export const PASTE_LF = `${PASTE_START}\n${PASTE_END}`;
 /** Text as one bracketed paste; an end marker inside could not end it early. */
 export const pasteText = (text) => PASTE_START + String(text).replaceAll(PASTE_END, '') + PASTE_END;
 
+export const IMAGE_GAP_MS = 400; // between images: the agent reads the file before the next paste lands
+/**
+ * An uploaded image's path, as image `i` of `n`: one bracketed paste (quoted if it has spaces) and
+ * the pause after it. Nothing else goes with it: Claude Code, Codex and agy turn the path into an
+ * attachment and add their own space (DESIGN.md「发图片（已实现）」).
+ */
+export const imageInput = (path, i, n) => ({
+  d: pasteText(/\s/.test(path) ? `"${path}"` : path),
+  after: i + 1 < n ? IMAGE_GAP_MS : 0,
+});
+
 /** Keystrokes that turn `from` into `to`: backspaces to the common prefix, then the rest. */
 export function keystrokes(from, to) {
   const a = Array.from(from), b = Array.from(to);

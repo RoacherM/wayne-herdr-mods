@@ -5,7 +5,7 @@
  * and watches terminal state transitions across paired Macs to post native iOS notifications.
  */
 import "./shim";
-import { batch, host, lifecycle, signal, Storage } from "nsh";
+import { batch, effect, host, lifecycle, signal, Storage } from "nsh";
 import { b64, boxKeysFromSecret, decodePairLink, newBoxKeys, unb64 } from "../../shared/e2e.js";
 import { Link } from "../../app/src/link.js";
 
@@ -66,7 +66,8 @@ export function clientLog(level: "info" | "warn" | "error", event: string, detai
         host.post("log.write", { level, event, detail: detailStr });
       } catch {}
     }
-    if (link && status() === "ready") {
+    // link.status, not the status() signal: a log call must not subscribe the calling effect.
+    if (link?.status === "ready") {
       try {
         link.notify("client.log", entry);
       } catch {}
@@ -80,7 +81,7 @@ export function clientLog(level: "info" | "warn" | "error", event: string, detai
 }
 
 function flushPendingLogs() {
-  if (!link || status() !== "ready" || !pendingLogs.length) return;
+  if (link?.status !== "ready" || !pendingLogs.length) return;
   const batchEntries = pendingLogs.splice(0, 100);
   for (const entry of batchEntries) {
     try {
@@ -629,6 +630,8 @@ export const wake = () => {
   link?.wake();
   for (const bg of bgLinks.values()) bg.link?.wake?.();
 };
+// On every screen (and with none): the sockets are checked as soon as the app is active again.
+effect(() => { if (lifecycle() === "active") wake(); });
 
 // ---- Low-bandwidth 63 KB (multiple of 3 bytes) slice streaming for File / Video / QuickLook preview
 const SLICE_ALIGNED_BYTES = 63 * 1024; // 64,512 bytes: divisible by 3 so base64 slices concatenate without padding

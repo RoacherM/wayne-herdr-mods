@@ -36,7 +36,7 @@ iPhone 浏览器 / PWA ──wss /v1/client/<id>──▶ Cloudflare Worker + DO
 - `shared/e2e.js`：X25519 三次 DH + XSalsa20-Poly1305，计数器 nonce 防重放。改协议标签为 `herdr-relay/v1`，其余不动。
 - `relay/src/index.js`：Room DO，一个桌面座位、最多 8 个手机连接，ping/pong 不唤醒 DO。原样复制，改名。
 - 配对：二维码里有桌面公钥和一次性令牌（10 分钟），两边显示 6 位核对码，电脑上确认。确认在哪里做见下文「电脑上的确认」。
-- 手机端 `link.js`（每步都有超时、回到前台就重连）原样复制。
+- 手机端 `link.js`（每步都有超时、回到前台就重连）原样复制。回到前台（`wake()`）时：30 秒（`asleep`）没收到任何帧，马上换新连接；否则发一次 `ping`，4 秒（`wakePong`）内一帧都没收到（中继自己回 `pong`，直连时 Mac 回；按收到的帧数判断，不比时间戳），也马上换。直连用 15 秒（`direct.js` `DIRECT_TIMEOUTS`，和它的 `silent` 一样）：直连的 Link 只用一次，没过检查就永久关闭，`Duo` 退回中继，直连要隔 3 秒到 5 分钟（`RETRY_MS`）才再试，而刚解锁时无线电和 ICE 可能还没醒。原因：iOS 挂起期间连接可能已经死了，却还显示 OPEN，`onclose` 也不来；以前要等 30 秒的请求超时或 50 秒的 `silent`（2026-11-07 实测：解锁后 17 秒才 `link.ready`）。原生 App 在 `ios/src/conn.ts` 模块级监听 `lifecycle()`，不管在哪个页面，回前台都 `wake()`。测法：`test/link-wake.test.mjs`、`test/ios-conn.test.mjs`。
 
 新写的只有两块：宿主进程里对接 herdr-core 的部分，和手机上的终端页面。
 
@@ -85,7 +85,7 @@ iPhone 浏览器 / PWA ──wss /v1/client/<id>──▶ Cloudflare Worker + DO
 不闪的细节：
 
 - **重连不抢、不让。** 中继 / 直连切换或重连时，旧流的打字 viewer 在宿主里保留 4 秒（`PARK_MS`），新流接手它。否则中间有一刻 Mac 主导，程序会重画两次。同一连接上重开同一个终端，新流也接手旧流的打字 viewer。
-- **重连时 Mac 正在主导，就不抢。** 手机记得自己是否在主导（最后一次 `size` 是不是自己的格子）。不是的话，重开时带 `lead: false`，等手机下次打字再抢。
+- **重连时 Mac 正在主导，就不抢。** 前提：终端页一直开着、手机在前台。终端页记得手机是否在主导（最后一次 `size` 是不是自己发的格子）。不是的话，重开时带 `lead: false`，等手机下次打字再抢。这个记忆只在这一次打开的页面里（`leads`，每次进终端页从「主导」开始，第一次 `term.open` 总是 `lead: true`）。手机还没发过格子、或正在离开（发的是 `null`）时，`size` 说明不了手机，主导状态不变（`app/src/lead.js` `leadsAfterSize`，网页版和原生 App 共用；`test/lead.test.mjs`）。所以手机离开期间 Mac 接管不算数：回到前台就按手机的格子（`refit` 发尺寸；离开期间重连也带 `lead: true`）。以前 `term.open` 不带 `fit` 时，回放的 Mac 尺寸会把它误改成「不主导」。
 - 旧手机页（不带 `fit`）照旧：打字 viewer 第一次输入时才 attach，`resumed: true`，每次输入前重报 Mac 的尺寸，从不改尺寸。旧 herdr-core（没有 `resize_notifications`）也走这条，因为手机没法和字节同步地知道新尺寸。
 
 以前有过「适配手机」开关（2026-11-03 删掉了：要手动切换）。现在不用开关：谁最后用，就按谁的尺寸。测法：`dev/layout-smoke.mjs`（Mac 窗口 160x50 在场；手机打开、Mac 打字、手机打字、重连 3 次（尺寸一直不变）、锁屏、回来、离开，每一步核对 herdr-core 里的尺寸）；`test/host.live.test.mjs` 在协议层测同一套。
@@ -437,6 +437,12 @@ node probe/sync.mjs --scratch  # 只跑 A 部分
 
 A 部分在 `HC_SESSION=relay-probe` 的独立 core 里自己开一个 `/bin/sh`，用两条连接模拟「Mac 窗口」和「手机」，结束时停掉这个 scratch core。B 部分对你的默认 core 只读：`terminal.list`、`doc.get herdr-app`、`events.subscribe`，不打字、不 attach。
 
+```
+node probe/image-paste.mjs [claude|codex|agy]   # 图片路径粘贴进 agent 输入行，各种写法的结果
+```
+
+不碰 Herdr：每个 agent 在临时文件夹里自己的 PTY 中启动，只粘贴、打字，不回车，跑完杀掉。会在 agent 的历史里留下这个临时文件夹。结果见「发图片（已实现）」。
+
 ## 还没验证的
 
 - `terminal.interrupt` 对 Claude Code / Codex 的实际效果。
@@ -492,7 +498,7 @@ A 部分在 `HC_SESSION=relay-probe` 的独立 core 里自己开一个 `/bin/sh`
 > - 结构：`ios/App.tsx`（nsh 界面）+ `ios/host/`（Swift 宿主：xcodegen 工程，链接 `NativeShell.xcframework`，`NshAppView.loadBundle` 运行 `nsh build` 的产物；`handle(name)` 给 App 调录音、扫码、震动反馈）。
 > - 进度（2026-11-07，nsh 0.4.0 `e626a8d`，Xcode 26，iOS 27）：
 >   1. **终端画面对齐网页版**（`ios/term/term.js`）：Unicode 15 graphemes 宽度（`@xterm/addon-unicode-graphemes`）、`paint.js` 同步重绘不闪（`sized` + `atomic` + `SYNC_ON` + `fresh` 重印处理）、`text-style.js` 补 VS15（`⏺` 等字符）、手机自适应格子（`fit` / `term.fit`，键盘弹出不重算行数）、全屏程序滑动惯性交给 Mac（`term.coast`）与「回到最新」`↓` 按钮、8 KB / 30 ms credit 确认。
->   2. **键盘栏、输入浮泡、白底红角小羊图标与圆润视觉**（`ios/App.tsx`、`ios/theme.json`、`ios/build-term.mjs`、`ios/term/term.js`）：`build-term.mjs` 同步 `~/.config/herdr-app/icons/` 全量 123 个 Agent/程序 SVG 图标并生成 `ios/src/prog-icons.ts`；全应用采用与网页版（`app/src/app.css`）一致的圆润黑白灰底色（`rounded-[20px]` 卡片、`rounded-full` 胶囊按钮与标签、底栏圆形 `＋`/`⌨` 与胶囊 `按住 说话`、悬浮 `.term-bubble` 输入泡），状态语义色对齐 Chrome 四色（`ok: #34a853`、`warn: #fbbc04`、`bad: #ea4335`）；首页顶部由右上角原生 `headerRightSymbol: "gearshape"` 作为唯一设置入口，状态卡只干净展示小羊图标、连接状态与终端/通知数量（不重复放置右侧 `设置 >` 文字；仅在 `status === "error"` 时显示错误原因，重连成功后立即清除旧错误；多台 Mac 胶囊栏仅在已配对 ≥2 台电脑时展开）；终端页在 `WebView` 测出手机格子（`ready` + `fit`）后再发 `term.open`，保证首屏自适应手机宽度；宿主与网页版统一配备白底、红白黑三色立体剪纸风红角 Herdr 小羊图标（`ios/host/Sources/Assets.xcassets/AppIcon.appiconset/AppIcon.png`、`ios/assets/herdr-icon.png`、`app/static/icon-*.png`）。
+>   2. **键盘栏、输入浮泡、白底红角小羊图标与圆润视觉**（`ios/App.tsx`、`ios/theme.json`、`ios/build-term.mjs`、`ios/term/term.js`）：`build-term.mjs` 同步 `~/.config/herdr-app/icons/` 全量 123 个 Agent/程序 SVG 图标并生成 `ios/src/prog-icons.ts`；全应用采用与网页版（`app/src/app.css`）一致的圆润黑白灰底色（`rounded-[20px]` 卡片、`rounded-full` 胶囊按钮与标签、底栏圆形 `＋`/`⌨` 与胶囊 `按住 说话`、悬浮 `.term-bubble` 输入泡），状态语义色对齐 Chrome 四色（`ok: #34a853`、`warn: #fbbc04`、`bad: #ea4335`）；首页顶部由右上角原生 `headerRightSymbol: "gearshape"` 作为唯一设置入口，状态卡只干净展示小羊图标、连接状态与终端/通知数量（不重复放置右侧 `设置 >` 文字；仅在 `status === "error"` 时显示错误原因，重连成功后立即清除旧错误；多台 Mac 胶囊栏仅在已配对 ≥2 台电脑时展开）；终端页在 `WebView` 测出手机格子（`ready` + `fit`）后再发 `term.open`，保证首屏自适应手机宽度（页面在 `ready` 之前不发 `fit`，`ready` 本身带第一个格子；原生最多等 1.5 秒（`PAGE_READY_FALLBACK_MS`），页面一直不说 `ready` 才不带格子先开。真机上页面实际用了多久，看 `client.log` 里的 `term.ready`（`ms`、`fit`），用来校准 1.5 秒。以前是 250 ms，真机上页面要 300–450 ms，于是先按 Mac 尺寸开、马上又改成手机尺寸，程序整段重印两次。测法：`node ios/build-term.mjs && node dev/term-boot-smoke.mjs`）；宿主与网页版统一配备白底、红白黑三色立体剪纸风红角 Herdr 小羊图标（`ios/host/Sources/Assets.xcassets/AppIcon.appiconset/AppIcon.png`、`ios/assets/herdr-icon.png`、`app/static/icon-*.png`）。
 >   3. **Swift 宿主能力与状态通知**（`ios/host/Sources/App.swift`、`ios/src/conn.ts`）：`voice.start / level / stop / cancel`（`AVAudioRecorder` 16 kHz 单声道 AAC `.m4a`，分块 `upload.put` + `voice.done` 调 Mac 火山极速版识别）、`qr.scan`（`AVCaptureSession` 原生扫码弹窗）、`notify.status / request / send / consumeTap`（基于 `UNUserNotificationCenter` 本地通知与 `beginBackgroundTask` 后台保活，无需付费 APNs 证书即可在 App 运行或切后台期间监听所有已配对 Mac 的终端状态变化 `blocked` / `done` / `error` / 退出并弹窗提醒，点通知自动切换到对应 Mac 并打开该终端）、`haptic`（轻触震动）；`nsh.json` 显式声明 `capabilities.host: ["voice.*", "qr.*", "notify.*", "haptic"]`；监听 `lifecycle()` 在回前台时立即 `wake()` 重连并恢复 `term.fit`，切后台时释放终端尺寸主导权。
 >   4. **多台 Mac 配对、切换与后台并行监听**（`ios/src/conn.ts` + `ios/App.tsx`）：`Storage["herdr-relay"]` 保存 `desktops: Saved[]`（兼容单台旧格式，跨 Mac 复用同一把设备密钥 `deviceSecret`）；首页顶部常驻圆角胶囊栏显示所有已配对电脑（带实时在线绿点）与「`＋ 配对新电脑`」胶囊入口；后台对非当前 Mac 维持轻量加密连接（`bgLinks`），实时同步各台电脑的在线状态与 agent 状态通知，设置页支持按台切换或单独移除。
 >   5. **真机验证（2026-11-07）**：已通过 `ios/host/install.sh` 签名并装入真 iPhone（`com.roacherm.herdr`），真机配对上线（设备 `04ab271d Herdr iPhone`）并成功从原生 App 向本机终端发送消息。
@@ -584,7 +590,9 @@ npm run ios:dev                        # Mac 上的 iPhone 尺寸窗口（Cataly
 
 ## 发图片（已实现）
 
-手机点「+」选图（最多 6 张）。大图先在手机上缩到长边 2048px、JPEG 0.85。发送时每张图分块 `upload.put` 传到 Mac，再 `image.put` 调用 herdr-core 的 `terminal.put`：文件落在这个终端自己的文件夹里（终端删掉时一起删），返回路径。消息变成「路径1 路径2 你的文字」，用 `terminal.send` 发出去。Claude Code 和 Codex 会把消息里的图片路径当附件读。单张上限 8 MB（`terminal.put` 的上限）。
+手机点「+」选图（最多 6 张），或粘贴剪贴板里的图片。大图先在手机上缩到长边 2048px、JPEG 0.85。发送时每张图分块 `upload.put` 传到 Mac，再 `image.put` 调用 herdr-core 的 `terminal.put`：文件落在这个终端自己的文件夹里（终端删掉时一起删），返回路径。单张上限 8 MB（`terminal.put` 的上限）。
+
+路径进程序的输入行：每张图一次 bracketed paste（`ESC[200~路径ESC[201~`，有空格的路径加引号），不另发空格；多张图之间隔 400 ms，最后一张后面不等（`app/src/live-line.js` `imageInput`，网页版和原生 App 共用）。实测（2026-11-07，Claude Code 2.1.316、Codex 0.163.0、agy 1.5.3，`node probe/image-paste.mjs`）：三者都把粘贴的图片路径变成附件，并自己补一个空格。以前 400 ms 后再发一个空格：Codex 里变成两个空格；agy 里是行首多一个空格；而且空格单独晚到，agy 会多一次整段重印（2026-11-07 线上日志，长对话约 825 KB；probe 只看输入行，没测重印）。空格和路径放进同一次写入也不行：Claude Code 里空格会跑到附件前面。在 shell 里粘贴路径，后面不再自动有空格。测法：`test/live-line.test.mjs`。
 
 ## 终端页布局
 
@@ -819,6 +827,6 @@ probe 结束时 Mac 焦点停在 herdr-relay 工作区（因为 A 抢过焦点�
 - **闪退根因与导航栈不变量（2026-11-07 真机崩溃报告 `Herdr-2026-11-07-181536.ips` 实测定位）**：
   1. `NativeShell.xcframework`（0.1.3）的 `_nsh_app_set_error_handler`（偏移 `0x100201228`）存在 FFI use-after-free：设置 `app.onError` 时会在函数返回前立即调用 `ErrorHandlerBox` 的 drop 释放 32 字节闭包盒，却把悬垂指针留在 `[x22, #0x268]`，随后注册的第一个 `app.handle("haptic")` 复用同一块 32 字节堆内存，导致任何 JS 异常或 `callBudget` 超时触发 `MountSink::report_error` 时跳入 `haptic` 闭包并在 `NshHostReply.resolve(_:)+44` 发生 `EXC_BAD_ACCESS (0x10)`。修复：`ShellController.viewDidLoad()` 严禁设置 `app.onError`，并将 `app.limits` 提升为 `NshLimits(memoryMB: 512, stackKB: 8192, loadBudget: 30, callBudget: 30, maxNodes: 500_000)`；`FilesScreen` 退出清理统一使用 `nav.routes()`。
   2. **返回必回主页不变量（`openTerm`）**：`HomeScreen` 在 `NavStack` 栈底保持挂载，若前台激活消费通知或快速连点直接 `nav.push({ name: "term" })`，会产生 `[home, term(A), term(B)]` 导致从 `term(B)` 返回落到 `term(A)`。`openTerm(address)` 强制保持栈为 `[{ name: "home" }, { name: "term", address }]`，并由 `clearStreamListener(onStream)` 校验当前监听器引用，确保从任何终端页左滑返回永远直接回到主页。
-  3. **端到端完整日志（`herdr-ios.log` + `client.log`）**：iOS 宿主 `AppLogger` 将启动、异常、预览文件字节数与 JS `log.write` 持久化到 `<Application Support>/herdr-ios.log`（2 MB 自动轮转），同时手机端 `clientLog` 通过 `client.log` 实时同步到 Mac 端 `~/Library/Logs/wayne-herdr-mods.log` 与 `~/.config/wayne-herdr-mods/ios-client.log`（记录路由栈变化、每次 `files.list` / `files.open` / `files.slice` 的原始大小、传输字节数与耗时）。
+  3. **端到端完整日志（`herdr-ios.log` + `client.log`）**：iOS 宿主 `AppLogger` 将启动、异常、预览文件字节数与 JS `log.write` 持久化到 `<Application Support>/herdr-ios.log`（2 MB 自动轮转），同时手机端 `clientLog` 通过 `client.log` 实时同步到 Mac 端 `~/Library/Logs/wayne-herdr-mods.log` 与 `~/.config/wayne-herdr-mods/ios-client.log`（记录路由栈变化、每次 `files.list` / `files.open` / `files.slice` 的原始大小、传输字节数与耗时，以及终端页 `term.ready` 的耗时 `ms` 和格子 `fit`）。`clientLog` 判断连接用 `link.status`，不读 `status()` 信号：否则调用它的 `effect` 会订阅连接状态，一次重连让 `nav.routes` 连记 5 次（2026-11-07 修，`test/ios-conn.test.mjs`）。
 
 验证：`test/files.test.mjs`（根目录收集、目录排序、`.git` 隐藏、`../` 与越界软链拦截、128 KB 文本截断与 `rawPreviewId` 分片读取、`sips` 图片压缩 + 分片重组、`ffmpeg` 6 帧故事板 + 480p MP4 转码与 `ftyp` 校验、文件大小日志断言）。

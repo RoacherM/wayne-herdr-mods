@@ -19,6 +19,7 @@ export const TIMEOUTS = {
   ping: 20_000,
   silent: 50_000, // no frame at all, not even the relay's pong
   asleep: 30_000, // back in the foreground after this long without a frame: reconnect
+  wakePong: 4_000, // back in the foreground: no frame (not even the relay's pong) this long after the ping → reconnect
 };
 
 export class Link extends EventTarget {
@@ -34,6 +35,7 @@ export class Link extends EventTarget {
     this.pending = new Map();
     this.nextId = 1;
     this.attempt = 0;
+    this.frames = 0; // every frame heard, the relay's pong too: wake() compares counts, not clock times
     this.closed = false;
     // Browser only (the native app calls wake() from its own app-state events).
     this.onVisible = () => { if (globalThis.document?.visibilityState !== 'hidden') this.wake(); };
@@ -81,6 +83,7 @@ export class Link extends EventTarget {
     if (!ws || this.ws !== ws) return;
     this.ws = null;
     clearTimeout(this.deadline);
+    clearTimeout(this.wakeTimer);
     clearInterval(this.pingTimer);
     try { ws.close(); } catch {}
     this.cipher = null;
@@ -104,12 +107,21 @@ export class Link extends EventTarget {
     // Suspended for a while: the socket is likely dead even if it says open. A step still in
     // progress has its own deadline, which fires as soon as timers run again.
     if (Date.now() - this.lastHeard > this.t.asleep || ws.readyState > 1) { this.drop(ws, { now: true }); return; }
-    if (ws.readyState === 1) { try { ws.send('ping'); } catch {} }
+    if (ws.readyState !== 1) return; // still connecting: its connect deadline covers it
+    // Said OPEN, but iOS may have killed it silently during suspension: the relay answers the ping
+    // at once, so no frame within `wakePong` means the socket is dead.
+    const heard = this.frames;
+    try { ws.send('ping'); } catch {}
+    clearTimeout(this.wakeTimer);
+    this.wakeTimer = setTimeout(() => {
+      if (this.ws === ws && this.frames === heard) this.drop(ws, { now: true });
+    }, this.t.wakePong);
   }
 
   receive(ws, data) {
     if (ws !== this.ws) return;
     this.lastHeard = Date.now();
+    this.frames++;
     if (data === 'pong') return;
     if (data[0] === '\u0000') {
       const state = data.slice(1);
@@ -211,6 +223,7 @@ export class Link extends EventTarget {
     this.closed = true;
     clearTimeout(this.retryTimer);
     clearTimeout(this.deadline);
+    clearTimeout(this.wakeTimer);
     clearInterval(this.pingTimer);
     globalThis.document?.removeEventListener('visibilitychange', this.onVisible);
     globalThis.window?.removeEventListener('online', this.onVisible);

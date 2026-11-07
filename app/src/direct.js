@@ -19,7 +19,9 @@ const READY_MS = 10_000;   // and the handshake be done by then
 const RETRY_MS = [3_000, 15_000, 60_000, 300_000];
 const STEADY_MS = 60_000;  // ready this long: the next failure starts the retries over
 // Pings are cheap on a direct link: notice a dead one in seconds, not in a minute.
-const DIRECT_TIMEOUTS = { ping: 5_000, silent: 15_000, handshake: READY_MS };
+// wakePong: back in the foreground the radio and ICE may still be waking; a missed check closes this
+// one-use Link and pushes the direct retries out (RETRY_MS), so it waits as long as `silent`.
+export const DIRECT_TIMEOUTS = { ping: 5_000, silent: 15_000, handshake: READY_MS, wakePong: 15_000 };
 
 const supported = () => typeof RTCPeerConnection === 'function';
 

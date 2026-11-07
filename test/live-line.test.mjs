@@ -1,7 +1,7 @@
 // The phone keyboard → the program's own input line (app/src/live-line.js).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { LiveLine, PASTE_LF, keystrokes, pasteText } from '../app/src/live-line.js';
+import { IMAGE_GAP_MS, LiveLine, PASTE_LF, imageInput, keystrokes, pasteText } from '../app/src/live-line.js';
 
 const make = () => { const out = []; const line = new LiveLine((d) => out.push(d)); return { line, out }; };
 
@@ -97,4 +97,16 @@ test('keystrokes: backspaces to the common prefix, in code points', () => {
   assert.equal(keystrokes('/compact', '/cl'), '\x7f'.repeat(6) + 'l');
   assert.equal(keystrokes('/co', ''), '\x7f\x7f\x7f');
   assert.equal(keystrokes('/表', '/表格'), '格'); // not UTF-16 units
+});
+
+// Probe 2026-11-07 (Claude Code 2.1.316, Codex 0.163.0, agy 1.5.3): a pasted image path becomes an
+// attachment and each adds its own space. A space of ours lands before the chip (Claude), doubles
+// (Codex) or stays in the line (agy); sent apart it costs agy a second full reprint.
+test('an uploaded image goes in as one bracketed paste, with no separate space', () => {
+  const one = imageInput('/tmp/t1/shot.png', 0, 1);
+  assert.deepEqual(one, { d: pasteText('/tmp/t1/shot.png'), after: 0 }, 'a single image: one write, no pause after');
+  assert.equal(imageInput('/tmp/a b/截图 1.png', 0, 1).d, pasteText('"/tmp/a b/截图 1.png"'), 'a path with spaces is quoted');
+  const writes = ['/p/1.png', '/p/2.png', '/p/3.png'].map((p, i, all) => imageInput(p, i, all.length));
+  assert.deepEqual(writes.map((w) => w.after), [IMAGE_GAP_MS, IMAGE_GAP_MS, 0], 'the pause is only between images');
+  assert.ok(writes.every((w) => !w.d.endsWith(' ')), 'no trailing space');
 });

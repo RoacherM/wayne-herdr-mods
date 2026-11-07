@@ -12,8 +12,9 @@ import {
 } from "./src/conn";
 import { PROG_ICONS } from "./src/prog-icons";
 import { TERM_HTML } from "./src/term-html";
-import { LiveLine, PASTE_LF, pasteText } from "../app/src/live-line.js";
+import { imageInput, LiveLine, PASTE_LF, pasteText } from "../app/src/live-line.js";
 import { agentKeys, combo, keyOfChar, MODS } from "../app/src/agent-keys.js";
+import { leadsAfterSize } from "../app/src/lead.js";
 import chevronDownIcon from "./assets/chevron-down.svg";
 import chevronIcon from "./assets/chevron.svg";
 import docIosIcon from "./assets/doc-ios.png";
@@ -672,6 +673,7 @@ const MOD_LABELS: Record<string, string> = { ctrl: "^", alt: "⌥", shift: "⇧"
 const ARROWS: Record<string, string> = { up: "A", down: "B", right: "C", left: "D" };
 const REPEAT = new Set(["up", "down", "left", "right"]);
 const MAX_VOICE_MS = 60_000;
+const PAGE_READY_FALLBACK_MS = 1500; // the terminal page never said {t:'ready'}: open anyway
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function TermScreen(props: { address: string }) {
@@ -701,7 +703,10 @@ function TermScreen(props: { address: string }) {
   let didRepeat = false;
   let voiceMeterTimer: any = 0;
   let voiceLimitTimer: any = 0;
-  let bootTimer: any = setTimeout(() => webReady.set(true), 250);
+  // Open once the page says {t:'ready', fit} (~300–450 ms on a phone for the 400 KB page), so
+  // term.open carries the phone's grid. This only covers a page that never says it.
+  const mountedAt = Date.now();
+  let bootTimer: any = setTimeout(() => webReady.set(true), PAGE_READY_FALLBACK_MS);
 
   let field!: InputRef;
   let web!: WebViewRef;
@@ -760,7 +765,7 @@ function TermScreen(props: { address: string }) {
     if (msg.ev === "out") post({ t: "out", d: msg.d, fresh: Boolean(msg.fresh) });
     else if (msg.ev === "size") {
       post({ t: "size", cols: msg.cols, rows: msg.rows });
-      leads = fitSent === JSON.stringify({ cols: msg.cols, rows: msg.rows });
+      leads = leadsAfterSize(leads, fitSent, msg);
     } else if (msg.ev === "closed") {
       s = null;
       if (msg.reason === "replaced" || closed) return;
@@ -819,6 +824,8 @@ function TermScreen(props: { address: string }) {
     let m: any; try { m = JSON.parse(data); } catch { return; }
     if (m.t === "ready") {
       clearTimeout(bootTimer);
+      // How long the page takes on real phones: the data for PAGE_READY_FALLBACK_MS.
+      clientLog("info", "term.ready", { ms: Date.now() - mountedAt, fit: m.fit ?? null });
       pageReady = true;
       if (m.fit) lastFit = m.fit;
       webReady.set(true);
@@ -878,8 +885,7 @@ function TermScreen(props: { address: string }) {
           const blob = await res.blob();
           const path = await sendImage(Object.assign(blob, { name: "clipboard.png" }), address);
           line.commit(); sync();
-          out(pasteText(/\s/.test(path) ? `"${path}"` : path), 400);
-          out(" ");
+          out(imageInput(path, 0, 1).d);
           return;
         }
       }
@@ -946,8 +952,8 @@ function TermScreen(props: { address: string }) {
         uploading.set(`${i + 1}/${got.length}`);
         const path = await sendImage(g.file, address);
         line.commit(); sync();
-        out(pasteText(/\s/.test(path) ? `"${path}"` : path), 400);
-        out(" ");
+        const { d, after } = imageInput(path, i, got.length);
+        out(d, after);
       }
     } catch (e: any) { notice.set(`图片没发出去：${e.message}`); } finally { uploading.set(""); }
   }
