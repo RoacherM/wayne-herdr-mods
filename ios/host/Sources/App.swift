@@ -8,6 +8,60 @@ import QuickLook
 import UIKit
 import UserNotifications
 
+private final class AppLogger {
+  static let shared = AppLogger()
+  private let queue = DispatchQueue(label: "com.roacherm.herdr.logger", qos: .utility)
+  private let maxBytes: UInt64 = 2 * 1024 * 1024
+  private let keepBytes: Int = 1 * 1024 * 1024
+  let logURL: URL
+
+  private init() {
+    let fm = FileManager.default
+    let baseDir = (try? fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true))
+      ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+    try? fm.createDirectory(at: baseDir, withIntermediateDirectories: true)
+    self.logURL = baseDir.appendingPathComponent("herdr-ios.log")
+  }
+
+  func write(_ level: String, _ event: String, _ detail: String = "") {
+    let ts = ISO8601DateFormatter().string(from: Date())
+    let line = detail.isEmpty ? "\(ts) [\(level)] \(event)\n" : "\(ts) [\(level)] \(event) \(detail)\n"
+    NSLog("[herdr] %@ %@ %@", level, event, detail)
+    queue.async { [logURL, maxBytes, keepBytes] in
+      guard let data = line.data(using: .utf8) else { return }
+      let fm = FileManager.default
+      if !fm.fileExists(atPath: logURL.path) {
+        try? data.write(to: logURL, options: .atomic)
+        return
+      }
+      if let attr = try? fm.attributesOfItem(atPath: logURL.path),
+         let size = attr[.size] as? UInt64,
+         size > maxBytes,
+         let existing = try? Data(contentsOf: logURL)
+      {
+        let tail = existing.suffix(keepBytes)
+        var rotated = Data(tail)
+        rotated.append(data)
+        try? rotated.write(to: logURL, options: .atomic)
+        return
+      }
+      if let fh = try? FileHandle(forWritingTo: logURL) {
+        defer { try? fh.close() }
+        _ = try? fh.seekToEnd()
+        try? fh.write(contentsOf: data)
+      }
+    }
+  }
+
+  func readTail(maxChars: Int = 32_768) -> String {
+    queue.sync {
+      guard let data = try? Data(contentsOf: logURL), !data.isEmpty else { return "" }
+      let slice = data.count > maxChars ? data.suffix(maxChars) : data
+      return String(decoding: slice, as: UTF8.self)
+    }
+  }
+}
+
 private final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
   static let shared = NotificationBridge()
   var pendingTap: [String: String]?
@@ -45,6 +99,11 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
   ) -> Bool {
+    NSSetUncaughtExceptionHandler { exc in
+      let stack = exc.callStackSymbols.joined(separator: " | ")
+      AppLogger.shared.write("FATAL", "objc_exception", "name=\(exc.name.rawValue) reason=\(exc.reason ?? "") stack=\(stack)")
+    }
+    AppLogger.shared.write("INFO", "app.launch", "logPath=\(AppLogger.shared.logURL.path)")
     NotificationBridge.shared.install()
     return true
   }
@@ -121,18 +180,52 @@ final class ShellController: UIViewController, QLPreviewControllerDataSource {
 
   override func viewDidLoad() {
     super.viewDidLoad()
-    app.onError = { message in NSLog("nsh error: %@", message) }
+    // NOTE: Never set `app.onError` here: NativeShell.xcframework's `_nsh_app_set_error_handler`
+    // immediately invokes the drop callback on the 32-byte ErrorHandlerBox while keeping a dangling
+    // pointer to it, causing a use-after-free SIGSEGV on the first JS error or callBudget timeout.
+    // Instead, we raise NshLimits generously and log all JS errors/events through `log.write`.
+    app.limits = NshLimits(
+      memoryMB: 512,
+      stackKB: 8192,
+      loadBudget: 30,
+      callBudget: 30,
+      maxNodes: 500_000
+    )
     registerHostHandlers()
     guard let url = Bundle.main.url(forResource: "bundle", withExtension: "nshc", subdirectory: "nsh") else {
-      NSLog("nsh: no bundle in the app"); return
+      AppLogger.shared.write("ERROR", "nsh.bundle.missing", "bundle.nshc not found")
+      return
     }
-    do { try app.loadBundle(at: url) } catch { NSLog("nsh: cannot load: %@", "\(error)") }
+    do {
+      try app.loadBundle(at: url)
+      AppLogger.shared.write("INFO", "nsh.bundle.loaded", url.lastPathComponent)
+    } catch {
+      AppLogger.shared.write("ERROR", "nsh.bundle.load_failed", "\(error)")
+    }
   }
 
   private func registerHostHandlers() {
     app.handle("haptic") { _, reply in
       UIImpactFeedbackGenerator(style: .light).impactOccurred()
       reply.resolve(nil)
+    }
+
+    app.handle("log.write") { args, reply in
+      let dict = args as? [String: Any] ?? [:]
+      let level = (dict["level"] as? String ?? "INFO").uppercased()
+      let event = dict["event"] as? String ?? "js"
+      let detail = dict["detail"] as? String ?? ""
+      AppLogger.shared.write(level, event, detail)
+      reply.resolve(["ok": true])
+    }
+
+    app.handle("log.read") { args, reply in
+      let dict = args as? [String: Any] ?? [:]
+      let maxChars = dict["maxChars"] as? Int ?? 32_768
+      reply.resolve([
+        "path": AppLogger.shared.logURL.path,
+        "text": AppLogger.shared.readTail(maxChars: maxChars),
+      ])
     }
 
     app.handle("voice.start") { [weak self] _, reply in
@@ -293,8 +386,10 @@ final class ShellController: UIViewController, QLPreviewControllerDataSource {
         try FileManager.default.createDirectory(at: self.previewDir, withIntermediateDirectories: true)
         try? FileManager.default.removeItem(at: url)
         try Data().write(to: url)
+        AppLogger.shared.write("INFO", "preview.reset", "name=\(name) path=\(url.path)")
         reply.resolve(["path": url.path])
       } catch {
+        AppLogger.shared.write("ERROR", "preview.reset_failed", "name=\(name) err=\(error.localizedDescription)")
         reply.reject("无法创建预览缓存：\(error.localizedDescription)")
       }
     }
@@ -305,6 +400,7 @@ final class ShellController: UIViewController, QLPreviewControllerDataSource {
       let name = dict["name"] as? String ?? "preview.bin"
       let b64 = dict["data"] as? String ?? ""
       guard let chunk = Data(base64Encoded: b64) else {
+        AppLogger.shared.write("ERROR", "preview.append_bad_b64", "name=\(name) b64Len=\(b64.count)")
         reply.reject("无效的预览分片数据")
         return
       }
@@ -319,8 +415,9 @@ final class ShellController: UIViewController, QLPreviewControllerDataSource {
           try fh.seekToEnd()
           try fh.write(contentsOf: chunk)
         }
-        reply.resolve(["ok": true])
+        reply.resolve(["ok": true, "bytes": chunk.count])
       } catch {
+        AppLogger.shared.write("ERROR", "preview.append_failed", "name=\(name) chunkBytes=\(chunk.count) err=\(error.localizedDescription)")
         reply.reject("写入预览分片失败：\(error.localizedDescription)")
       }
     }
@@ -332,9 +429,12 @@ final class ShellController: UIViewController, QLPreviewControllerDataSource {
       let kind = dict["kind"] as? String ?? ""
       let url = self.safePreviewURL(name)
       guard FileManager.default.fileExists(atPath: url.path) else {
+        AppLogger.shared.write("ERROR", "preview.open_missing", "name=\(name) path=\(url.path)")
         reply.reject("预览文件不存在")
         return
       }
+      let fileBytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? UInt64) ?? 0
+      AppLogger.shared.write("INFO", "preview.open", "name=\(name) kind=\(kind) bytes=\(fileBytes)")
       DispatchQueue.main.async {
         let ext = url.pathExtension.lowercased()
         let isAV = kind == "video" || kind == "audio" || ["mp4", "mov", "m4v", "m4a", "mp3", "wav", "aac"].contains(ext)
@@ -353,7 +453,7 @@ final class ShellController: UIViewController, QLPreviewControllerDataSource {
           ql.dataSource = self
           self.topHostController().present(ql, animated: true)
         }
-        reply.resolve(["ok": true])
+        reply.resolve(["ok": true, "bytes": fileBytes])
       }
     }
   }

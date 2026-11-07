@@ -3,11 +3,12 @@ import { cleanup, Clipboard, computed, effect, host, Image, Keyboard, lifecycle,
 import type { InputRef, WebViewRef } from "nsh/types";
 import { Button, createNavStack, Input, NavPage, NavStack } from "nsh/base";
 import {
-  activeTermAddress, addingMac, boot, cancelPair, consumePendingNotificationTap, desktops,
-  disableNotifications, enableNotifications, fetchPreviewDataUrl, forget, info, list, macStatuses,
-  notify, notifyEnabled, notifyPermission, openNativePreview, paired, pairWith, problem, refresh,
-  refreshNotifyStatus, rpc, sas, sendImage, sendTestNotification, setStreamListener, status,
-  switchDesktop, transcribeAudio, wake, type Saved, type Space, type Terminal,
+  activeTermAddress, addingMac, boot, cancelPair, clearStreamListener, clientLog,
+  consumePendingNotificationTap, desktops, disableNotifications, enableNotifications,
+  fetchPreviewDataUrl, forget, info, list, macStatuses, notify, notifyEnabled, notifyPermission,
+  openNativePreview, paired, pairWith, problem, refresh, refreshNotifyStatus, rpc, sas, sendImage,
+  sendTestNotification, setStreamListener, status, switchDesktop, transcribeAudio, wake,
+  type Saved, type Space, type Terminal,
 } from "./src/conn";
 import { PROG_ICONS } from "./src/prog-icons";
 import { TERM_HTML } from "./src/term-html";
@@ -39,6 +40,52 @@ type Route =
   | { name: "preview"; rootId: string; path: string; title: string }
   | { name: "settings" };
 const nav = createNavStack<Route>([{ name: "home" }]);
+
+function routeDesc(r: Route): string {
+  if (r.name === "term") return `term:${r.address}`;
+  if (r.name === "files") return `files:${r.rootId ?? r.address ?? ""}`;
+  if (r.name === "preview") return `preview:${r.path}`;
+  return r.name;
+}
+
+effect(() => {
+  const stack = nav.routes().map(routeDesc);
+  clientLog("info", "nav.routes", { stack });
+});
+
+/**
+ * Open a terminal session and guarantee the navigation stack is always `[home, term(address)]`
+ * (never `[home, term(A), term(B)]`), so pressing Back from any session always returns to HomeScreen.
+ */
+function openTerm(address: string, reason = "tap") {
+  const routes = nav.routes();
+  const top = routes[routes.length - 1];
+  clientLog("info", "nav.openTerm", { address, reason, stack: routes.map(routeDesc) });
+  if (top?.name === "term" && top.address === address && routes.length === 2) {
+    return;
+  }
+  if (routes.length === 1 && routes[0]?.name === "home") {
+    nav.push({ name: "term", address });
+    return;
+  }
+  nav.setRoutes([{ name: "home" }, { name: "term", address }]);
+}
+
+function openFiles(route: Extract<Route, { name: "files" }>) {
+  const routes = nav.routes();
+  const top = routes[routes.length - 1];
+  if (top?.name === "files" && top.rootId === route.rootId) return;
+  clientLog("info", "nav.openFiles", { rootId: route.rootId, address: route.address, title: route.title });
+  nav.push(route);
+}
+
+function openPreview(route: Extract<Route, { name: "preview" }>) {
+  const routes = nav.routes();
+  const top = routes[routes.length - 1];
+  if (top?.name === "preview" && top.rootId === route.rootId && top.path === route.path) return;
+  clientLog("info", "nav.openPreview", { rootId: route.rootId, path: route.path, title: route.title });
+  nav.push(route);
+}
 
 const STATE_TEXT: Record<string, string> = { blocked: "等你处理", working: "工作中", done: "完成", idle: "空闲", error: "出错" };
 const KIND_TEXT: Record<string, string> = { permission: "等你确认", question: "在问你", auth: "要登录" };
@@ -245,7 +292,7 @@ function Row(props: { t: Terminal; first: boolean }) {
   const sub = [t.msg && st !== "idle" ? t.msg : null, base(t.cwd)].filter(Boolean).join(" · ");
   const what = t.app || t.program || "shell";
   return (
-    <Button onPress={() => nav.push({ name: "term", address: t.address })}
+    <Button onPress={() => openTerm(t.address, "row")}
       class={`min-h-13 flex-row items-center gap-3 px-4 py-3 active:bg-secondary ${props.first ? "" : "border-t border-separator"}`}
       testID={`row-${t.address}`}>
       <ProgIcon t={t} size={18} />
@@ -279,7 +326,7 @@ function Group(props: { title: string; items: GroupItem[]; space?: Space; needs?
     try {
       const { address } = (await rpc("term.new", { space: props.space.id }, 15_000)) as { address: string };
       await refresh();
-      nav.push({ name: "term", address });
+      openTerm(address, "term.new");
     } catch (e: any) { problem.set(e.message); } finally { adding.set(false); }
   }
   return (
@@ -322,7 +369,7 @@ function HomeScreen() {
     if (tap.desktopId && tap.desktopId !== paired()?.desktopId) {
       await switchDesktop(tap.desktopId);
     }
-    nav.push({ name: "term", address: tap.address });
+    openTerm(tap.address, "notification");
   }
 
   effect(() => {
@@ -762,13 +809,14 @@ function TermScreen(props: { address: string }) {
   });
   cleanup(() => {
     closed = true;
+    clientLog("info", "term.cleanup", { address, s });
     if (activeTermAddress() === address) activeTermAddress.set(null);
     clearTimeout(bootTimer);
     clearTimeout(litTimer);
     stopRepeat();
     clearInterval(voiceMeterTimer);
     clearTimeout(voiceLimitTimer);
-    setStreamListener(null);
+    clearStreamListener(onStream);
     if (voiceState() === "rec" && host.available()) host.call("voice.cancel").catch(() => {});
     if (s !== null) rpc("term.close", { s }).catch(() => {});
   });
@@ -1025,7 +1073,7 @@ function TermScreen(props: { address: string }) {
         <Button
           onPress={() => {
             tapHaptic();
-            nav.push({
+            openFiles({
               name: "files",
               rootId: `term:${address}`,
               address,
@@ -1342,8 +1390,13 @@ function FilesScreen(props: { rootId?: string; address?: string; path?: string; 
   });
 
   cleanup(() => {
-    const stillInFiles = nav.stack().some((r) => r.name === "files" || r.name === "preview");
-    if (!stillInFiles) closePanelOnMac();
+    try {
+      const stillInFiles = nav.routes().some((r) => r.name === "files" || r.name === "preview");
+      clientLog("info", "files.cleanup", { rootId: activeRoot(), stillInFiles });
+      if (!stillInFiles) closePanelOnMac();
+    } catch (e: any) {
+      clientLog("error", "files.cleanup.err", { err: String(e?.message ?? e) });
+    }
   });
 
   const changedCount = computed(() => Object.keys(marks()).length);
@@ -1452,7 +1505,13 @@ function FilesScreen(props: { rootId?: string; address?: string; path?: string; 
                     toggleFolder(row.item.path);
                   } else {
                     tapHaptic();
-                    nav.push({ name: "preview", rootId: activeRoot(), path: row.item.path, title: row.item.name });
+                    clientLog("info", "files.tap_file", {
+                      rootId: activeRoot(),
+                      path: row.item.path,
+                      size: row.item.size,
+                      kind: row.item.kind,
+                    });
+                    openPreview({ name: "preview", rootId: activeRoot(), path: row.item.path, title: row.item.name });
                   }
                 }}
                 style={{ paddingLeft: 12 + row.depth * 18, paddingRight: 14 }}
@@ -1511,6 +1570,10 @@ function FilesScreen(props: { rootId?: string; address?: string; path?: string; 
   );
 }
 
+const MAX_INLINE_TEXT_CHARS = 24 * 1024;
+const MAX_INLINE_LINES = 300;
+const MAX_LINE_CHARS = 600;
+
 function PreviewScreen(props: { rootId: string; path: string; title: string }) {
   const data = signal<any>(null);
   const loading = signal<boolean>(true);
@@ -1519,6 +1582,30 @@ function PreviewScreen(props: { rootId: string; path: string; title: string }) {
   const progress = signal<number>(0); // 0..100
   const busyAction = signal<string>("");
   const copied = signal<string>("");
+  let initialLoaded = false;
+
+  const safeTextInfo = computed(() => {
+    const d = data();
+    if (!d || (d.kind !== "text" && d.kind !== "md")) return null;
+    const raw = String(d.text ?? "");
+    const allLines = raw.split("\n");
+    const slicedChars = raw.length > MAX_INLINE_TEXT_CHARS ? raw.slice(0, MAX_INLINE_TEXT_CHARS) : raw;
+    const lines = slicedChars.split("\n");
+    const cappedLines = lines.slice(0, MAX_INLINE_LINES).map((ln) =>
+      ln.length > MAX_LINE_CHARS ? `${ln.slice(0, MAX_LINE_CHARS)} …` : ln,
+    );
+    const inlineTruncated =
+      Boolean(d.truncated) ||
+      raw.length > MAX_INLINE_TEXT_CHARS ||
+      allLines.length > MAX_INLINE_LINES ||
+      lines.some((ln) => ln.length > MAX_LINE_CHARS);
+    return {
+      totalLines: allLines.length,
+      shownLines: cappedLines.length,
+      inlineTruncated,
+      display: cappedLines.join("\n") || "（空文件）",
+    };
+  });
 
   async function loadFile() {
     if (status() !== "ready") return;
@@ -1526,9 +1613,20 @@ function PreviewScreen(props: { rootId: string; path: string; title: string }) {
     err.set("");
     imgUrl.set("");
     progress.set(0);
+    clientLog("info", "preview.load.start", { rootId: props.rootId, path: props.path });
     try {
       const res = (await rpc("files.open", { rootId: props.rootId, path: props.path }, 60_000)) as any;
       data.set(res);
+      clientLog("info", "preview.load.opened", {
+        rootId: props.rootId,
+        path: props.path,
+        kind: res?.kind,
+        size: res?.size,
+        total: res?.total ?? res?.rawTotal ?? res?.thumbTotal,
+        truncated: res?.truncated,
+        hasInline: Boolean(res?.inline),
+        previewId: res?.previewId ?? res?.rawPreviewId ?? res?.thumbPreviewId,
+      });
       if (res.kind === "image") {
         if (res.inline) {
           imgUrl.set(res.inline);
@@ -1549,6 +1647,7 @@ function PreviewScreen(props: { rootId: string; path: string; title: string }) {
         }
       }
     } catch (e: any) {
+      clientLog("error", "preview.load.err", { rootId: props.rootId, path: props.path, err: String(e?.message ?? e) });
       err.set(e.message || "打开文件失败");
     } finally {
       loading.set(false);
@@ -1556,7 +1655,10 @@ function PreviewScreen(props: { rootId: string; path: string; title: string }) {
   }
 
   effect(() => {
-    if (status() === "ready") loadFile();
+    if (status() === "ready" && !initialLoaded) {
+      initialLoaded = true;
+      loadFile();
+    }
   });
 
   async function openInSystem(previewId: string, name: string, kind: string, total: number) {
@@ -1736,7 +1838,8 @@ function PreviewScreen(props: { rootId: string; path: string; title: string }) {
               <View class="gap-3 rounded-[20px] bg-card p-4">
                 <View class="flex-row items-center justify-between">
                   <Text class="font-mono text-[12px] text-muted-foreground" style={{ fontVariant: ["tabular-nums"] }}>
-                    {String(data().text ?? "").split("\n").length} 行{data().truncated ? "（已截取前 128 KB）" : ""}
+                    {safeTextInfo()?.shownLines ?? 0} / {safeTextInfo()?.totalLines ?? 0} 行
+                    {safeTextInfo()?.inlineTruncated ? "（大文件内联速览）" : ""}
                   </Text>
                   <Button
                     onPress={() => copyText(String(data().text ?? ""), "已复制全文")}
@@ -1745,11 +1848,23 @@ function PreviewScreen(props: { rootId: string; path: string; title: string }) {
                     <Text class="text-[12px] font-medium text-foreground">{copied() === "已复制全文" ? "已复制" : "复制全文"}</Text>
                   </Button>
                 </View>
-                <Scroll horizontal scrollbar={false} class="rounded-[14px] bg-secondary p-3">
+                {data().rawPreviewId ? (
+                  <Button
+                    onPress={() => openInSystem(data().rawPreviewId, data().name, "look", data().rawTotal || data().size)}
+                    disabled={Boolean(busyAction())}
+                    class="h-10 items-center justify-center rounded-full bg-primary active:opacity-80"
+                    testID="open-text-ql"
+                  >
+                    <Text class="text-[14px] font-medium text-primary-foreground">
+                      {busyAction() ? `正在同步 ${progress()}%…` : `用系统 QuickLook 查看完整文件（${fmtBytes(data().rawTotal || data().size)}）`}
+                    </Text>
+                  </Button>
+                ) : null}
+                <View class="rounded-[14px] bg-secondary p-3">
                   <Text class="font-mono text-[12.5px] leading-relaxed text-card-foreground" selectable>
-                    {data().text || "（空文件）"}
+                    {safeTextInfo()?.display || "（空文件）"}
                   </Text>
-                </Scroll>
+                </View>
               </View>
             ) : null}
 

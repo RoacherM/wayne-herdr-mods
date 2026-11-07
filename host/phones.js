@@ -13,7 +13,9 @@
  * Only the methods below reach herdr-core. Nothing here forwards a raw RPC: herdr-core's socket
  * has no password, so `machine.exec`, `file.*`, `terminal.run`, `server.*` stay unreachable.
  */
+import { appendFile } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
+import { join } from 'node:path';
 import { coastSteps } from '../shared/coast.js';
 import { desktopAccept } from '../shared/e2e.js';
 import { CREDIT, DATA, RESIZE, size, u32 } from './hc.js';
@@ -535,6 +537,27 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
     });
   }
 
+  function recordClientLog(peer, p = {}) {
+    const level = String(p.level ?? 'info').toLowerCase();
+    const ev = String(p.event ?? 'client').slice(0, 80);
+    const detailStr = typeof p.detail === 'string'
+      ? p.detail.slice(0, 1200)
+      : JSON.stringify(p.detail ?? {}).slice(0, 1200);
+    const devName = peer.device?.name || peer.device?.id || 'phone';
+    log(`wayne-herdr-mods: [phone:${devName}] [${level}] ${ev} ${detailStr}`);
+    if (state?.dir) {
+      const line = JSON.stringify({
+        ts: new Date(Number(p.ts) || Date.now()).toISOString(),
+        device: devName,
+        level,
+        event: ev,
+        detail: p.detail ?? {},
+      }) + '\n';
+      appendFile(join(state.dir, 'ios-client.log'), line).catch(() => {});
+    }
+    return { ok: true };
+  }
+
   function notify(peer, { m, p = {} }) {
     try {
       if (m === 'term.input') { const stream = streamOf(peer, p.s); stopCoast(stream); input(stream, p.d); }
@@ -548,6 +571,7 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
         stream.core.send(stream.channel, CREDIT, u32(n));
         if (stream.held && wheelMay(stream)) release(stream);
       }
+      else if (m === 'client.log') recordClientLog(peer, p);
     } catch {}
   }
 
@@ -656,6 +680,7 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
     'push.test': (peer) => push.sendTo(state.deviceById(peer.device.id), { title: 'herdr 推送测试', body: `来自「${state.desktopName}」的测试通知`, tag: 'test' }),
     // The phone's experience records (metrics.js): times and kinds only.
     'metrics.put': (peer, p) => { if (!metrics) throw new Error('不记录'); return metrics.put(peer.device, p); },
+    'client.log': (peer, p) => recordClientLog(peer, p),
     // Sandboxed workspace file browser & low-bandwidth media preview (files.js).
     'files.roots': () => { if (!fileBrowser) throw new Error('文件预览不可用'); return fileBrowser.roots(); },
     'files.list': (peer, p) => { if (!fileBrowser) throw new Error('文件预览不可用'); return fileBrowser.list(p); },

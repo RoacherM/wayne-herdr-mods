@@ -49,7 +49,8 @@ test('roots, list, path sandboxing, text/image/video open and 64KB slice streami
     get: (addr) => (addr === 't0' ? { address: 't0', cwd: otherDir } : { address: 't1', cwd: workspaceDir }),
   };
 
-  const files = createFiles({ dir: dataDir, terminals: fakeTerminals });
+  const logs = [];
+  const files = createFiles({ dir: dataDir, terminals: fakeTerminals, log: (m) => logs.push(m) });
 
   try {
     // 1. Roots discovery and per-terminal cwd isolation (`term:t1` resolves t1's own cwd, not t0's)
@@ -79,11 +80,12 @@ test('roots, list, path sandboxing, text/image/video open and 64KB slice streami
     await assert.rejects(() => files.open({ rootId: 'term:t1', path: '.git/config' }), /不允许访问/);
     await assert.rejects(() => files.open({ rootId: 'term:t1', path: 'escape-link.txt' }), /超出工作区范围/);
 
-    // 4. Markdown / text open + truncation
+    // 4. Markdown / text open + truncation + rawPreviewId for QuickLook on large text files
     const md = await files.open({ rootId: 'term:t1', path: 'README.md' });
     assert.equal(md.kind, 'md');
     assert.equal(md.truncated, false);
     assert.match(md.text, /# Hello Herdr/);
+    assert.ok(md.rawPreviewId);
 
     const bigText = 'A'.repeat(MAX_TEXT_BYTES + 5000);
     await writeFile(join(workspaceDir, 'big.log'), bigText);
@@ -91,6 +93,12 @@ test('roots, list, path sandboxing, text/image/video open and 64KB slice streami
     assert.equal(openedBig.kind, 'text');
     assert.equal(openedBig.truncated, true);
     assert.equal(openedBig.text.length, MAX_TEXT_BYTES);
+    assert.ok(openedBig.rawPreviewId);
+    assert.equal(openedBig.rawTotal, bigText.length);
+    const bigSlice = await files.slice({ previewId: openedBig.rawPreviewId, offset: MAX_TEXT_BYTES, length: 6000 });
+    assert.equal(Buffer.from(bigSlice.data, 'base64').length, 5000);
+    assert.equal(bigSlice.eof, true);
+    assert.ok(logs.some((l) => l.includes('files.open') && l.includes(`rawBytes=${bigText.length}`)));
 
     // 5. Image preview + slice streaming
     const samplePng = join(process.cwd(), 'docs', 'pc-herdr-mock.png');

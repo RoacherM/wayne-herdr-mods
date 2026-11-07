@@ -812,6 +812,13 @@ probe 结束时 Mac 焦点停在 herdr-relay 工作区（因为 A 抢过焦点�
 
 - 为什么不用 WebRTC `MediaStreamTrack` 推视频流：我们的 WebRTC 仅配 STUN、无 TURN 中继，跨网段 UDP 不通时媒体轨直接不可用；而走 `files.slice` RPC 分片在局域网下自动跑在 WebRTC DataChannel（0.4 ms RTT）上，跨网段无缝回退 Cloudflare E2E 中继，且享受完整的端到端加密与本地缓存。
 - 手机通过 `files.slice {previewId, offset, length: 64512}` 按需拉取（`64512 = 63 × 1024`，是 3 的倍数，base64 分片无 `=` 填充，可直接拼接或流式追加写入原生临时文件），不在同一时刻往 socket 塞入大包，保证终端按键永不排队。
-- iOS 原生宿主（`ios/host/Sources/App.swift`）提供 `preview.reset`、`preview.append`、`preview.open`：视频/音频调用系统 `AVPlayerViewController`（支持拖动进度条、倍速、画中画），图片/PDF/Office 文档调用系统 `QLPreviewController`（支持双指缩放、多页翻阅与系统分享）。
+- iOS 原生宿主（`ios/host/Sources/App.swift`）提供 `preview.reset`、`preview.append`、`preview.open`：视频/音频调用系统 `AVPlayerViewController`（支持拖动进度条、倍速、画中画），图片/PDF/Office 文档及大文本文件（`rawPreviewId`）调用系统 `QLPreviewController`（支持双指缩放、全文搜索、多页翻阅与系统分享）。
+- **大文本内联保护与原生 QuickLook 双通道（2026-11-07）**：
+  - `files.open` 对文本/Markdown/代码文件除了返回前 `128 KB` 文本外，同时注册原文件 `rawPreviewId`（`<= 15 MB`）。
+  - `PreviewScreen` 内联 `<Text>` 仅渲染前 `24 KB` / `300` 行（单行上限 `600` 字符，不放进无宽度约束的横向 `<Scroll>`），避免 CoreText 在主线程排版超大单行或超长文本时触发 `NshLimits` 超时或 CALayer 纹理超限；同时提供「复制全文」与「用系统 QuickLook 查看完整文件」按钮。
+- **闪退根因与导航栈不变量（2026-11-07 真机崩溃报告 `Herdr-2026-11-07-181536.ips` 实测定位）**：
+  1. `NativeShell.xcframework`（0.1.3）的 `_nsh_app_set_error_handler`（偏移 `0x100201228`）存在 FFI use-after-free：设置 `app.onError` 时会在函数返回前立即调用 `ErrorHandlerBox` 的 drop 释放 32 字节闭包盒，却把悬垂指针留在 `[x22, #0x268]`，随后注册的第一个 `app.handle("haptic")` 复用同一块 32 字节堆内存，导致任何 JS 异常或 `callBudget` 超时触发 `MountSink::report_error` 时跳入 `haptic` 闭包并在 `NshHostReply.resolve(_:)+44` 发生 `EXC_BAD_ACCESS (0x10)`。修复：`ShellController.viewDidLoad()` 严禁设置 `app.onError`，并将 `app.limits` 提升为 `NshLimits(memoryMB: 512, stackKB: 8192, loadBudget: 30, callBudget: 30, maxNodes: 500_000)`；`FilesScreen` 退出清理统一使用 `nav.routes()`。
+  2. **返回必回主页不变量（`openTerm`）**：`HomeScreen` 在 `NavStack` 栈底保持挂载，若前台激活消费通知或快速连点直接 `nav.push({ name: "term" })`，会产生 `[home, term(A), term(B)]` 导致从 `term(B)` 返回落到 `term(A)`。`openTerm(address)` 强制保持栈为 `[{ name: "home" }, { name: "term", address }]`，并由 `clearStreamListener(onStream)` 校验当前监听器引用，确保从任何终端页左滑返回永远直接回到主页。
+  3. **端到端完整日志（`herdr-ios.log` + `client.log`）**：iOS 宿主 `AppLogger` 将启动、异常、预览文件字节数与 JS `log.write` 持久化到 `<Application Support>/herdr-ios.log`（2 MB 自动轮转），同时手机端 `clientLog` 通过 `client.log` 实时同步到 Mac 端 `~/Library/Logs/wayne-herdr-mods.log` 与 `~/.config/wayne-herdr-mods/ios-client.log`（记录路由栈变化、每次 `files.list` / `files.open` / `files.slice` 的原始大小、传输字节数与耗时）。
 
-验证：`test/files.test.mjs`（根目录收集、目录排序、`.git` 隐藏、`../` 与越界软链拦截、128 KB 文本截断、`sips` 图片压缩 + 分片重组、`ffmpeg` 6 帧故事板 + 480p MP4 转码与 `ftyp` 校验）。
+验证：`test/files.test.mjs`（根目录收集、目录排序、`.git` 隐藏、`../` 与越界软链拦截、128 KB 文本截断与 `rawPreviewId` 分片读取、`sips` 图片压缩 + 分片重组、`ffmpeg` 6 帧故事板 + 480p MP4 转码与 `ftyp` 校验、文件大小日志断言）。

@@ -34,11 +34,129 @@ export const notifyEnabled = signal<boolean>(false);
 /** Events for the open terminal page: { ev: 'out' | 'size' | 'closed', s, ... } */
 let onStream: ((msg: any) => void) | null = null;
 export const setStreamListener = (fn: ((msg: any) => void) | null) => { onStream = fn; };
+export const clearStreamListener = (expected: (msg: any) => void) => {
+  if (onStream === expected) onStream = null;
+};
 
 let link: any = null;
 const bgLinks = new Map<string, { link: any; timer: any }>();
 
-export const rpc = (m: string, p: object = {}, ms?: number) => (link ? link.rpc(m, p, ms) : Promise.reject(new Error("尚未连接")));
+// ---- Persistent & E2E-synced diagnostic logger (writes to iOS herdr-ios.log + Mac ios-client.log)
+type LogEntry = { ts: number; level: "info" | "warn" | "error"; event: string; detail: Record<string, any> };
+const pendingLogs: LogEntry[] = [];
+let loggingGuard = false;
+
+function safeDetailString(detail?: Record<string, any>): string {
+  if (!detail) return "";
+  try {
+    return JSON.stringify(detail);
+  } catch {
+    return String(detail);
+  }
+}
+
+export function clientLog(level: "info" | "warn" | "error", event: string, detail: Record<string, any> = {}) {
+  if (loggingGuard) return;
+  loggingGuard = true;
+  try {
+    const entry: LogEntry = { ts: Date.now(), level, event, detail };
+    const detailStr = safeDetailString(detail);
+    if (host.available()) {
+      try {
+        host.post("log.write", { level, event, detail: detailStr });
+      } catch {}
+    }
+    if (link && status() === "ready") {
+      try {
+        link.notify("client.log", entry);
+      } catch {}
+    } else {
+      if (pendingLogs.length >= 200) pendingLogs.shift();
+      pendingLogs.push(entry);
+    }
+  } finally {
+    loggingGuard = false;
+  }
+}
+
+function flushPendingLogs() {
+  if (!link || status() !== "ready" || !pendingLogs.length) return;
+  const batchEntries = pendingLogs.splice(0, 100);
+  for (const entry of batchEntries) {
+    try {
+      link.notify("client.log", entry);
+    } catch {}
+  }
+}
+
+const origWarn = console.warn?.bind(console);
+const origError = console.error?.bind(console);
+console.warn = (...args: any[]) => {
+  origWarn?.(...args);
+  clientLog("warn", "console.warn", { msg: args.map((a) => String(a)).join(" ").slice(0, 500) });
+};
+console.error = (...args: any[]) => {
+  origError?.(...args);
+  clientLog("error", "console.error", { msg: args.map((a) => String(a)).join(" ").slice(0, 500) });
+};
+(globalThis as any).onerror = (msg: any, src?: any, line?: any, col?: any, err?: any) => {
+  clientLog("error", "js.onerror", {
+    msg: String(msg ?? ""),
+    src: String(src ?? ""),
+    line,
+    col,
+    stack: String(err?.stack ?? "").slice(0, 800),
+  });
+};
+(globalThis as any).onunhandledrejection = (ev: any) => {
+  const reason = ev?.reason;
+  clientLog("error", "js.unhandledrejection", {
+    msg: String(reason?.message ?? reason ?? ""),
+    stack: String(reason?.stack ?? "").slice(0, 800),
+  });
+};
+
+const TRACKED_RPC = new Set([
+  "files.roots", "files.list", "files.open", "files.slice", "files.panel",
+  "term.open", "term.close", "term.new", "voice.done", "image.put",
+]);
+
+function summarizeRpcResult(m: string, p: any, res: any, ms: number): Record<string, any> | null {
+  if (m === "files.open") {
+    return { rootId: p?.rootId, path: p?.path, kind: res?.kind, size: res?.size, total: res?.total ?? res?.rawTotal, truncated: res?.truncated, ms };
+  }
+  if (m === "files.list") {
+    return { rootId: p?.rootId, path: p?.path, items: res?.items?.length ?? 0, ms };
+  }
+  if (m === "files.slice") {
+    if ((p?.offset ?? 0) !== 0 && !res?.eof && ms <= 1000) return null;
+    return { previewId: p?.previewId, offset: p?.offset, len: res?.length, total: res?.total, eof: res?.eof, ms };
+  }
+  return { p, ms };
+}
+
+export const rpc = async (m: string, p: any = {}, ms?: number) => {
+  if (!link) {
+    clientLog("warn", "rpc.no_link", { m });
+    throw new Error("尚未连接");
+  }
+  const t0 = Date.now();
+  try {
+    const res = await link.rpc(m, p, ms);
+    if (TRACKED_RPC.has(m)) {
+      const summary = summarizeRpcResult(m, p, res, Date.now() - t0);
+      if (summary) clientLog("info", `rpc.${m}`, summary);
+    }
+    return res;
+  } catch (err: any) {
+    clientLog("error", `rpc.${m}.err`, {
+      p: m === "upload.put" ? { offset: p?.offset, total: p?.total } : p,
+      err: String(err?.message ?? err),
+      ms: Date.now() - t0,
+    });
+    throw err;
+  }
+};
 export const notify = (m: string, p: object = {}) => link?.notify(m, p);
 
 function setMacStatus(desktopId: string, st: string) {
@@ -372,6 +490,8 @@ function start(saved: Saved, pair?: { token: string; name: string }) {
     } else {
       syncBackgroundLinks(updated.desktopId, all);
     }
+    flushPendingLogs();
+    clientLog("info", "link.ready", { desktopId: saved.desktopId, desktopName: updated.desktopName });
     refresh();
   });
   l.addEventListener("fatal", async (e: any) => {
@@ -519,40 +639,51 @@ export async function fetchPreviewDataUrl(
   const cached = dataUrlCache.get(previewId);
   if (cached) {
     onProgress?.(total, total);
+    clientLog("info", "preview.dataurl.cache_hit", { previewId, total });
     return cached;
   }
+  const t0 = Date.now();
+  clientLog("info", "preview.dataurl.start", { previewId, mime, total });
   const b64Parts: string[] = [];
   let offset = 0;
   let aligned = true;
-  while (offset < total) {
-    const part = (await rpc(
-      "files.slice",
-      { previewId, offset, length: SLICE_ALIGNED_BYTES },
-      30_000,
-    )) as { data: string; length: number; total: number; eof: boolean };
-    if (!part.length) break;
-    if (!part.eof && part.length % 3 !== 0) aligned = false;
-    b64Parts.push(part.data);
-    offset += part.length;
-    onProgress?.(offset, part.total || total);
-    if (part.eof) break;
+  let slices = 0;
+  try {
+    while (offset < total) {
+      const part = (await rpc(
+        "files.slice",
+        { previewId, offset, length: SLICE_ALIGNED_BYTES },
+        30_000,
+      )) as { data: string; length: number; total: number; eof: boolean };
+      if (!part.length) break;
+      if (!part.eof && part.length % 3 !== 0) aligned = false;
+      b64Parts.push(part.data);
+      offset += part.length;
+      slices++;
+      onProgress?.(offset, part.total || total);
+      if (part.eof) break;
+    }
+    let fullB64 = b64Parts.join("");
+    if (!aligned && b64Parts.length > 1) {
+      const chunks = b64Parts.map((s) => unb64(s));
+      const totalLen = chunks.reduce((acc, c) => acc + c.length, 0);
+      const merged = new Uint8Array(totalLen);
+      let pos = 0;
+      for (const c of chunks) { merged.set(c, pos); pos += c.length; }
+      fullB64 = b64(merged);
+    }
+    const url = `data:${mime || "application/octet-stream"};base64,${fullB64}`;
+    if (dataUrlCache.size >= 16) {
+      const oldest = dataUrlCache.keys().next().value;
+      if (oldest) dataUrlCache.delete(oldest);
+    }
+    dataUrlCache.set(previewId, url);
+    clientLog("info", "preview.dataurl.done", { previewId, loaded: offset, total, slices, ms: Date.now() - t0 });
+    return url;
+  } catch (err: any) {
+    clientLog("error", "preview.dataurl.err", { previewId, offset, total, slices, err: String(err?.message ?? err), ms: Date.now() - t0 });
+    throw err;
   }
-  let fullB64 = b64Parts.join("");
-  if (!aligned && b64Parts.length > 1) {
-    const chunks = b64Parts.map((s) => unb64(s));
-    const totalLen = chunks.reduce((acc, c) => acc + c.length, 0);
-    const merged = new Uint8Array(totalLen);
-    let pos = 0;
-    for (const c of chunks) { merged.set(c, pos); pos += c.length; }
-    fullB64 = b64(merged);
-  }
-  const url = `data:${mime || "application/octet-stream"};base64,${fullB64}`;
-  if (dataUrlCache.size >= 24) {
-    const oldest = dataUrlCache.keys().next().value;
-    if (oldest) dataUrlCache.delete(oldest);
-  }
-  dataUrlCache.set(previewId, url);
-  return url;
 }
 
 export async function openNativePreview(
@@ -566,6 +697,7 @@ export async function openNativePreview(
   const safeName = `${previewId.replace(/[^A-Za-z0-9_-]/g, "")}-${name.replace(/[^A-Za-z0-9._-]/g, "_")}`;
   if (nativeFileCache.get(previewId) === safeName) {
     try {
+      clientLog("info", "preview.native.cache_hit", { previewId, safeName, kind, total });
       await host.call("preview.open", { name: safeName, kind });
       onProgress?.(total, total);
       return;
@@ -573,20 +705,30 @@ export async function openNativePreview(
       nativeFileCache.delete(previewId);
     }
   }
+  const t0 = Date.now();
+  clientLog("info", "preview.native.start", { previewId, safeName, kind, total });
   await host.call("preview.reset", { name: safeName });
   let offset = 0;
-  while (offset < total) {
-    const part = (await rpc(
-      "files.slice",
-      { previewId, offset, length: SLICE_ALIGNED_BYTES },
-      30_000,
-    )) as { data: string; length: number; total: number; eof: boolean };
-    if (!part.length) break;
-    await host.call("preview.append", { name: safeName, data: part.data });
-    offset += part.length;
-    onProgress?.(offset, part.total || total);
-    if (part.eof) break;
+  let slices = 0;
+  try {
+    while (offset < total) {
+      const part = (await rpc(
+        "files.slice",
+        { previewId, offset, length: SLICE_ALIGNED_BYTES },
+        30_000,
+      )) as { data: string; length: number; total: number; eof: boolean };
+      if (!part.length) break;
+      await host.call("preview.append", { name: safeName, data: part.data });
+      offset += part.length;
+      slices++;
+      onProgress?.(offset, part.total || total);
+      if (part.eof) break;
+    }
+    nativeFileCache.set(previewId, safeName);
+    clientLog("info", "preview.native.done", { previewId, safeName, kind, loaded: offset, total, slices, ms: Date.now() - t0 });
+    await host.call("preview.open", { name: safeName, kind });
+  } catch (err: any) {
+    clientLog("error", "preview.native.err", { previewId, safeName, kind, offset, total, slices, err: String(err?.message ?? err), ms: Date.now() - t0 });
+    throw err;
   }
-  nativeFileCache.set(previewId, safeName);
-  await host.call("preview.open", { name: safeName, kind });
 }

@@ -352,6 +352,7 @@ export function createFiles({ dir, terminals, extraRoots = [], syncApp = false, 
   }
 
   async function list({ rootId, path: relPath = '', syncPanel = false, address } = {}) {
+    const t0 = Date.now();
     const { root, rootReal, targetReal, relPath: normalizedRel } = await resolveSafe(rootId, relPath);
     const { items, truncated } = await readDirItems(rootReal, targetReal, normalizedRel);
 
@@ -383,6 +384,7 @@ export function createFiles({ dir, terminals, extraRoots = [], syncApp = false, 
           }
         } catch {}
       }
+      log(`wayne-herdr-mods: files.list root=${root.id} items=${items.length} marks=${Object.keys(marks).length} sub=${Object.keys(subfolders).length} ms=${Date.now() - t0}`);
       return {
         rootId: root.id,
         rootName: root.name,
@@ -395,6 +397,7 @@ export function createFiles({ dir, terminals, extraRoots = [], syncApp = false, 
       };
     }
 
+    log(`wayne-herdr-mods: files.list root=${root.id} path=${normalizedRel} items=${items.length} ms=${Date.now() - t0}`);
     return {
       rootId: root.id,
       rootName: root.name,
@@ -605,6 +608,7 @@ export function createFiles({ dir, terminals, extraRoots = [], syncApp = false, 
 
   async function open({ rootId, path: relPath } = {}) {
     if (!relPath) throw new Error('缺少文件路径');
+    const t0 = Date.now();
     const { root, rootReal, targetReal, relPath: normalizedRel } = await resolveSafe(rootId, relPath);
     const st = await stat(targetReal);
     if (st.isDirectory()) throw new Error('不能直接打开文件夹');
@@ -619,6 +623,7 @@ export function createFiles({ dir, terminals, extraRoots = [], syncApp = false, 
 
     if (kind === 'image') {
       const img = await buildImagePreview(targetReal, rootReal, st, ext, name, hash);
+      log(`wayne-herdr-mods: files.open kind=image path=${normalizedRel} rawBytes=${st.size} previewBytes=${img.total} ms=${Date.now() - t0}`);
       return {
         kind: 'image',
         rootId: root.id,
@@ -633,6 +638,7 @@ export function createFiles({ dir, terminals, extraRoots = [], syncApp = false, 
 
     if (kind === 'video') {
       const vid = await buildVideoPreview(targetReal, st, name, hash);
+      log(`wayne-herdr-mods: files.open kind=video path=${normalizedRel} rawBytes=${st.size} previewBytes=${vid.total} dur=${vid.duration}s ms=${Date.now() - t0}`);
       return {
         kind: 'video',
         rootId: root.id,
@@ -650,6 +656,7 @@ export function createFiles({ dir, terminals, extraRoots = [], syncApp = false, 
       const pid = st.size <= MAX_RAW_DOC_BYTES
         ? registerPreview(`aud-${hash}`, { filePath: targetReal, rootReal, mime, name, total: st.size })
         : null;
+      log(`wayne-herdr-mods: files.open kind=audio path=${normalizedRel} rawBytes=${st.size} ms=${Date.now() - t0}`);
       return {
         kind: 'audio',
         rootId: root.id,
@@ -666,6 +673,7 @@ export function createFiles({ dir, terminals, extraRoots = [], syncApp = false, 
 
     if (kind === 'look') {
       const look = await buildLookPreview(targetReal, rootReal, st, ext, name, hash);
+      log(`wayne-herdr-mods: files.open kind=look path=${normalizedRel} rawBytes=${st.size} thumbBytes=${look.thumbTotal} ms=${Date.now() - t0}`);
       return {
         kind: 'look',
         rootId: root.id,
@@ -698,6 +706,7 @@ export function createFiles({ dir, terminals, extraRoots = [], syncApp = false, 
         const rawPreviewId = st.size <= MAX_RAW_DOC_BYTES
           ? registerPreview(`bin-${hash}`, { filePath: targetReal, rootReal, mime: 'application/octet-stream', name, total: st.size })
           : null;
+        log(`wayne-herdr-mods: files.open kind=binary path=${normalizedRel} rawBytes=${st.size} ms=${Date.now() - t0}`);
         return {
           kind: 'binary',
           rootId: root.id,
@@ -712,6 +721,14 @@ export function createFiles({ dir, terminals, extraRoots = [], syncApp = false, 
       }
     }
 
+    const qlName = /\.(txt|md|json|log|csv|xml|yaml|yml|js|ts|tsx|jsx|py|sh|swift|rs|go|c|h|cpp|css|html)$/i.test(name)
+      ? name
+      : `${name}.txt`;
+    const rawPreviewId = st.size > 0 && st.size <= MAX_RAW_DOC_BYTES
+      ? registerPreview(`txt-${hash}`, { filePath: targetReal, rootReal, mime: 'text/plain; charset=utf-8', name: qlName, total: st.size })
+      : null;
+
+    log(`wayne-herdr-mods: files.open kind=${kind} path=${normalizedRel} rawBytes=${st.size} inlineBytes=${buf.length} truncated=${st.size > MAX_TEXT_BYTES} ms=${Date.now() - t0}`);
     return {
       kind, // 'md' | 'text'
       rootId: root.id,
@@ -722,6 +739,8 @@ export function createFiles({ dir, terminals, extraRoots = [], syncApp = false, 
       mtime: Math.trunc(st.mtimeMs),
       text: buf.toString('utf8'),
       truncated: st.size > MAX_TEXT_BYTES,
+      rawPreviewId,
+      rawTotal: rawPreviewId ? st.size : 0,
     };
   }
 
@@ -748,13 +767,17 @@ export function createFiles({ dir, terminals, extraRoots = [], syncApp = false, 
       const buf = Buffer.alloc(toRead);
       const { bytesRead } = await fh.read(buf, 0, toRead, off);
       const sliceBuf = buf.subarray(0, bytesRead);
+      const eof = bytesRead === 0 || off + bytesRead >= entry.total;
+      if (off === 0 || eof) {
+        log(`wayne-herdr-mods: files.slice id=${previewId} name=${entry.name} offset=${off} len=${bytesRead} total=${entry.total} eof=${eof}`);
+      }
       return {
         data: sliceBuf.toString('base64'),
         offset: off,
         length: bytesRead,
         total: entry.total,
         mime: entry.mime,
-        eof: bytesRead === 0 || off + bytesRead >= entry.total,
+        eof,
       };
     } finally {
       await fh.close();
