@@ -51,7 +51,8 @@ iPhone 浏览器 / PWA ──wss /v1/client/<id>──▶ Cloudflare Worker + DO
 | 发一句话给 agent | `terminal.send`：等电脑上 ~3 秒没人打字，粘贴并回车 | ✓ |
 | 快捷键按钮 | `terminal.keys`，约 33 ms 一次 | ✓ |
 | 停止 | `terminal.interrupt` | 未测 |
-| agent 卡住、结束、退出时推送 | 宿主订阅 `status` / `turn` / `finished` 事件 → Web Push | 未测 |
+| agent 卡住、结束、退出时推送 | 宿主订阅 `status` / `turn` / `finished` 事件 → Web Push / iOS 原生本地通知 | ✓ |
+| 浏览工作区文件与低带宽预览（代码、文档、图片、视频） | 宿主受限文件沙箱 `files.roots` / `files.list` / `files.open` / `files.slice`（不暴露 `herdr-core` 任意 `file.*`） | ✓ |
 
 手机不新建、不关闭终端，也不写 `herdr-app` 布局文档。第一版只看、只打字。
 
@@ -217,6 +218,7 @@ iPhone 浏览器 / PWA ──wss /v1/client/<id>──▶ Cloudflare Worker + DO
 - 中继只见密文和连接时间、大小这类元数据。
 - 推送只发概要（「t6 claude-code 等你确认」），不发终端内容。
 - herdr-core 的 socket 没有密码（官方文档说不要转发给不信任的人），所以宿主进程只把上面表格里的接口转给手机，不转发任意 RPC。`machine.exec`、`file.*`、`terminal.run`、`server.*` 一律不开放。
+- 文件浏览与预览接口（`files.*`）是纵深防御边界：只允许读取当前 `herdr-core` 工作区与终端所在目录（若某个终端的 `cwd` 在 `~`，则该终端对应的根目录即包含 `~`），每次访问均通过 `realpath` 校验不越出该根目录并屏蔽 `.git` 内部文件。
 
 ## 目录
 
@@ -779,3 +781,31 @@ probe 结束时 Mac 焦点停在 herdr-relay 工作区（因为 A 抢过焦点�
 做法：`term.new {space}` → herdr-core `terminal.run`，带标签 `herdr.space`，`keep: true`。手机不能指定程序和参数。
 
 验证：全链路测试（标签、`-l`、keep、能打开、未知工作区被拒）；无头 iPhone：点「+」→ 新终端 → 输入 `pwd; echo NEW_TAB_$((20+22))` 得到 `/private/tmp`、`NEW_TAB_42`，返回首页多一行；真 Herdr.app：herdr-relay 工作区标签页 1 → 2，Mac 焦点没动，结束后关掉，回到 1。
+
+## 手机端文件与低带宽视频预览（已实现）
+
+手机在查看终端之余，常需要直接查看当前工作区里的代码、Markdown、截图、PDF/Office 文档以及录屏视频。由于连接可能走 Cloudflare 加密中继或蜂窝弱网，直接在链路上传输数十 MB 的原图或原始视频会阻塞终端打字回显（`term.input` / `term.out`）。
+
+### 1. 路径沙箱（`host/files.js`）
+
+- 手机**不能**传入任意绝对路径。`files.roots` 只从当前 `herdr-core` 的工作区（`space.folder`）和终端工作目录（`t.foreground?.cwd ?? t.cwd`）收集根目录并分配 `rootId`。
+- `files.list {rootId, path}` 与 `files.open {rootId, path}` 先对根目录和目标路径分别做 `fs.realpath`，校验目标 `realpath` 严格位于根目录 `realpath` 内部（阻断 `../` 越界与指向工作区外部的符号链接），并拒绝列出或打开 `.git` 与 `.DS_Store`。
+
+### 2. 按文件类型硬件预处理（Mac 端缓存于 `<dataDir>/cache/previews/`）
+
+本机实测（macOS，`sips-316`、`/usr/bin/qlmanage`、`ffmpeg 9.0.2` Apple Silicon `h264_videotoolbox`，2026-11-07）：
+
+| 类型 | 宿主预处理方式 | 实测耗时与体积变化 |
+|---|---|---|
+| 代码 / Markdown / 文本 | 直接读取前 `128 KB` UTF-8 文本（前 4 KB 含 `\0` 判为二进制） | `< 2 ms` |
+| 大图片（PNG / HEIC / TIFF 等） | `/usr/bin/sips -Z 1440 -s format jpeg -s formatOptions 78` 缩至手机视网膜屏足够清晰的 1440px JPEG | 2880×1800 PNG `3.6 MB` → `145 KB`（省 96%，耗时 `51 ms`） |
+| 文档（PDF / Office / iWork / HTML） | `/usr/bin/qlmanage -t -s 1600` 生成首屏缩略图 + 注册原文件 `rawPreviewId`（`<= 15 MB`）供手机系统 `QLPreviewController` 打开完整多页文档 | `67 KB` 缩略图（耗时 `178 ms`） |
+| 视频（MP4 / MOV / WebM / MKV） | ① `ffmpeg` 抽 6 帧横向拼接成 `Filmstrip` 故事板长图（`~45 KB` JPEG，随 `files.open` 立即返回）；② `ffmpeg` `h264_videotoolbox` 硬件转码为 `480p@15fps` H.264 + 24kbps 单声道 AAC + `-movflags +faststart` MP4（若硬件编码不可用则自动回退 `libx264`） | 30 秒 1080p@30fps 原片 `29.16 MB` → 故事板 `45 KB`（`112 ms`）+ 480p 全片 `768 KB`（`25.6 KB/s`，省 97.4%，耗时 `779 ms`） |
+
+### 3. 63 KB 对齐分片拉取与 iOS 原生预览（`files.slice` + `preview.*`）
+
+- 为什么不用 WebRTC `MediaStreamTrack` 推视频流：我们的 WebRTC 仅配 STUN、无 TURN 中继，跨网段 UDP 不通时媒体轨直接不可用；而走 `files.slice` RPC 分片在局域网下自动跑在 WebRTC DataChannel（0.4 ms RTT）上，跨网段无缝回退 Cloudflare E2E 中继，且享受完整的端到端加密与本地缓存。
+- 手机通过 `files.slice {previewId, offset, length: 64512}` 按需拉取（`64512 = 63 × 1024`，是 3 的倍数，base64 分片无 `=` 填充，可直接拼接或流式追加写入原生临时文件），不在同一时刻往 socket 塞入大包，保证终端按键永不排队。
+- iOS 原生宿主（`ios/host/Sources/App.swift`）提供 `preview.reset`、`preview.append`、`preview.open`：视频/音频调用系统 `AVPlayerViewController`（支持拖动进度条、倍速、画中画），图片/PDF/Office 文档调用系统 `QLPreviewController`（支持双指缩放、多页翻阅与系统分享）。
+
+验证：`test/files.test.mjs`（根目录收集、目录排序、`.git` 隐藏、`../` 与越界软链拦截、128 KB 文本截断、`sips` 图片压缩 + 分片重组、`ffmpeg` 6 帧故事板 + 480p MP4 转码与 `ftyp` 校验）。

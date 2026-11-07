@@ -11,6 +11,6 @@
     "statusBar": true,
     "clipboard": true,
     "picker": true,
-    "host": ["voice.*", "qr.*", "notify.*", "haptic"]
+    "host": ["voice.*", "qr.*", "notify.*", "preview.*", "haptic"]
   }
 }

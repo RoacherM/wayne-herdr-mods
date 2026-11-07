@@ -504,3 +504,89 @@ export const wake = () => {
   link?.wake();
   for (const bg of bgLinks.values()) bg.link?.wake?.();
 };
+
+// ---- Low-bandwidth 63 KB (multiple of 3 bytes) slice streaming for File / Video / QuickLook preview
+const SLICE_ALIGNED_BYTES = 63 * 1024; // 64,512 bytes: divisible by 3 so base64 slices concatenate without padding
+const dataUrlCache = new Map<string, string>();
+const nativeFileCache = new Map<string, string>(); // previewId -> safeName
+
+export async function fetchPreviewDataUrl(
+  previewId: string,
+  mime: string,
+  total: number,
+  onProgress?: (loaded: number, total: number) => void,
+): Promise<string> {
+  const cached = dataUrlCache.get(previewId);
+  if (cached) {
+    onProgress?.(total, total);
+    return cached;
+  }
+  const b64Parts: string[] = [];
+  let offset = 0;
+  let aligned = true;
+  while (offset < total) {
+    const part = (await rpc(
+      "files.slice",
+      { previewId, offset, length: SLICE_ALIGNED_BYTES },
+      30_000,
+    )) as { data: string; length: number; total: number; eof: boolean };
+    if (!part.length) break;
+    if (!part.eof && part.length % 3 !== 0) aligned = false;
+    b64Parts.push(part.data);
+    offset += part.length;
+    onProgress?.(offset, part.total || total);
+    if (part.eof) break;
+  }
+  let fullB64 = b64Parts.join("");
+  if (!aligned && b64Parts.length > 1) {
+    const chunks = b64Parts.map((s) => unb64(s));
+    const totalLen = chunks.reduce((acc, c) => acc + c.length, 0);
+    const merged = new Uint8Array(totalLen);
+    let pos = 0;
+    for (const c of chunks) { merged.set(c, pos); pos += c.length; }
+    fullB64 = b64(merged);
+  }
+  const url = `data:${mime || "application/octet-stream"};base64,${fullB64}`;
+  if (dataUrlCache.size >= 24) {
+    const oldest = dataUrlCache.keys().next().value;
+    if (oldest) dataUrlCache.delete(oldest);
+  }
+  dataUrlCache.set(previewId, url);
+  return url;
+}
+
+export async function openNativePreview(
+  previewId: string,
+  name: string,
+  kind: string,
+  total: number,
+  onProgress?: (loaded: number, total: number) => void,
+): Promise<void> {
+  if (!host.available()) throw new Error("当前环境不支持原生预览");
+  const safeName = `${previewId.replace(/[^A-Za-z0-9_-]/g, "")}-${name.replace(/[^A-Za-z0-9._-]/g, "_")}`;
+  if (nativeFileCache.get(previewId) === safeName) {
+    try {
+      await host.call("preview.open", { name: safeName, kind });
+      onProgress?.(total, total);
+      return;
+    } catch {
+      nativeFileCache.delete(previewId);
+    }
+  }
+  await host.call("preview.reset", { name: safeName });
+  let offset = 0;
+  while (offset < total) {
+    const part = (await rpc(
+      "files.slice",
+      { previewId, offset, length: SLICE_ALIGNED_BYTES },
+      30_000,
+    )) as { data: string; length: number; total: number; eof: boolean };
+    if (!part.length) break;
+    await host.call("preview.append", { name: safeName, data: part.data });
+    offset += part.length;
+    onProgress?.(offset, part.total || total);
+    if (part.eof) break;
+  }
+  nativeFileCache.set(previewId, safeName);
+  await host.call("preview.open", { name: safeName, kind });
+}

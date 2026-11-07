@@ -19,6 +19,7 @@ import { desktopAccept } from '../shared/e2e.js';
 import { CREDIT, DATA, RESIZE, size, u32 } from './hc.js';
 import { wheelSteps } from '../shared/wheel.js';
 import { scrollWatch } from './scroll-watch.js';
+import { createFiles } from './files.js';
 import { createUploads } from './uploads.js';
 import { MAX_BYTES as MAX_VOICE_BYTES } from './voice.js';
 
@@ -45,7 +46,8 @@ const WHEEL_RE = /^(?:\x1b\[<6[45];\d{1,4};\d{1,4}M|\x1b\[M[`a][\x20-\xff]{2})$/
 const PRESS_MS = 3000;
 export const KEY_RE = /^(?:(?:ctrl|alt|shift|cmd|super|meta)\+)*(?:[a-z0-9]|enter|esc|escape|tab|backspace|space|delete|del|insert|home|end|pageup|pgup|pagedown|pgdn|up|down|left|right|f(?:[1-9]|1[0-2])|[-=[\]\\;',./`])$/i;
 
-export function createPhones({ state, pairing, push, terminals, voice, metrics, link: getLink, rtc, log = () => {}, onChange = () => {} }) {
+export function createPhones({ state, pairing, push, terminals, voice, files, metrics, link: getLink, rtc, log = () => {}, onChange = () => {} }) {
+  const fileBrowser = files ?? (state?.dir ? createFiles({ dir: state.dir, terminals, log }) : null);
   const peers = new Map(); // cid → peer
   let nextStream = 1;
   // Uploads per phone, not per connection: the phone can move between relay and direct (or
@@ -654,6 +656,11 @@ export function createPhones({ state, pairing, push, terminals, voice, metrics, 
     'push.test': (peer) => push.sendTo(state.deviceById(peer.device.id), { title: 'herdr 推送测试', body: `来自「${state.desktopName}」的测试通知`, tag: 'test' }),
     // The phone's experience records (metrics.js): times and kinds only.
     'metrics.put': (peer, p) => { if (!metrics) throw new Error('不记录'); return metrics.put(peer.device, p); },
+    // Sandboxed workspace file browser & low-bandwidth media preview (files.js).
+    'files.roots': () => { if (!fileBrowser) throw new Error('文件预览不可用'); return fileBrowser.roots(); },
+    'files.list': (peer, p) => { if (!fileBrowser) throw new Error('文件预览不可用'); return fileBrowser.list(p); },
+    'files.open': (peer, p) => { if (!fileBrowser) throw new Error('文件预览不可用'); return fileBrowser.open(p); },
+    'files.slice': (peer, p) => { if (!fileBrowser) throw new Error('文件预览不可用'); return fileBrowser.slice(p); },
     'device.forget': async (peer) => { await state.removeDevice(peer.device.id); setTimeout(() => getLink()?.close(peer.cid, 'forgotten'), 50); onChange(); return { ok: true }; },
   };
 

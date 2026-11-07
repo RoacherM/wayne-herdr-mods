@@ -1,8 +1,10 @@
 // The Swift host of the native Herdr app: one NshAppView, full screen, running ios/App.tsx,
 // plus native bridges for hold-to-talk audio recording (voice.*), camera QR scanning (qr.scan),
-// and local status notifications (notify.*).
+// local status notifications (notify.*), and native QuickLook / AVPlayer file preview (preview.*).
 import AVFoundation
+import AVKit
 import NativeShell
+import QuickLook
 import UIKit
 import UserNotifications
 
@@ -86,10 +88,34 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
   }
 }
 
-final class ShellController: UIViewController {
+final class ShellController: UIViewController, QLPreviewControllerDataSource {
   private let app = NshAppView()
   private var recorder: AVAudioRecorder?
   private let audioURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("herdr-voice.m4a")
+  private let previewDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("herdr-previews", isDirectory: true)
+  private var currentPreviewURL: URL?
+
+  private func safePreviewURL(_ rawName: String) -> URL {
+    let base = URL(fileURLWithPath: rawName).lastPathComponent
+    let cleaned = base.isEmpty || base == "." || base == ".." ? "preview.bin" : base
+    return previewDir.appendingPathComponent(cleaned)
+  }
+
+  private func topHostController() -> UIViewController {
+    var top: UIViewController = self
+    while let presented = top.presentedViewController, !presented.isBeingDismissed {
+      top = presented
+    }
+    return top
+  }
+
+  func numberOfPreviewItems(in controller: QLPreviewController) -> Int {
+    currentPreviewURL == nil ? 0 : 1
+  }
+
+  func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
+    (currentPreviewURL ?? previewDir) as NSURL
+  }
 
   override func loadView() { view = app }
 
@@ -256,6 +282,79 @@ final class ShellController: UIViewController {
       let tap = NotificationBridge.shared.pendingTap
       NotificationBridge.shared.pendingTap = nil
       reply.resolve(tap)
+    }
+
+    app.handle("preview.reset") { [weak self] args, reply in
+      guard let self else { reply.reject("宿主已关闭"); return }
+      let dict = args as? [String: Any] ?? [:]
+      let name = dict["name"] as? String ?? "preview.bin"
+      let url = self.safePreviewURL(name)
+      do {
+        try FileManager.default.createDirectory(at: self.previewDir, withIntermediateDirectories: true)
+        try? FileManager.default.removeItem(at: url)
+        try Data().write(to: url)
+        reply.resolve(["path": url.path])
+      } catch {
+        reply.reject("无法创建预览缓存：\(error.localizedDescription)")
+      }
+    }
+
+    app.handle("preview.append") { [weak self] args, reply in
+      guard let self else { reply.reject("宿主已关闭"); return }
+      let dict = args as? [String: Any] ?? [:]
+      let name = dict["name"] as? String ?? "preview.bin"
+      let b64 = dict["data"] as? String ?? ""
+      guard let chunk = Data(base64Encoded: b64) else {
+        reply.reject("无效的预览分片数据")
+        return
+      }
+      let url = self.safePreviewURL(name)
+      do {
+        if !FileManager.default.fileExists(atPath: url.path) {
+          try FileManager.default.createDirectory(at: self.previewDir, withIntermediateDirectories: true)
+          try chunk.write(to: url)
+        } else {
+          let fh = try FileHandle(forWritingTo: url)
+          defer { try? fh.close() }
+          try fh.seekToEnd()
+          try fh.write(contentsOf: chunk)
+        }
+        reply.resolve(["ok": true])
+      } catch {
+        reply.reject("写入预览分片失败：\(error.localizedDescription)")
+      }
+    }
+
+    app.handle("preview.open") { [weak self] args, reply in
+      guard let self else { reply.reject("宿主已关闭"); return }
+      let dict = args as? [String: Any] ?? [:]
+      let name = dict["name"] as? String ?? "preview.bin"
+      let kind = dict["kind"] as? String ?? ""
+      let url = self.safePreviewURL(name)
+      guard FileManager.default.fileExists(atPath: url.path) else {
+        reply.reject("预览文件不存在")
+        return
+      }
+      DispatchQueue.main.async {
+        let ext = url.pathExtension.lowercased()
+        let isAV = kind == "video" || kind == "audio" || ["mp4", "mov", "m4v", "m4a", "mp3", "wav", "aac"].contains(ext)
+        if isAV {
+          try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+          try? AVAudioSession.sharedInstance().setActive(true)
+          let player = AVPlayer(url: url)
+          let vc = AVPlayerViewController()
+          vc.player = player
+          self.topHostController().present(vc, animated: true) {
+            player.play()
+          }
+        } else {
+          self.currentPreviewURL = url
+          let ql = QLPreviewController()
+          ql.dataSource = self
+          self.topHostController().present(ql, animated: true)
+        }
+        reply.resolve(["ok": true])
+      }
     }
   }
 

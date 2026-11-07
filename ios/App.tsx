@@ -4,10 +4,10 @@ import type { InputRef, WebViewRef } from "nsh/types";
 import { Button, createNavStack, Input, NavPage, NavStack } from "nsh/base";
 import {
   activeTermAddress, addingMac, boot, cancelPair, consumePendingNotificationTap, desktops,
-  disableNotifications, enableNotifications, forget, info, list, macStatuses, notify,
-  notifyEnabled, notifyPermission, paired, pairWith, problem, refresh, refreshNotifyStatus,
-  rpc, sas, sendImage, sendTestNotification, setStreamListener, status, switchDesktop,
-  transcribeAudio, wake, type Saved, type Space, type Terminal,
+  disableNotifications, enableNotifications, fetchPreviewDataUrl, forget, info, list, macStatuses,
+  notify, notifyEnabled, notifyPermission, openNativePreview, paired, pairWith, problem, refresh,
+  refreshNotifyStatus, rpc, sas, sendImage, sendTestNotification, setStreamListener, status,
+  switchDesktop, transcribeAudio, wake, type Saved, type Space, type Terminal,
 } from "./src/conn";
 import { PROG_ICONS } from "./src/prog-icons";
 import { TERM_HTML } from "./src/term-html";
@@ -15,14 +15,23 @@ import { LiveLine, PASTE_LF, pasteText } from "../app/src/live-line.js";
 import { agentKeys, combo, keyOfChar, MODS } from "../app/src/agent-keys.js";
 import chevronIcon from "./assets/chevron.svg";
 import downIcon from "./assets/down.svg";
+import fileTextIcon from "./assets/file-text.svg";
+import folderIcon from "./assets/folder.svg";
 import gearIcon from "./assets/gear.svg";
 import herdrIcon from "./assets/herdr-icon.png";
 import kbdIcon from "./assets/kbd.svg";
+import photoIcon from "./assets/photo.svg";
 import plusIcon from "./assets/plus.svg";
 import scanIcon from "./assets/scan.svg";
 import spinnerIcon from "./assets/spinner.svg";
+import videoIcon from "./assets/video.svg";
 
-type Route = { name: "home" } | { name: "term"; address: string } | { name: "settings" };
+type Route =
+  | { name: "home" }
+  | { name: "term"; address: string }
+  | { name: "files"; rootId?: string; path?: string; title?: string }
+  | { name: "preview"; rootId: string; path: string; title: string }
+  | { name: "settings" };
 const nav = createNavStack<Route>([{ name: "home" }]);
 
 const STATE_TEXT: Record<string, string> = { blocked: "等你处理", working: "工作中", done: "完成", idle: "空闲", error: "出错" };
@@ -272,9 +281,19 @@ function Group(props: { title: string; items: GroupItem[]; space?: Space; needs?
       <View class="min-h-7 flex-row items-center justify-between px-1">
         <Text class={`text-[13px] font-medium ${props.needs ? "text-foreground" : "text-muted-foreground"}`}>{props.title}</Text>
         {props.space ? (
-          <Button onPress={add} disabled={adding()} class="h-7 w-7 items-center justify-center rounded-full bg-card active:bg-secondary" testID={`add-${props.space.id}`} accessibilityLabel="新建终端">
-            <Icon src={plusIcon} size={16} class="tint-muted-foreground" />
-          </Button>
+          <View class="flex-row items-center gap-1.5">
+            <Button
+              onPress={() => { tapHaptic(); nav.push({ name: "files", rootId: props.space!.id, path: "", title: props.title }); }}
+              class="h-7 w-7 items-center justify-center rounded-full bg-card active:bg-secondary"
+              testID={`files-${props.space.id}`}
+              accessibilityLabel="浏览文件"
+            >
+              <Icon src={folderIcon} size={15} class="tint-muted-foreground" />
+            </Button>
+            <Button onPress={add} disabled={adding()} class="h-7 w-7 items-center justify-center rounded-full bg-card active:bg-secondary" testID={`add-${props.space.id}`} accessibilityLabel="新建终端">
+              <Icon src={plusIcon} size={16} class="tint-muted-foreground" />
+            </Button>
+          </View>
         ) : null}
       </View>
       {props.items.length ? (
@@ -991,6 +1010,12 @@ function TermScreen(props: { address: string }) {
   });
 
   const voiceOk = computed(() => Boolean(info()?.voice) && host.available());
+  const spaceIdForTerm = computed(() => {
+    for (const sp of list().layout) {
+      if (sp.tabs.some((tab) => tab.terminals.includes(address))) return sp.id;
+    }
+    return `term:${address}`;
+  });
 
   return (
     <NavPage
@@ -1002,6 +1027,16 @@ function TermScreen(props: { address: string }) {
           <ProgIcon t={term()} size={20} dark />
           <Text class="text-[12px] text-[#8d8d93]" style={{ numberOfLines: 1 }}>{subtitle()}</Text>
         </View>
+      }
+      headerRight={
+        <Button
+          onPress={() => { tapHaptic(); nav.push({ name: "files", rootId: spaceIdForTerm(), path: "", title: base(term()?.cwd) || title() }); }}
+          class="h-8 w-8 items-center justify-center rounded-full active:bg-[#2c2c2e]"
+          testID="term-files"
+          accessibilityLabel="浏览工作区文件"
+        >
+          <Icon src={folderIcon} size={18} color="#f2f2f7" />
+        </Button>
       }
     >
       <View class="flex-1 bg-[#0b0b0c] pb-[env(keyboard-inset-height)]">
@@ -1131,13 +1166,456 @@ function TermScreen(props: { address: string }) {
   );
 }
 
+// ------------------------------------------------------------------ files & preview --------
+type FileEntry = { name: string; path: string; dir: boolean; size: number; mtime: number; kind: string };
+type RootEntry = { id: string; name: string; folder: string };
+
+function fmtBytes(n?: number) {
+  if (!n || n <= 0) return "0 B";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function fmtDuration(sec?: number) {
+  if (!sec || sec <= 0) return "";
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return `${m}:${s < 10 ? "0" : ""}${s}`;
+}
+
+function fileIconFor(kind: string, dir: boolean) {
+  if (dir) return folderIcon;
+  if (kind === "image") return photoIcon;
+  if (kind === "video" || kind === "audio") return videoIcon;
+  return fileTextIcon;
+}
+
+function FilesScreen(props: { rootId?: string; path?: string; title?: string }) {
+  const roots = signal<RootEntry[]>([]);
+  const activeRoot = signal<string>(props.rootId ?? "");
+  const curPath = signal<string>(props.path ?? "");
+  const rootName = signal<string>(props.title ?? "文件");
+  const items = signal<FileEntry[]>([]);
+  const loading = signal<boolean>(true);
+  const err = signal<string>("");
+
+  async function loadDir(rId = activeRoot(), p = curPath()) {
+    if (status() !== "ready") return;
+    loading.set(true);
+    err.set("");
+    try {
+      if (!roots().length) {
+        const rr = (await rpc("files.roots", {}, 15_000)) as { roots: RootEntry[] };
+        roots.set(rr.roots ?? []);
+        if (!rId && rr.roots?.length) rId = rr.roots[0].id;
+      }
+      const res = (await rpc("files.list", { rootId: rId || undefined, path: p }, 20_000)) as {
+        rootId: string; rootName: string; path: string; items: FileEntry[];
+      };
+      activeRoot.set(res.rootId);
+      curPath.set(res.path);
+      rootName.set(res.rootName || "工作区");
+      items.set(res.items ?? []);
+    } catch (e: any) {
+      err.set(e.message || "无法读取目录");
+    } finally {
+      loading.set(false);
+    }
+  }
+
+  effect(() => {
+    if (status() === "ready") loadDir(activeRoot(), curPath());
+  });
+
+  const segments = computed(() => {
+    const p = curPath();
+    return p ? p.split("/").filter(Boolean) : [];
+  });
+
+  const pageTitle = computed(() => {
+    const segs = segments();
+    return segs.length ? segs[segs.length - 1] : rootName();
+  });
+
+  return (
+    <NavPage title={pageTitle()} headerClass="bg-background">
+      <Scroll class="flex-1 bg-background" contentClass="gap-4 px-4 pt-2 pb-10">
+        {roots().length > 1 ? (
+          <Scroll horizontal scrollbar={false} class="flex-none" contentClass="flex-row items-center gap-2">
+            {roots().map((r) => {
+              const on = r.id === activeRoot();
+              return (
+                <Button
+                  onPress={() => { tapHaptic(); loadDir(r.id, ""); }}
+                  class={`h-9 flex-row items-center gap-2 rounded-full px-4 active:opacity-80 ${on ? "bg-primary" : "bg-card"}`}
+                >
+                  <Icon src={folderIcon} size={15} class={on ? "tint-primary-foreground" : "tint-muted-foreground"} />
+                  <Text class={`text-[14px] font-medium ${on ? "text-primary-foreground" : "text-card-foreground"}`}>{r.name}</Text>
+                </Button>
+              );
+            })}
+          </Scroll>
+        ) : null}
+
+        {/* Breadcrumb bar */}
+        <Scroll horizontal scrollbar={false} class="flex-none" contentClass="flex-row items-center gap-1.5 px-1">
+          <Button
+            onPress={() => { if (curPath()) { tapHaptic(); loadDir(activeRoot(), ""); } }}
+            class="rounded-full bg-card px-3 py-1 active:bg-secondary"
+          >
+            <Text class={`text-[13px] font-medium ${curPath() ? "text-muted-foreground" : "text-foreground"}`}>{rootName()}</Text>
+          </Button>
+          {segments().map((seg, idx) => {
+            const targetPath = segments().slice(0, idx + 1).join("/");
+            const isLast = idx === segments().length - 1;
+            return (
+              <View class="flex-row items-center gap-1.5">
+                <Text class="text-[12px] text-idle">/</Text>
+                <Button
+                  onPress={() => { if (!isLast) { tapHaptic(); loadDir(activeRoot(), targetPath); } }}
+                  class="rounded-full bg-card px-3 py-1 active:bg-secondary"
+                >
+                  <Text class={`text-[13px] font-medium ${isLast ? "text-foreground" : "text-muted-foreground"}`}>{seg}</Text>
+                </Button>
+              </View>
+            );
+          })}
+        </Scroll>
+
+        {err() ? (
+          <View class="rounded-2xl bg-bad/15 px-4 py-3">
+            <Text class="text-[13px] text-bad">{err()}</Text>
+          </View>
+        ) : null}
+
+        {loading() ? (
+          <View class="items-center justify-center rounded-[20px] bg-card py-10">
+            <Text class="text-[14px] text-muted-foreground">正在读取目录…</Text>
+          </View>
+        ) : items().length ? (
+          <View class="overflow-hidden rounded-[20px] bg-card">
+            {items().map((item, i) => (
+              <Button
+                onPress={() => {
+                  tapHaptic();
+                  if (item.dir) {
+                    loadDir(activeRoot(), item.path);
+                  } else {
+                    nav.push({ name: "preview", rootId: activeRoot(), path: item.path, title: item.name });
+                  }
+                }}
+                class={`min-h-12 flex-row items-center gap-3 px-4 py-3 active:bg-secondary ${i === 0 ? "" : "border-t border-separator"}`}
+                testID={`file-${item.name}`}
+              >
+                <Icon src={fileIconFor(item.kind, item.dir)} size={18} class="tint-muted-foreground" />
+                <View class="flex-1">
+                  <Text class="text-[15px] font-medium text-card-foreground" style={{ numberOfLines: 1 }}>{item.name}</Text>
+                </View>
+                {!item.dir ? (
+                  <Text class="font-mono text-[12px] text-muted-foreground" style={{ fontVariant: ["tabular-nums"] }}>
+                    {fmtBytes(item.size)}
+                  </Text>
+                ) : null}
+                <Icon src={chevronIcon} size={14} class="tint-muted-foreground" />
+              </Button>
+            ))}
+          </View>
+        ) : (
+          <View class="items-center justify-center rounded-[20px] bg-card py-8">
+            <Text class="text-[14px] text-muted-foreground">这个文件夹是空的</Text>
+          </View>
+        )}
+      </Scroll>
+    </NavPage>
+  );
+}
+
+function PreviewScreen(props: { rootId: string; path: string; title: string }) {
+  const data = signal<any>(null);
+  const loading = signal<boolean>(true);
+  const err = signal<string>("");
+  const imgUrl = signal<string>("");
+  const progress = signal<number>(0); // 0..100
+  const busyAction = signal<string>("");
+  const copied = signal<string>("");
+
+  async function loadFile() {
+    if (status() !== "ready") return;
+    loading.set(true);
+    err.set("");
+    imgUrl.set("");
+    progress.set(0);
+    try {
+      const res = (await rpc("files.open", { rootId: props.rootId, path: props.path }, 60_000)) as any;
+      data.set(res);
+      if (res.kind === "image") {
+        if (res.inline) {
+          imgUrl.set(res.inline);
+        } else if (res.previewId) {
+          const url = await fetchPreviewDataUrl(res.previewId, res.mime, res.total, (loaded, total) => {
+            progress.set(total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 100);
+          });
+          imgUrl.set(url);
+        }
+      } else if (res.kind === "look") {
+        if (res.inline) {
+          imgUrl.set(res.inline);
+        } else if (res.thumbPreviewId) {
+          const url = await fetchPreviewDataUrl(res.thumbPreviewId, "image/jpeg", res.thumbTotal, (loaded, total) => {
+            progress.set(total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 100);
+          });
+          imgUrl.set(url);
+        }
+      }
+    } catch (e: any) {
+      err.set(e.message || "打开文件失败");
+    } finally {
+      loading.set(false);
+    }
+  }
+
+  effect(() => {
+    if (status() === "ready") loadFile();
+  });
+
+  async function openInSystem(previewId: string, name: string, kind: string, total: number) {
+    if (!previewId || busyAction()) return;
+    tapHaptic();
+    busyAction.set("正在同步到本机预览…");
+    progress.set(0);
+    err.set("");
+    try {
+      await openNativePreview(previewId, name, kind, total, (loaded, tot) => {
+        progress.set(tot > 0 ? Math.min(100, Math.round((loaded / tot) * 100)) : 100);
+      });
+    } catch (e: any) {
+      err.set(e.message || "系统预览打开失败");
+    } finally {
+      busyAction.set("");
+    }
+  }
+
+  async function copyText(str: string, label: string) {
+    tapHaptic();
+    await Clipboard.writeText(str);
+    copied.set(label);
+    setTimeout(() => copied.set(""), 2000);
+  }
+
+  return (
+    <NavPage title={props.title} headerClass="bg-background">
+      <Scroll class="flex-1 bg-background" contentClass="gap-4 px-4 pt-2 pb-10">
+        {err() ? (
+          <View class="rounded-2xl bg-bad/15 px-4 py-3">
+            <Text class="text-[13px] text-bad">{err()}</Text>
+          </View>
+        ) : null}
+
+        {loading() ? (
+          <View class="items-center justify-center gap-2 rounded-[20px] bg-card py-12">
+            <Text class="text-[14px] font-medium text-card-foreground">正在准备预览…</Text>
+            <Text class="text-[12px] text-muted-foreground">大图片或视频会自动在 Mac 上硬件压缩后再传输</Text>
+          </View>
+        ) : data() ? (
+          <View class="gap-4">
+            {/* Metadata & Quick Actions Card */}
+            <View class="flex-row items-center justify-between rounded-[20px] bg-card px-4 py-3">
+              <View class="flex-1 gap-0.5">
+                <Text class="text-[14px] font-medium text-card-foreground" style={{ numberOfLines: 1 }}>{data().path}</Text>
+                <Text class="font-mono text-[12px] text-muted-foreground" style={{ fontVariant: ["tabular-nums"] }}>
+                  {[
+                    (data().ext || data().kind || "FILE").toUpperCase(),
+                    `原始 ${fmtBytes(data().size)}`,
+                    data().total && data().total !== data().size ? `传输 ${fmtBytes(data().total)}` : null,
+                    data().duration ? fmtDuration(data().duration) : null,
+                  ].filter(Boolean).join(" · ")}
+                </Text>
+              </View>
+              <Button
+                onPress={() => copyText(data().path, "已复制路径")}
+                class="rounded-full bg-secondary px-3 py-1.5 active:opacity-70"
+              >
+                <Text class="text-[12px] font-medium text-foreground">{copied() === "已复制路径" ? "已复制" : "复制路径"}</Text>
+              </Button>
+            </View>
+
+            {/* Video Preview: 6-frame Storyboard Filmstrip + 480p@15fps Native AVPlayer */}
+            {data().kind === "video" ? (
+              <View class="gap-3 rounded-[20px] bg-card p-4">
+                <View class="flex-row items-center justify-between">
+                  <Text class="text-[13px] font-medium text-muted-foreground">6 帧故事板速览（横向滑动）</Text>
+                  <Text class="font-mono text-[12px] text-muted-foreground" style={{ fontVariant: ["tabular-nums"] }}>
+                    480p · {fmtBytes(data().total)}
+                  </Text>
+                </View>
+                {data().strip ? (
+                  <Scroll horizontal scrollbar={false} class="overflow-hidden rounded-[14px] bg-[#151412]">
+                    <Image src={data().strip} style={{ width: 960, height: 150 }} />
+                  </Scroll>
+                ) : null}
+                {busyAction() ? (
+                  <View class="gap-1.5 py-1">
+                    <View class="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
+                      <View class="h-full rounded-full bg-primary" style={{ width: `${Math.max(6, progress())}%` }} />
+                    </View>
+                    <Text class="text-center font-mono text-[12px] text-muted-foreground" style={{ fontVariant: ["tabular-nums"] }}>
+                      {busyAction()} {progress()}%
+                    </Text>
+                  </View>
+                ) : null}
+                <Button
+                  onPress={() => openInSystem(data().previewId, data().name, "video", data().total)}
+                  disabled={Boolean(busyAction())}
+                  class="h-11 flex-row items-center justify-center gap-2 rounded-full bg-primary active:opacity-80"
+                  testID="play-video"
+                >
+                  <Icon src={videoIcon} size={18} class="tint-primary-foreground" />
+                  <Text class="text-[15px] font-medium text-primary-foreground">
+                    {busyAction() ? `正在缓冲 ${progress()}%…` : `播放 480p 视频（${fmtBytes(data().total)}）`}
+                  </Text>
+                </Button>
+              </View>
+            ) : null}
+
+            {/* Audio Preview */}
+            {data().kind === "audio" ? (
+              <View class="gap-3 rounded-[20px] bg-card p-4">
+                <Text class="text-[14px] text-card-foreground">音频文件（{fmtBytes(data().total)}）</Text>
+                <Button
+                  onPress={() => openInSystem(data().previewId, data().name, "audio", data().total)}
+                  disabled={Boolean(busyAction()) || !data().previewId}
+                  class="h-11 items-center justify-center rounded-full bg-primary active:opacity-80"
+                >
+                  <Text class="text-[15px] font-medium text-primary-foreground">
+                    {busyAction() ? `正在缓冲 ${progress()}%…` : "用系统播放器收听"}
+                  </Text>
+                </Button>
+              </View>
+            ) : null}
+
+            {/* Image Preview */}
+            {data().kind === "image" ? (
+              <View class="gap-3 rounded-[20px] bg-card p-4">
+                {imgUrl() ? (
+                  <View class="items-center justify-center overflow-hidden rounded-[14px] bg-secondary p-2">
+                    <Image src={imgUrl()} style={{ width: 320, height: 280 }} />
+                  </View>
+                ) : (
+                  <View class="items-center justify-center rounded-[14px] bg-secondary py-12">
+                    <Text class="font-mono text-[13px] text-muted-foreground" style={{ fontVariant: ["tabular-nums"] }}>
+                      正在加载图片 {progress()}%…
+                    </Text>
+                  </View>
+                )}
+                <Button
+                  onPress={() => openInSystem(data().previewId, data().name, "image", data().total)}
+                  disabled={Boolean(busyAction())}
+                  class="h-11 items-center justify-center rounded-full bg-primary active:opacity-80"
+                  testID="open-image-ql"
+                >
+                  <Text class="text-[15px] font-medium text-primary-foreground">
+                    {busyAction() ? `正在打开 ${progress()}%…` : "全屏双指缩放与分享 (QuickLook)"}
+                  </Text>
+                </Button>
+              </View>
+            ) : null}
+
+            {/* QuickLook Document Preview (PDF / Office / iWork / HTML) */}
+            {data().kind === "look" ? (
+              <View class="gap-3 rounded-[20px] bg-card p-4">
+                {imgUrl() ? (
+                  <View class="items-center justify-center overflow-hidden rounded-[14px] bg-secondary p-2">
+                    <Image src={imgUrl()} style={{ width: 320, height: 360 }} />
+                  </View>
+                ) : null}
+                <Button
+                  onPress={() =>
+                    openInSystem(
+                      data().rawPreviewId || data().thumbPreviewId,
+                      data().name,
+                      "look",
+                      data().rawTotal || data().thumbTotal,
+                    )
+                  }
+                  disabled={Boolean(busyAction()) || (!data().rawPreviewId && !data().thumbPreviewId)}
+                  class="h-11 items-center justify-center rounded-full bg-primary active:opacity-80"
+                  testID="open-doc-ql"
+                >
+                  <Text class="text-[15px] font-medium text-primary-foreground">
+                    {busyAction()
+                      ? `正在同步文档 ${progress()}%…`
+                      : `用系统 QuickLook 打开完整文档（${fmtBytes(data().rawTotal || data().thumbTotal)}）`}
+                  </Text>
+                </Button>
+              </View>
+            ) : null}
+
+            {/* Text / Markdown / Code Preview */}
+            {data().kind === "text" || data().kind === "md" ? (
+              <View class="gap-3 rounded-[20px] bg-card p-4">
+                <View class="flex-row items-center justify-between">
+                  <Text class="font-mono text-[12px] text-muted-foreground" style={{ fontVariant: ["tabular-nums"] }}>
+                    {String(data().text ?? "").split("\n").length} 行{data().truncated ? "（已截取前 128 KB）" : ""}
+                  </Text>
+                  <Button
+                    onPress={() => copyText(String(data().text ?? ""), "已复制全文")}
+                    class="rounded-full bg-secondary px-3 py-1 active:opacity-70"
+                  >
+                    <Text class="text-[12px] font-medium text-foreground">{copied() === "已复制全文" ? "已复制" : "复制全文"}</Text>
+                  </Button>
+                </View>
+                <Scroll horizontal scrollbar={false} class="rounded-[14px] bg-secondary p-3">
+                  <Text class="font-mono text-[12.5px] leading-relaxed text-card-foreground" selectable>
+                    {data().text || "（空文件）"}
+                  </Text>
+                </Scroll>
+              </View>
+            ) : null}
+
+            {/* Binary Fallback */}
+            {data().kind === "binary" ? (
+              <View class="gap-3 rounded-[20px] bg-card p-4">
+                <Text class="text-[14px] text-muted-foreground">二进制文件（{fmtBytes(data().size)}）</Text>
+                {data().previewId ? (
+                  <Button
+                    onPress={() => openInSystem(data().previewId, data().name, "binary", data().total)}
+                    disabled={Boolean(busyAction())}
+                    class="h-11 items-center justify-center rounded-full bg-primary active:opacity-80"
+                  >
+                    <Text class="text-[15px] font-medium text-primary-foreground">
+                      {busyAction() ? `正在同步 ${progress()}%…` : "用系统 QuickLook / 分享打开"}
+                    </Text>
+                  </Button>
+                ) : null}
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+      </Scroll>
+    </NavPage>
+  );
+}
+
 // ------------------------------------------------------------------ root -------------------
 function App() {
   const showHome = computed(() => Boolean(paired()) && !addingMac());
   return (
     <If when={showHome()} else={<PairScreen />}>
       <NavStack state={nav} style={{ flex: 1 }}>
-        {(route) => route.name === "home" ? <HomeScreen /> : route.name === "settings" ? <SettingsScreen /> : <TermScreen address={route.address} />}
+        {(route) =>
+          route.name === "home" ? (
+            <HomeScreen />
+          ) : route.name === "settings" ? (
+            <SettingsScreen />
+          ) : route.name === "files" ? (
+            <FilesScreen rootId={route.rootId} path={route.path} title={route.title} />
+          ) : route.name === "preview" ? (
+            <PreviewScreen rootId={route.rootId} path={route.path} title={route.title} />
+          ) : (
+            <TermScreen address={route.address} />
+          )
+        }
       </NavStack>
     </If>
   );
