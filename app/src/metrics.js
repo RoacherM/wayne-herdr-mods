@@ -21,6 +21,9 @@ import { wheelSteps } from '../../shared/wheel.js';
  *           every output with the steps it had, `w`); the median, the most, and how many were
  *           answered. kb: output drawn meanwhile (DESIGN.md「滑动延迟」)
  *   op      { op, key? }            what the person did: a key bar key, paste, voice, image, open, back
+ *   kbd     { why, f, act, vh, vt, sc, ih, dh, sy, up, st, sb }  what the terminal page sees change
+ *           around the keyboard (keyboard-fit.js): focus, the visual viewport, the window, the scroll,
+ *           the page's own top and bottom. Numbers only, never text
  */
 const KEEP = 400;          // events held while the Mac cannot be reached
 const QUIET_MS = 300;      // an echo counts only after this long without output (else it is not ours)

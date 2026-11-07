@@ -24,6 +24,7 @@ const FIELDS = {
   macscroll: { steps: 'n', coast: 'n', prog: 'n?', progMax: 'n?', kb: 'n', behind: 'n', ms: 'n' },
   reprint: { kb: 'n', fresh: 'b', ms: 'n' }, // the Mac: a program printed its whole history again (phones.js reprint())
   op: { op: 's', key: 's?' },
+  kbd: { why: 's', f: 'b', act: 's', vh: 'n', vt: 'n', sc: 'n', ih: 'n', dh: 'n', sy: 'n', up: 'b', st: 'n', sb: 'n' }, // the keyboard page sees a change (keyboard-fit.js), to check it on a real phone
   voice: { kb: 'n', ms: 'n', muted: 'b', err: 's?' }, // one recording: size, length, mic muted at start, what failed (null: words came)
 };
 const CTX = { src: 's', ver: 's', os: 's', browser: 's', standalone: 'b', w: 'n', h: 'n' };

@@ -1047,7 +1047,8 @@ function openTerm(address) {
   }
 
   // ---- with the keyboard up, the page follows the visible viewport (keyboard-fit.js)
-  const stopKeyboard = followKeyboard({ screen, field: keys });
+  let kbdNotes = 0;
+  const stopKeyboard = followKeyboard({ screen, field: keys, note: (d) => { if (++kbdNotes <= 300) metrics.mark('kbd', d); } }); // capped: they must not crowd out the rest
   const ro = new ResizeObserver(() => { refit(document.visibilityState === 'hidden'); layout(); });
   ro.observe(viewport);
   requestAnimationFrame(layout);
