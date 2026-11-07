@@ -434,7 +434,7 @@ function HomeScreen() {
       headerClass="bg-background"
       ios={{ headerRightSymbol: "gearshape" }}
       headerRight={
-        <Button onPress={() => nav.push({ name: "settings" })} class="h-9 w-9 items-center justify-center rounded-full active:bg-secondary" accessibilityLabel="设置">
+        <Button onPress={() => nav.push({ name: "settings" })} class="h-9 w-9 items-center justify-center rounded-full active:bg-secondary" testID="settings" accessibilityLabel="设置">
           <Icon src={gearIcon} size={20} class="tint-foreground" />
         </Button>
       }
@@ -471,12 +471,8 @@ function HomeScreen() {
           </Scroll>
         ) : null}
 
-        {/* Unified rounded status & settings card with Chrome-colored Herdr sheep icon */}
-        <Button
-          onPress={() => nav.push({ name: "settings" })}
-          class="flex-row items-center gap-3 rounded-[20px] bg-card px-4 py-3 active:bg-secondary"
-          testID="settings"
-        >
+        {/* Clean status card (no redundant "设置 >" text since the top-right gear is directly above) */}
+        <View class="flex-row items-center gap-3 rounded-[20px] bg-card px-4 py-3">
           <View class="h-10 w-10 overflow-hidden rounded-[12px] bg-[#f1f4f5]">
             <Image src={herdrIcon} style={{ width: 40, height: 40 }} />
           </View>
@@ -489,11 +485,7 @@ function HomeScreen() {
               {(status() === "error" && problem()) ? problem() : `${list().terminals.length} 个终端 · ${notifyEnabled() ? "通知已开启" : "端到端加密"}`}
             </Text>
           </View>
-          <View class="flex-row items-center gap-1">
-            <Text class="text-[13px] text-muted-foreground">设置</Text>
-            <Icon src={chevronIcon} size={14} class="tint-muted-foreground" />
-          </View>
-        </Button>
+        </View>
 
         {status() === "offline" ? (
           <View class="rounded-[20px] bg-card px-4 py-3">
