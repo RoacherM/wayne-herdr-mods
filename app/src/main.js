@@ -21,6 +21,7 @@ import { MAX_MS, shrinkImage, startRecording, transcribe, upload, voiceSupported
 import { createMetrics } from './metrics.js';
 import { progIcon, statusIcon } from './prog-icons.js';
 import { agentKeys, combo, keyOfChar, MODS } from './agent-keys.js';
+import { followKeyboard } from './keyboard-fit.js';
 
 // Times and kinds of what happens, to the Mac (DESIGN.md「体验记录」). Never content.
 // eslint-disable-next-line no-undef
@@ -1045,32 +1046,8 @@ function openTerm(address) {
     talkBtn.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
-  // ---- with the keyboard up, the page follows the visible viewport: on iOS the keyboard covers the
-  // page instead of resizing it. Otherwise CSS holds it (inset 0): the toolbars of iOS browsers
-  // grow and shrink as you touch the page, and following them made the layout jump.
-  // "Keyboard up" needs our field focused: iOS does not always report the last viewport change
-  // when the keyboard goes away, and a stale height left the page at half the screen. On blur the
-  // page goes back to full height at once, and is checked again while the keyboard slides away.
-  const vv = window.visualViewport;
-  let checks = [];
-  const followViewport = () => {
-    if (!vv) return;
-    const keyboard = document.activeElement === keys && window.innerHeight - vv.height > 120;
-    screen.style.height = keyboard ? `${vv.height}px` : '';
-    screen.style.transform = keyboard && vv.offsetTop ? `translateY(${vv.offsetTop}px)` : '';
-    if (!keyboard && (window.scrollX || window.scrollY)) window.scrollTo(0, 0); // iOS scrolled the page for the field
-  };
-  const recheck = () => {
-    followViewport();
-    checks.forEach(clearTimeout);
-    checks = [100, 300, 600, 1000].map((ms) => setTimeout(followViewport, ms));
-  };
-  vv?.addEventListener('resize', followViewport);
-  vv?.addEventListener('scroll', followViewport);
-  window.addEventListener('resize', recheck);
-  window.addEventListener('orientationchange', recheck);
-  keys.addEventListener('focus', recheck); keys.addEventListener('blur', recheck);
-  followViewport();
+  // ---- with the keyboard up, the page follows the visible viewport (keyboard-fit.js)
+  const stopKeyboard = followKeyboard({ screen, field: keys });
   const ro = new ResizeObserver(() => { refit(document.visibilityState === 'hidden'); layout(); });
   ro.observe(viewport);
   requestAnimationFrame(layout);
@@ -1086,12 +1063,8 @@ function openTerm(address) {
       toLatest(true); // leave the Mac's view at the latest too, before the stream closes
       page.closed = true;
       ro.disconnect();
-      vv?.removeEventListener('resize', followViewport);
-      vv?.removeEventListener('scroll', followViewport);
-      window.removeEventListener('resize', recheck);
-      window.removeEventListener('orientationchange', recheck);
+      stopKeyboard();
       document.removeEventListener('visibilitychange', onVisibility);
-      checks.forEach(clearTimeout);
       screen.style.height = screen.style.transform = '';
       stopTouch();
       page.stopTalk?.();
