@@ -18,11 +18,13 @@ declare module "*/app/src/link.js" {
   }
 }
 declare module "*/app/src/live-line.js" {
+  export const PASTE_LF: string;
   export const pasteText: (text: string) => string;
   export class LiveLine {
     constructor(write: (data: string) => void);
     value: string;
     typed: string;
+    held: boolean;
     readonly pending: string;
     set(value: string): void;
     compose(on: boolean): void;
@@ -31,4 +33,11 @@ declare module "*/app/src/live-line.js" {
     submit(): boolean;
     backspace(): boolean;
   }
+}
+declare module "*/app/src/agent-keys.js" {
+  export type AgentKey = [label: string, names: string[], what: string];
+  export const MODS: readonly ("ctrl" | "alt" | "shift")[];
+  export const agentKeys: (t: { icon?: string; app?: string; program?: string } | undefined | null) => AgentKey[];
+  export const combo: (mods: Set<string>, key: string) => string;
+  export const keyOfChar: (ch: string) => string | null;
 }

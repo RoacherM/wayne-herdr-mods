@@ -14,8 +14,10 @@ files:
   - ios/host/
 ---
 
-## 2026-11-07 决定
-用户决定做 nsh 原生 App，只用免费账号、不上架、不做推送。终端先用 WebView 里的 xterm.js，语音继续走火山，多台 Mac 做进 App。详情和进度见 DESIGN.md「原生 App（nsh）」开头。下面 11-06 的推荐（薄壳 + APNs）已被替代。
+## 2026-11-07 决定与进度
+用户决定做 nsh 原生 App，只用免费账号、不上架、不做推送。终端先用 WebView 里的 xterm.js，语音继续走火山，多台 Mac 做进 App。
+- 已完成：`ios/term/term.js`（对齐网页版不闪、Unicode 15、手机自适应格子 `fit`、Mac 惯性滑行 `term.coast`、`↓` 回到最新）、`ios/App.tsx`（最新键盘栏 + agent 快捷键 + 修饰键 `term.press`、光标显隐 `hold`、一键收起键盘、按住说话、扫码配对、多台 Mac 切换）、`ios/host/Sources/App.swift`（`AVAudioRecorder` 录音 + `AVCaptureSession` 扫码 + 触感反馈），并通过 `ios/host/install.sh` 编译签名安装到真机 iPhone。
+- 待真机核验：手机「设置 ▸ 通用 ▸ VPN 与设备管理」信任开发者证书后，打开 Herdr App 扫码或从剪贴板粘贴配对。
 
 ## 背景
 用户 2026-11-06 说交互已经够好，痛点是：1. agent 完成或要授权时收不到推送；2. 依赖浏览器，想要独立 App。没有 Apple 付费账号，必要时可以开。

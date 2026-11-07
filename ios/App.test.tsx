@@ -23,6 +23,7 @@ test("pair, list, open a terminal, send, forget", async () => {
   await app.waitFor("id:composer");
   await app.wait(2500);
   await app.screenshot("shots/2-term.png").catch(() => {}); // headless draws nothing
+  await app.press("id:kbd-toggle");
   await app.type("id:composer", "echo FROM_NSH_APP");
   await app.press("id:send");
   await app.waitUntil(() => app.value("id:composer") === "", { timeout: 10000 });
@@ -39,6 +40,7 @@ test("pair, list, open a terminal, send, forget", async () => {
   await app.waitFor("id:settings");
   await app.press("id:settings");
   await app.wait(800);
+  expect(app.texts()).toContain("配对另一台 Mac");
   await app.screenshot("shots/4-settings.png").catch(() => {});
   await app.press("role:button[取消配对]");
   await app.waitFor("id:pair-link", { timeout: 10000 });

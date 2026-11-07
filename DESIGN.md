@@ -487,8 +487,13 @@ A 部分在 `HC_SESSION=relay-probe` 的独立 core 里自己开一个 `/bin/sh`
 > - 终端画面：先用 WebView 里的 xterm.js（换 WebGL 渲染），接口保持窄（原生 → 页面 `size/out/reset`，页面 → 原生 `ready/ack/input`），以后真不够顺再换原生组件。依据：手机实测画一个字中位数 8 ms、p95 25 ms，滑动帧间隔中位数 18 ms，慢的是网络（打开终端中位数 1.6 秒）。
 > - 语音：继续经 Mac 用火山（热词、拼写还原），录音由 Swift 宿主做。
 > - 多台 Mac：做进原生 App，网页版不加。
-> - 结构：`ios/App.tsx`（nsh 界面）+ `ios/host/`（Swift 宿主：xcodegen 工程，链接 `NativeShell.xcframework`，`NshAppView.loadBundle` 运行 `nsh build` 的产物；`handle(name)` 给 App 调录音、扫码）。
-> - 第 0 步进度（2026-11-07，nsh 0.4.0 `e626a8d`，Xcode 26，iOS 27 模拟器）：原型在 0.4.0 上类型检查、打包都过；无界面测试能配对、列终端（唯一失败是一条过时的工作区名断言）。Swift 宿主在模拟器里启动并显示配对页。iOS 27 要求 App 用 scene 生命周期，没有就在启动时停掉（`UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`）。装真机卡在 Xcode 没登录 Apple ID（`No Accounts`）。
+> - 结构：`ios/App.tsx`（nsh 界面）+ `ios/host/`（Swift 宿主：xcodegen 工程，链接 `NativeShell.xcframework`，`NshAppView.loadBundle` 运行 `nsh build` 的产物；`handle(name)` 给 App 调录音、扫码、震动反馈）。
+> - 进度（2026-11-07，nsh 0.4.0 `e626a8d`，Xcode 26，iOS 27）：
+>   1. **终端画面对齐网页版**（`ios/term/term.js`）：Unicode 15 graphemes 宽度（`@xterm/addon-unicode-graphemes`）、`paint.js` 同步重绘不闪（`sized` + `atomic` + `SYNC_ON` + `fresh` 重印处理）、`text-style.js` 补 VS15（`⏺` 等字符）、手机自适应格子（`fit` / `term.fit`，键盘弹出不重算行数）、全屏程序滑动惯性交给 Mac（`term.coast`）与「回到最新」`↓` 按钮、8 KB / 30 ms credit 确认。
+>   2. **键盘栏与输入区对齐网页版**（`ios/App.tsx`）：最新键盘栏顺序（`Esc ← ↑ ↓ → ⏎ ⇧Tab ^C` + 每个 agent 专属快捷键 `agent-keys.js` + `^ ⌥ ⇧` 修饰键组合 `term.press` + `Tab 粘贴 换行 1 2 3 y n ^D ^R ^L`）、按下的键亮黄框直到程序重画、剪贴板文字/截图粘贴、`blocked` 时按光标显隐（`cursorHidden`）决定是否暂存打字（点顶部黄条立即放行）、右侧显式「键盘 / 收起」按钮（`Keyboard.dismiss()`）。
+>   3. **Swift 宿主能力**（`ios/host/Sources/App.swift`）：`voice.start / stop / cancel`（`AVAudioRecorder` 16 kHz 单声道 AAC `.m4a`，分块 `upload.put` + `voice.done` 调 Mac 火山极速版识别）、`qr.scan`（`AVCaptureSession` 原生扫码弹窗）、`haptic`（轻触震动）；`nsh.json` 显式声明 `capabilities.host: ["voice.*", "qr.*", "haptic"]`；监听 `lifecycle()` 在回前台时立即 `wake()` 重连并恢复 `term.fit`，切后台时释放终端尺寸主导权。
+>   4. **多台 Mac 切换**（`ios/src/conn.ts` + `ios/App.tsx`）：`Storage["herdr-relay"]` 保存 `desktops: Saved[]`（兼容单台旧格式，跨 Mac 复用同一把设备密钥），首页顶栏胶囊与设置页可一键切换已配对 Mac 或「配对另一台 Mac」。
+>   5. **真机安装**：已通过 `ios/host/install.sh` 签名并装入真 iPhone（`com.roacherm.herdr`），待用户在手机「设置 ▸ 通用 ▸ VPN 与设备管理」点信任后真机核验。
 >
 > 2026-11-06 的方向（已被上面替代）见 [docs/native-app.html](docs/native-app.html)（I-004）：
 > - 推送：设备一直「推送关」，因为手机页只在 Chrome 标签页里用（7 天 1790 条指标全是 `standalone: false`）。iOS 只给主屏幕 Web App 推送。先用主屏幕 Web App + 现有 Web Push（0 元）。

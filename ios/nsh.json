@@ -2,7 +2,15 @@
   "name": "Herdr",
   "id": "com.roacherm.herdr",
   "version": "1.0.0",
-  "build": 1,
+  "build": 2,
   "theme": "theme.json",
-  "appearance": "system"
+  "appearance": "system",
+  "capabilities": {
+    "network": { "hosts": ["*"] },
+    "webview": { "hosts": [] },
+    "statusBar": true,
+    "clipboard": true,
+    "picker": true,
+    "host": ["voice.*", "qr.*", "haptic"]
+  }
 }

@@ -22,7 +22,7 @@ Agent 自动处理规则：只认领 `Ready` 栏的条目；修完用 `git commi
 
 | ID | 领域 | 标题 | 现状 |
 |---|---|---|---|
-| [I-004](I-004-ios-native-app.md) | 独立 App | nsh 原生 Herdr iOS App（免费账号，不上架） | 第 0 步：模拟器能跑；真机等 Xcode 登录 Apple ID |
+| [I-004](I-004-ios-native-app.md) | 独立 App | nsh 原生 Herdr iOS App（免费账号，不上架） | 全功能已迁入并装上真机；待手机信任开发者证书后配对核验 |
 
 ## 3. External Blocked / Ops Approval（跨仓阻塞或需本机配置授权）
 
