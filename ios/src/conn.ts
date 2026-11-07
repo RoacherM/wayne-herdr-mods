@@ -472,6 +472,7 @@ function start(saved: Saved, pair?: { token: string; name: string }) {
   l.addEventListener("status", (e: any) => {
     if (link === l) {
       status.set(e.detail.status);
+      if (e.detail.status === "ready" || e.detail.status === "connecting") problem.set("");
       setMacStatus(saved.desktopId, e.detail.status);
     }
   });
@@ -482,7 +483,7 @@ function start(saved: Saved, pair?: { token: string; name: string }) {
     if (link !== l) return;
     const r = e.detail;
     setMacStatus(saved.desktopId, "ready");
-    batch(() => { info.set(r); sas.set(""); addingMac.set(false); });
+    batch(() => { info.set(r); sas.set(""); problem.set(""); addingMac.set(false); });
     const updated: Saved = { ...saved, desktopName: r.desktopName || saved.desktopName, pairedAt: saved.pairedAt ?? Date.now() };
     const all = upsertDesktop(updated);
     if (pair || saved.desktopName !== r.desktopName || !paired()) {
@@ -620,7 +621,11 @@ export async function forget(desktopId?: string) {
 }
 
 /** Back in the foreground: check all sockets now instead of waiting for a timer. */
+let lastWakeAt = 0;
 export const wake = () => {
+  const now = Date.now();
+  if (now - lastWakeAt < 300) return;
+  lastWakeAt = now;
   link?.wake();
   for (const bg of bgLinks.values()) bg.link?.wake?.();
 };

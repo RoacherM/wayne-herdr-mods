@@ -91,7 +91,13 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
   async function data(cid, text) {
     const peer = peers.get(cid);
     if (!peer) return;
+    if (typeof text === 'string' && text.startsWith('{"type":"hello"') && peer.stage !== 'hello') {
+      for (const stream of [...peer.streams.values()]) stream.stop('rehandshake');
+      peer.streams.clear();
+      Object.assign(peer, { stage: 'hello', cipher: null, early: null });
+    }
     if (peer.stage === 'hello') {
+      if (typeof text === 'string' && text[0] === 'E') return;
       try {
         const accepted = desktopAccept(state.boxKeys, text);
         Object.assign(peer, { cipher: accepted.cipher, sas: accepted.sas, pub: accepted.phonePublicKey, stage: 'auth' });

@@ -172,6 +172,10 @@ export class Link extends EventTarget {
 
   fatal(code, message) {
     clearTimeout(this.deadline);
+    if (code === 'bad-frame' && this.ws) {
+      this.drop(this.ws, { now: true });
+      return;
+    }
     const permanent = ['unknown-device', 'denied', 'expired', 'revoked', 'busy', 'bad-hello'].includes(code);
     this.setStatus('error', { code, message });
     this.emit('fatal', { code, message });

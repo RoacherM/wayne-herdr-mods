@@ -440,42 +440,44 @@ function HomeScreen() {
       }
     >
       <Scroll class="flex-1 bg-background" contentClass="gap-4 px-4 pb-10 pt-2">
-        {/* Multi-Mac pill bar: always visible so switching Macs or pairing a 2nd/3rd Mac is 1 tap away */}
-        <Scroll horizontal scrollbar={false} class="flex-none" contentClass="flex-row items-center gap-2">
-          {desktops().map((d: Saved) => {
-            const active = d.desktopId === paired()?.desktopId;
-            const st = active ? status() : (macStatuses()[d.desktopId] ?? "idle");
-            const dotClass = STATUS_DOT[st] ?? "bg-idle";
-            return (
-              <Button
-                onPress={() => { tapHaptic(); switchDesktop(d.desktopId); }}
-                class={`h-9 flex-row items-center gap-2 rounded-full px-4 active:opacity-80 ${active ? "bg-primary" : "bg-card"}`}
-                testID={`mac-${d.desktopId}`}
-              >
-                <View class={`h-2 w-2 rounded-full ${dotClass}`} />
-                <Text class={`text-[14px] font-medium ${active ? "text-primary-foreground" : "text-card-foreground"}`}>
-                  {d.desktopName || "Mac"}
-                </Text>
-              </Button>
-            );
-          })}
-          <Button
-            onPress={() => { tapHaptic(); addingMac.set(true); }}
-            class="h-9 flex-row items-center gap-2 rounded-full bg-card px-4 active:bg-secondary"
-            testID="home-add-mac"
-          >
-            <Icon src={plusIcon} size={15} class="tint-muted-foreground" />
-            <Text class="text-[14px] font-medium text-muted-foreground">配对新电脑</Text>
-          </Button>
-        </Scroll>
+        {/* Multi-Mac pill bar: shown when 2+ Macs are paired so switching Macs is 1 tap away */}
+        {desktops().length > 1 ? (
+          <Scroll horizontal scrollbar={false} class="flex-none" contentClass="flex-row items-center gap-2">
+            {desktops().map((d: Saved) => {
+              const active = d.desktopId === paired()?.desktopId;
+              const st = active ? status() : (macStatuses()[d.desktopId] ?? "idle");
+              const dotClass = STATUS_DOT[st] ?? "bg-idle";
+              return (
+                <Button
+                  onPress={() => { tapHaptic(); switchDesktop(d.desktopId); }}
+                  class={`h-9 flex-row items-center gap-2 rounded-full px-4 active:opacity-80 ${active ? "bg-primary" : "bg-card"}`}
+                  testID={`mac-${d.desktopId}`}
+                >
+                  <View class={`h-2 w-2 rounded-full ${dotClass}`} />
+                  <Text class={`text-[14px] font-medium ${active ? "text-primary-foreground" : "text-card-foreground"}`}>
+                    {d.desktopName || "Mac"}
+                  </Text>
+                </Button>
+              );
+            })}
+            <Button
+              onPress={() => { tapHaptic(); addingMac.set(true); }}
+              class="h-9 flex-row items-center gap-2 rounded-full bg-card px-4 active:bg-secondary"
+              testID="home-add-mac"
+            >
+              <Icon src={plusIcon} size={15} class="tint-muted-foreground" />
+              <Text class="text-[14px] font-medium text-muted-foreground">配对新电脑</Text>
+            </Button>
+          </Scroll>
+        ) : null}
 
-        {/* Soft rounded status & settings card (guarantees 100% reliable touch target + shows cute Bauhaus sheep icon) */}
+        {/* Unified rounded status & settings card with Chrome-colored Herdr sheep icon */}
         <Button
           onPress={() => nav.push({ name: "settings" })}
           class="flex-row items-center gap-3 rounded-[20px] bg-card px-4 py-3 active:bg-secondary"
           testID="settings"
         >
-          <View class="h-10 w-10 overflow-hidden rounded-[12px] bg-[#161616]">
+          <View class="h-10 w-10 overflow-hidden rounded-[12px] bg-[#16171a]">
             <Image src={herdrIcon} style={{ width: 40, height: 40 }} />
           </View>
           <View class="flex-1 gap-0.5">
@@ -484,7 +486,7 @@ function HomeScreen() {
               <Text class="text-[15px] font-medium text-card-foreground" testID="status">{statusInfo().text}</Text>
             </View>
             <Text class="text-[13px] text-muted-foreground" style={{ numberOfLines: 1, fontVariant: ["tabular-nums"] }}>
-              {problem() || `${list().terminals.length} 个终端 · ${notifyEnabled() ? "通知已开启" : "端到端加密"}`}
+              {(status() === "error" && problem()) ? problem() : `${list().terminals.length} 个终端 · ${notifyEnabled() ? "通知已开启" : "端到端加密"}`}
             </Text>
           </View>
           <View class="flex-row items-center gap-1">

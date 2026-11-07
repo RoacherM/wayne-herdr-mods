@@ -13,10 +13,10 @@
       "muted-foreground": "#5d5d58",
       "border": "#e6e6e2",
       "separator": "#ecece8",
-      "destructive": "#d64545",
-      "ok": "#1f9d55",
-      "warn": "#688296",
-      "bad": "#d64545",
+      "destructive": "#d93025",
+      "ok": "#1e8e3e",
+      "warn": "#f29900",
+      "bad": "#d93025",
       "idle": "#93938d"
     },
     "dark": {
@@ -32,10 +32,10 @@
       "muted-foreground": "#a8a8a2",
       "border": "#2a2a28",
       "separator": "#242422",
-      "destructive": "#e05555",
-      "ok": "#28b463",
-      "warn": "#879fb0",
-      "bad": "#e05555",
+      "destructive": "#ea4335",
+      "ok": "#34a853",
+      "warn": "#fbbc04",
+      "bad": "#ea4335",
       "idle": "#72726d"
     }
   }
