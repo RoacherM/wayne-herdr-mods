@@ -7,32 +7,87 @@ import {
   problem, refresh, rpc, sas, sendImage, setStreamListener, status, switchDesktop, transcribeAudio, wake,
   type Saved, type Space, type Terminal,
 } from "./src/conn";
+import { PROG_ICONS } from "./src/prog-icons";
 import { TERM_HTML } from "./src/term-html";
 import { LiveLine, PASTE_LF, pasteText } from "../app/src/live-line.js";
 import { agentKeys, combo, keyOfChar, MODS } from "../app/src/agent-keys.js";
-import arrowUp from "./assets/arrow-up.svg";
-import chevron from "./assets/chevron.svg";
-import micIcon from "./assets/mic.svg";
-import plus from "./assets/plus.svg";
-import terminalIcon from "./assets/terminal.svg";
+import downIcon from "./assets/down.svg";
+import gearIcon from "./assets/gear.svg";
+import kbdIcon from "./assets/kbd.svg";
+import plusIcon from "./assets/plus.svg";
+import scanIcon from "./assets/scan.svg";
+import spinnerIcon from "./assets/spinner.svg";
 
 type Route = { name: "home" } | { name: "term"; address: string } | { name: "settings" };
 const nav = createNavStack<Route>([{ name: "home" }]);
 
 const STATE_TEXT: Record<string, string> = { blocked: "等你处理", working: "工作中", done: "完成", idle: "空闲", error: "出错" };
 const KIND_TEXT: Record<string, string> = { permission: "等你确认", question: "在问你", auth: "要登录" };
-const STATE_TONE: Record<string, string> = { blocked: "bad", error: "bad", working: "warn", done: "ok" };
-const STATUS_TEXT: Record<string, string> = { connecting: "连接中…", offline: "Mac 离线", ready: "已连接", error: "出错", idle: "未连接" };
-const STATUS_TONE: Record<string, string> = { ready: "ok", connecting: "warn", offline: "idle", error: "bad", idle: "idle" };
+const STATUS_TEXT: Record<string, string> = { connecting: "连接中…", offline: "电脑离线", ready: "已连接", error: "连接出错", idle: "未连接" };
+const STATUS_DOT: Record<string, string> = { ready: "bg-ok", connecting: "bg-warn", offline: "bg-idle", error: "bg-bad", idle: "bg-idle" };
+const TAG_STYLE: Record<string, string> = {
+  working: "bg-warn/15 text-warn",
+  blocked: "bg-warn/20 text-warn",
+  error: "bg-bad/15 text-bad",
+  done: "bg-[#5b8def]/15 text-[#5b8def]",
+};
+
+const SHELLS = new Set(["zsh", "bash", "fish", "sh", "dash", "nu", "pwsh", "powershell", "cmd", "elvish", "xonsh", "tcsh", "csh", "ksh", "ion"]);
+const ALIASES: Record<string, string> = { "claude-code": "claude", agy: "antigravity", "cursor-agent": "cursor" };
+
 const base = (p?: string) => (p ? p.replace(/\/+$/, "").split("/").pop() || p : "");
-const tone = (state?: string | null) => STATE_TONE[state ?? ""] ?? "idle";
-const BG: Record<string, string> = { ok: "bg-ok", warn: "bg-warn", bad: "bg-bad", idle: "bg-idle" };
-const BADGE: Record<string, string> = { ok: "bg-ok/15 text-ok", warn: "bg-warn/15 text-warn", bad: "bg-bad/15 text-bad", idle: "bg-secondary text-muted-foreground" };
 const tapHaptic = () => { if (host.available()) try { host.post("haptic"); } catch {} };
 
-function Icon(props: { src: any; size?: number; color?: string }) {
+function Icon(props: { src: any; size?: number; color?: string; class?: string }) {
   const n = props.size ?? 20;
-  return <Image src={props.src} style={{ width: n, height: n, tintColor: props.color ?? "#8e8e93" }} />;
+  return (
+    <Image
+      src={props.src}
+      class={props.class ?? (props.color ? undefined : "tint-muted-foreground")}
+      style={props.color ? { width: n, height: n, tintColor: props.color } : { width: n, height: n }}
+    />
+  );
+}
+
+/** Resolve a terminal's icon key matching app/src/prog-icons.js and DESIGN.md「图标跟着 Herdr.app」. */
+function resolveIconKey(t?: Terminal | null): string {
+  if (!t) return "shell";
+  if (t.icon) return t.icon;
+  const raw = String(t.app || t.program || "").toLowerCase();
+  if (!raw || SHELLS.has(raw)) return "shell";
+  return ALIASES[raw] ?? raw;
+}
+
+/** Program icon on the left of a terminal row or in the terminal header, matching Herdr.app's sidebar. */
+function ProgIcon(props: { t?: Terminal | null; size?: number; dark?: boolean }) {
+  const n = props.size ?? 18;
+  const key = resolveIconKey(props.t);
+  const fallback = props.t?.app ? PROG_ICONS.agent : PROG_ICONS.program;
+  const entry = PROG_ICONS[key] ?? fallback ?? PROG_ICONS.shell;
+  return (
+    <View class="items-center justify-center" style={{ width: n, height: n }}>
+      <Image
+        src={entry.src}
+        class={entry.tint && !props.dark ? "tint-muted-foreground" : undefined}
+        style={entry.tint && props.dark ? { width: n, height: n, tintColor: "#f2f2f7" } : { width: n, height: n }}
+      />
+    </View>
+  );
+}
+
+/** Right-side status indicator matching Herdr.app's sidebar (working spinner, done dot, idle ring). */
+function StatusMark(props: { state?: string | null }) {
+  const st = props.state;
+  if (st === "working") {
+    return (
+      <View class="h-3.5 w-3.5 items-center justify-center">
+        <Image src={spinnerIcon} style={{ width: 14, height: 14, tintColor: "#d9822b" }} />
+      </View>
+    );
+  }
+  if (st === "done") return <View class="h-2 w-2 rounded-full bg-[#5b8def]" />;
+  if (st === "idle") return <View class="h-2 w-2 rounded-full border border-idle" />;
+  return null;
 }
 
 /** A space's name as Herdr.app shows it: its explicit name, or derived from its terminals' `where` label. */
@@ -65,84 +120,125 @@ function PairScreen() {
     } catch (e: any) { problem.set(e.message || "无法打开相机扫码"); }
   }
   return (
-    <View class="flex-1 bg-background px-5 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
-      <View class="flex-1 justify-center gap-6">
-        <View class="items-center gap-3">
-          <View class="h-[76px] w-[76px] items-center justify-center rounded-[20px] bg-foreground">
-            <Icon src={terminalIcon} size={40} color="#30d158" />
-          </View>
-          <Text class="text-[28px] font-bold text-foreground">herdr 远程</Text>
-          <Text class="text-center text-[15px] leading-snug text-muted-foreground">
-            在 Mac 的 Herdr.app 右上角点手机图标，{"\n"}扫码或粘贴配对链接。
-          </Text>
-        </View>
-        <View class="gap-3">
-          {host.available() ? (
-            <Button onPress={scan} disabled={busy()} class="h-[50px] items-center justify-center rounded-xl bg-primary active:opacity-80" testID="scan-qr">
-              <Text class="text-[17px] font-semibold text-primary-foreground">扫描二维码</Text>
-            </Button>
-          ) : null}
-          <View class="rounded-xl bg-card px-4">
-            <Input value={text()} onChange={(e) => text.set(e.value)} placeholder="https://…/#p=…" autoCapitalize="none" autoCorrect={false}
-              class="py-3.5 text-[17px] text-foreground" testID="pair-link" />
-          </View>
-          <Button onPress={() => go()} disabled={busy() || !text()} class={`h-[50px] items-center justify-center rounded-xl ${host.available() ? "bg-card" : "bg-primary"} active:opacity-80 ${!text() ? "opacity-40" : ""}`}>
-            <Text class={`text-[17px] font-semibold ${host.available() ? "text-primary" : "text-primary-foreground"}`}>{busy() ? "连接中…" : "配对"}</Text>
-          </Button>
-          <Button onPress={async () => { const c = await Clipboard.readText(); if (c) text.set(c); }} class="h-11 items-center justify-center active:opacity-50">
-            <Text class="text-[17px] text-primary">从剪贴板粘贴</Text>
-          </Button>
-          {addingMac() || sas() ? (
-            <Button onPress={cancelPair} class="h-11 items-center justify-center active:opacity-50" testID="cancel-pair">
-              <Text class="text-[17px] text-muted-foreground">取消</Text>
-            </Button>
-          ) : null}
-        </View>
-        <If when={sas()}>
-          {(code) => (
-            <View class="items-center gap-1.5 rounded-xl bg-card p-5">
-              <Text class="text-[13px] text-muted-foreground">确认 Mac 上显示的是这串数字，再在 Mac 上点允许</Text>
-              <Text class="font-mono text-[40px] font-semibold tracking-[0.2em] text-foreground" testID="sas">{code()}</Text>
+    <Scroll class="flex-1 bg-background" contentClass="grow justify-center px-5 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
+      <If when={sas()} else={
+        <View class="gap-4 py-6">
+          <View class="items-center gap-2 py-2">
+            <View class="h-16 w-16 items-center justify-center rounded-[18px] bg-primary">
+              <Text class="font-mono text-[22px] font-bold text-primary-foreground">{">_"}</Text>
             </View>
-          )}
-        </If>
-        <If when={problem()}>{(p) => <Text class="text-center text-[15px] text-bad">{p()}</Text>}</If>
-        <If when={status() !== "idle" && !sas() && !problem()}>
-          <Text class="text-center text-[13px] text-muted-foreground" testID="pair-status">{STATUS_TEXT[status()] ?? status()}</Text>
-        </If>
-      </View>
-    </View>
+            <Text class="mt-1 text-[26px] font-bold text-foreground">herdr 远程</Text>
+            <Text class="text-center text-[15px] leading-snug text-muted-foreground">
+              在手机上看和操作 Mac 上 Herdr 的终端与 agent。内容端到端加密，中继只转发密文。
+            </Text>
+          </View>
+          <If when={problem()}>
+            {(p) => (
+              <View class="rounded-xl bg-bad/15 px-3.5 py-2.5">
+                <Text class="text-[13px] text-bad">{p()}</Text>
+              </View>
+            )}
+          </If>
+          <View class="gap-2 rounded-[16px] border border-separator bg-card p-4">
+            <Text class="text-[14px] leading-snug text-muted-foreground">1. 在 Mac 的 Herdr.app 里点标签栏右上角的手机图标，再点「配对新手机」</Text>
+            <Text class="text-[14px] leading-snug text-muted-foreground">2. 点下面的按钮扫描 Mac 上的二维码</Text>
+            <Text class="text-[14px] leading-snug text-muted-foreground">3. 在 Mac 上核对 6 位数字，输入 y 确认</Text>
+          </View>
+          {host.available() ? (
+            <Button onPress={scan} disabled={busy()} class="h-12 flex-row items-center justify-center gap-2 rounded-[14px] bg-primary active:opacity-80" testID="scan-qr">
+              <Icon src={scanIcon} size={20} class="tint-primary-foreground" />
+              <Text class="text-[15px] font-semibold text-primary-foreground">扫描二维码</Text>
+            </Button>
+          ) : null}
+          <View class="gap-2.5 rounded-[16px] border border-separator bg-card p-3.5">
+            <View class="flex-row items-center justify-between">
+              <Text class="text-[13px] text-muted-foreground">或粘贴配对链接</Text>
+              <Button onPress={async () => { const c = await Clipboard.readText(); if (c) text.set(c); }} class="px-1 py-0.5 active:opacity-50">
+                <Text class="text-[13px] font-medium text-foreground">从剪贴板粘贴</Text>
+              </Button>
+            </View>
+            <View class="rounded-[10px] bg-secondary px-3">
+              <Input value={text()} onChange={(e) => text.set(e.value)} placeholder="https://…/#p=…" autoCapitalize="none" autoCorrect={false}
+                class="py-2.5 text-[15px] text-foreground" testID="pair-link" />
+            </View>
+            <Button onPress={() => go()} disabled={busy() || !text()}
+              class={`h-11 items-center justify-center rounded-[12px] bg-secondary active:opacity-80 ${!text() ? "opacity-40" : ""}`}>
+              <Text class="text-[15px] font-semibold text-foreground">{busy() ? "连接中…" : "配对"}</Text>
+            </Button>
+          </View>
+          {addingMac() ? (
+            <Button onPress={cancelPair} class="h-10 items-center justify-center active:opacity-50" testID="cancel-pair">
+              <Text class="text-[14px] text-muted-foreground">取消</Text>
+            </Button>
+          ) : null}
+          <If when={status() !== "idle" && !problem()}>
+            <Text class="text-center text-[13px] text-muted-foreground" testID="pair-status">{STATUS_TEXT[status()] ?? status()}</Text>
+          </If>
+        </View>
+      }>
+        {(code) => (
+          <View class="items-center gap-4 py-8">
+            <View class="h-16 w-16 items-center justify-center rounded-[18px] bg-primary">
+              <Text class="font-mono text-[22px] font-bold text-primary-foreground">{">_"}</Text>
+            </View>
+            <Text class="text-[26px] font-bold text-foreground">在 Mac 上确认</Text>
+            <Text class="text-center text-[15px] leading-snug text-muted-foreground">
+              核对 Mac 终端里显示的数字和下面一致，然后在 Mac 上输入 y。
+            </Text>
+            <View class="my-3 items-center justify-center px-6 py-4">
+              <Text class="font-mono text-[48px] font-bold tracking-[0.12em] text-foreground" style={{ fontVariant: ["tabular-nums"] }} testID="sas">
+                {code().length === 6 ? `${code().slice(0, 3)} ${code().slice(3)}` : code()}
+              </Text>
+            </View>
+            <Button onPress={cancelPair} class="h-11 w-full items-center justify-center rounded-[14px] bg-secondary active:opacity-70" testID="cancel-pair">
+              <Text class="text-[15px] font-medium text-muted-foreground">取消</Text>
+            </Button>
+          </View>
+        )}
+      </If>
+    </Scroll>
   );
 }
 
 // ------------------------------------------------------------------ home -------------------
-function Row(props: { t: Terminal; last: boolean }) {
+function Row(props: { t: Terminal; first: boolean }) {
   const t = props.t;
-  const label = t.state === "blocked" ? (KIND_TEXT[t.kind ?? ""] ?? STATE_TEXT.blocked) : t.state === "idle" ? "" : STATE_TEXT[t.state ?? ""];
-  const sub = [t.msg && t.state !== "idle" ? t.msg : null, base(t.cwd)].filter(Boolean).join(" · ");
+  const st = t.state ?? "idle";
+  const label = st === "idle" ? "" : st === "blocked" ? (KIND_TEXT[t.kind ?? ""] ?? STATE_TEXT.blocked) : (STATE_TEXT[st] ?? "");
+  const sub = [t.msg && st !== "idle" ? t.msg : null, base(t.cwd)].filter(Boolean).join(" · ");
+  const what = t.app || t.program || "shell";
   return (
-    <Button onPress={() => nav.push({ name: "term", address: t.address })} class="flex-row items-center pl-4 active:bg-secondary" testID={`row-${t.address}`}>
-      <View class={`h-2.5 w-2.5 rounded-full ${BG[tone(t.state)]}`} />
-      <View class={`ml-3 min-h-[60px] flex-1 flex-row items-center gap-2 py-2.5 pr-3 ${props.last ? "" : "border-b border-separator"}`}>
-        <View class="flex-1 gap-0.5">
-          <View class="flex-row items-center gap-1.5">
-            <Text class="text-[17px] text-card-foreground" style={{ numberOfLines: 1 }}>{t.app || t.program || "shell"}</Text>
-            <Text class="text-[12px] text-muted-foreground">{t.address}</Text>
-          </View>
-          {sub ? <Text class="text-[14px] text-muted-foreground" style={{ numberOfLines: 1 }}>{sub}</Text> : null}
+    <Button onPress={() => nav.push({ name: "term", address: t.address })}
+      class={`min-h-[48px] flex-row items-center gap-3 px-4 py-3 active:bg-secondary ${props.first ? "" : "border-t border-separator"}`}
+      testID={`row-${t.address}`}>
+      <ProgIcon t={t} size={18} />
+      <View class="flex-1 gap-0.5">
+        <View class="flex-row items-baseline gap-2">
+          <Text class={`text-[15px] font-semibold ${st === "idle" ? "text-muted-foreground" : "text-card-foreground"}`} style={{ numberOfLines: 1 }}>
+            {what}
+          </Text>
+          <Text class="font-mono text-[11.5px] font-medium text-idle">{t.address}</Text>
         </View>
-        {label ? <Text class={`overflow-hidden rounded-full px-2 py-0.5 text-[12px] font-medium ${BADGE[tone(t.state)]}`}>{label}</Text> : null}
-        <Icon src={chevron} size={14} color="#c4c4c7" />
+        {sub ? <Text class="text-[12.5px] text-muted-foreground" style={{ numberOfLines: 1 }}>{sub}</Text> : null}
       </View>
+      {label ? (
+        <View class={`rounded-full px-2 py-0.5 ${TAG_STYLE[st] ?? "bg-secondary"}`}>
+          <Text class={`text-[12px] font-semibold ${TAG_STYLE[st] ? "" : "text-muted-foreground"}`}>{label}</Text>
+        </View>
+      ) : null}
+      <StatusMark state={st} />
     </Button>
   );
 }
 
-function Group(props: { title: string; rows: Terminal[]; space?: Space }) {
+type GroupItem = { kind: "tab"; label: string } | { kind: "term"; t: Terminal; firstAfterLabel: boolean };
+
+function Group(props: { title: string; items: GroupItem[]; space?: Space; needs?: boolean }) {
   const adding = signal(false);
   async function add() {
     if (adding() || !props.space) return;
     adding.set(true);
+    tapHaptic();
     try {
       const { address } = (await rpc("term.new", { space: props.space.id }, 15_000)) as { address: string };
       await refresh();
@@ -151,21 +247,30 @@ function Group(props: { title: string; rows: Terminal[]; space?: Space }) {
   }
   return (
     <View class="gap-1.5">
-      <View class="min-h-7 flex-row items-end justify-between px-4">
-        <Text class="text-[13px] text-muted-foreground">{props.title}</Text>
+      <View class="min-h-7 flex-row items-center justify-between px-1">
+        <Text class={`text-[12.5px] font-semibold tracking-[0.02em] ${props.needs ? "text-warn" : "text-idle"}`}>{props.title}</Text>
         {props.space ? (
-          <Button onPress={add} disabled={adding()} class="flex-row items-center gap-1 active:opacity-50" testID={`add-${props.space.id}`}>
-            <Icon src={plus} size={14} color="#007aff" />
-            <Text class="text-[15px] text-primary">{adding() ? "新建中…" : "新终端"}</Text>
+          <Button onPress={add} disabled={adding()} class="h-8 w-8 items-center justify-center rounded-[8px] active:bg-secondary" testID={`add-${props.space.id}`} accessibilityLabel="新建终端">
+            <Icon src={plusIcon} size={18} color="#93938d" />
           </Button>
         ) : null}
       </View>
-      {props.rows.length ? (
-        <View class="overflow-hidden rounded-xl bg-card">
-          {props.rows.map((t, i) => <Row t={t} last={i === props.rows.length - 1} />)}
+      {props.items.length ? (
+        <View class="overflow-hidden rounded-[18px] border border-separator bg-card">
+          {props.items.map((item) =>
+            item.kind === "tab" ? (
+              <View class="px-4 pt-2 pb-0.5">
+                <Text class="text-[12px] text-idle">{item.label}</Text>
+              </View>
+            ) : (
+              <Row t={item.t} first={item.firstAfterLabel} />
+            )
+          )}
         </View>
       ) : (
-        <View class="rounded-xl bg-card px-4 py-3.5"><Text class="text-[15px] text-muted-foreground">没有终端</Text></View>
+        <View class="rounded-[14px] bg-secondary px-3.5 py-2.5">
+          <Text class="text-[13px] text-muted-foreground">没有正在运行的终端</Text>
+        </View>
       )}
     </View>
   );
@@ -173,52 +278,103 @@ function Group(props: { title: string; rows: Terminal[]; space?: Space }) {
 
 function HomeScreen() {
   effect(() => { if (lifecycle() === "active") wake(); });
+  const statusInfo = computed(() => {
+    const s = status();
+    const core = list().core;
+    if (s === "ready") {
+      return core && core !== "online"
+        ? { dot: "bg-bad", text: "herdr 未运行" }
+        : { dot: "bg-ok", text: "已连接" };
+    }
+    return { dot: STATUS_DOT[s] ?? "bg-idle", text: STATUS_TEXT[s] ?? s };
+  });
   const groups = computed(() => {
     const { terminals, layout } = list();
     const byAddr = new Map(terminals.map((t) => [t.address, t]));
-    const out: { title: string; rows: Terminal[]; space?: Space }[] = [];
+    const out: { title: string; items: GroupItem[]; space?: Space; needs?: boolean }[] = [];
     const waiting = terminals.filter((t) => t.state === "blocked" || t.state === "error");
-    if (waiting.length) out.push({ title: `需要你 · ${waiting.length}`, rows: waiting });
+    if (waiting.length) {
+      out.push({
+        title: `需要你（${waiting.length}）`,
+        needs: true,
+        items: waiting.map((t, i) => ({ kind: "term", t, firstAfterLabel: i === 0 })),
+      });
+    }
     const placed = new Set<string>();
     for (const space of layout) {
-      const rows = space.tabs.flatMap((tab) => tab.terminals).map((a) => byAddr.get(a)).filter(Boolean) as Terminal[];
-      rows.forEach((t) => placed.add(t.address));
-      out.push({ title: spaceName(space, byAddr), rows, space });
+      const items: GroupItem[] = [];
+      for (const [tabIdx, tab] of space.tabs.entries()) {
+        const ts = tab.terminals.map((a) => byAddr.get(a)).filter(Boolean) as Terminal[];
+        if (!ts.length) continue;
+        ts.forEach((t) => placed.add(t.address));
+        const hasTabLabel = space.tabs.length > 1;
+        if (hasTabLabel) items.push({ kind: "tab", label: tab.name || `标签 ${tabIdx + 1}` });
+        ts.forEach((t, i) => items.push({ kind: "term", t, firstAfterLabel: hasTabLabel ? i === 0 : items.length === 0 }));
+      }
+      if (items.length || space.id) out.push({ title: spaceName(space, byAddr), items, space });
     }
     const loose = terminals.filter((t) => !placed.has(t.address));
-    if (loose.length) out.push({ title: "其他终端", rows: loose });
+    if (loose.length) {
+      out.push({
+        title: "其他终端",
+        items: loose.map((t, i) => ({ kind: "term", t, firstAfterLabel: i === 0 })),
+      });
+    }
     return out;
   });
+
+  const macName = computed(() => paired()?.desktopName ?? info()?.desktopName ?? "Mac");
+
   return (
-    <NavPage title={paired()?.desktopName ?? info()?.desktopName ?? "Mac"} headerLargeTitle>
-      <Scroll class="flex-1 bg-background" contentClass="gap-5 px-4 pb-10 pt-2">
+    <NavPage
+      title={macName()}
+      headerTitle={
+        <View class="items-center">
+          <Text class="text-[16px] font-semibold text-foreground" style={{ numberOfLines: 1 }}>{macName()}</Text>
+          <View class="flex-row items-center gap-1.5">
+            <View class={`h-2 w-2 rounded-full ${statusInfo().dot}`} />
+            <Text class="text-[12px] text-muted-foreground" testID="status">{statusInfo().text}</Text>
+          </View>
+        </View>
+      }
+      headerRight={
+        <Button onPress={() => nav.push({ name: "settings" })} class="h-9 w-9 items-center justify-center rounded-[10px] active:bg-secondary" testID="settings" accessibilityLabel="设置">
+          <Icon src={gearIcon} size={20} color="#72726d" />
+        </Button>
+      }
+    >
+      <Scroll class="flex-1 bg-background" contentClass="gap-4 px-4 pb-10 pt-3">
         {desktops().length > 1 ? (
           <Scroll horizontal scrollbar={false} class="flex-none" contentClass="flex-row gap-2">
             {desktops().map((d: Saved) => {
               const active = d.desktopId === paired()?.desktopId;
               return (
-                <Button onPress={() => switchDesktop(d.desktopId)} class={`h-9 flex-row items-center gap-1.5 rounded-full px-3.5 ${active ? "bg-primary" : "bg-card"}`} testID={`mac-${d.desktopId}`}>
-                  <Text class={`text-[14px] font-medium ${active ? "text-primary-foreground" : "text-card-foreground"}`}>{d.desktopName || "Mac"}</Text>
+                <Button onPress={() => switchDesktop(d.desktopId)}
+                  class={`h-8 flex-row items-center gap-1.5 rounded-full px-3.5 ${active ? "bg-primary" : "border border-separator bg-card"}`}
+                  testID={`mac-${d.desktopId}`}>
+                  <Text class={`text-[13px] font-semibold ${active ? "text-primary-foreground" : "text-card-foreground"}`}>{d.desktopName || "Mac"}</Text>
                 </Button>
               );
             })}
           </Scroll>
         ) : null}
-        <Button onPress={() => nav.push({ name: "settings" })} class="flex-row items-center gap-3 rounded-xl bg-card py-3 pl-3 pr-3 active:opacity-60" testID="settings">
-          <View class="h-10 w-10 items-center justify-center rounded-[10px] bg-foreground">
-            <Icon src={terminalIcon} size={22} color="#30d158" />
+        {status() === "offline" ? (
+          <View class="rounded-[12px] bg-warn/15 px-3.5 py-2.5">
+            <Text class="text-[13px] text-warn">Mac 离线或后台服务没在运行。恢复后会自动重连。</Text>
           </View>
-          <View class="flex-1 gap-0.5">
-            <View class="flex-row items-center gap-1.5">
-              <View class={`h-2 w-2 rounded-full ${BG[STATUS_TONE[status()] ?? "idle"]}`} />
-              <Text class="text-[17px] text-card-foreground" testID="status">{STATUS_TEXT[status()] ?? status()}</Text>
-            </View>
-            <Text class="text-[13px] text-muted-foreground" style={{ numberOfLines: 1 }}>{problem() || `${list().terminals.length} 个终端 · 端到端加密`}</Text>
+        ) : null}
+        {status() === "ready" && list().core && list().core !== "online" ? (
+          <View class="rounded-[12px] bg-secondary px-3.5 py-2.5">
+            <Text class="text-[13px] text-muted-foreground">Mac 在线，但 Herdr 没有运行（herdr-core 不在）。打开 Herdr.app 后这里会自动出现终端。</Text>
           </View>
-          <Icon src={chevron} size={14} color="#c4c4c7" />
-        </Button>
-        {list().core && list().core !== "online" ? <Text class="px-1 text-[15px] text-muted-foreground">Mac 在线，但 Herdr 没有运行。</Text> : null}
-        {groups().map((g) => <Group title={g.title} rows={g.rows} space={g.space} />)}
+        ) : null}
+        {groups().length ? (
+          groups().map((g) => <Group title={g.title} items={g.items} space={g.space} needs={g.needs} />)
+        ) : (
+          <View class="rounded-[12px] bg-secondary px-3.5 py-3">
+            <Text class="text-[13px] text-muted-foreground">{status() === "ready" ? "没有正在运行的终端。" : "连接中…"}</Text>
+          </View>
+        )}
       </Scroll>
     </NavPage>
   );
@@ -227,8 +383,8 @@ function HomeScreen() {
 function Field(props: { label: string; value: string; last?: boolean }) {
   return (
     <View class={`ml-4 min-h-11 flex-row items-center gap-3 py-2.5 pr-4 ${props.last ? "" : "border-b border-separator"}`}>
-      <Text class="text-[17px] text-card-foreground">{props.label}</Text>
-      <Text class="flex-1 text-right text-[17px] text-muted-foreground" style={{ numberOfLines: 1 }}>{props.value}</Text>
+      <Text class="text-[15px] text-card-foreground">{props.label}</Text>
+      <Text class="flex-1 text-right text-[14px] text-muted-foreground" style={{ numberOfLines: 1 }}>{props.value}</Text>
     </View>
   );
 }
@@ -236,37 +392,37 @@ function Field(props: { label: string; value: string; last?: boolean }) {
 function SettingsScreen() {
   return (
     <NavPage title="设置" headerClass="bg-background">
-      <Scroll class="flex-1 bg-background" contentClass="gap-7 px-4 pt-4 pb-10">
+      <Scroll class="flex-1 bg-background" contentClass="gap-6 px-4 pt-4 pb-10">
         <View class="gap-1.5">
-          <Text class="px-4 text-[13px] text-muted-foreground">当前设备</Text>
-          <View class="overflow-hidden rounded-xl bg-card">
+          <Text class="px-1 text-[12.5px] font-semibold text-idle">当前设备</Text>
+          <View class="overflow-hidden rounded-[18px] border border-separator bg-card">
             <Field label="电脑" value={paired()?.desktopName ?? "Mac"} />
             <Field label="这台设备" value={info()?.deviceName ?? "—"} />
             <Field label="中继" value={(paired()?.relay ?? "—").replace(/^https?:\/\//, "")} last />
           </View>
-          <Text class="px-4 text-[13px] leading-snug text-muted-foreground">消息端到端加密，中继只转发看不懂的密文。</Text>
+          <Text class="px-1 text-[12.5px] leading-snug text-muted-foreground">消息端到端加密，中继只转发看不懂的密文。</Text>
         </View>
         <View class="gap-1.5">
-          <Text class="px-4 text-[13px] text-muted-foreground">已配对的 Mac（{desktops().length}）</Text>
-          <View class="overflow-hidden rounded-xl bg-card">
+          <Text class="px-1 text-[12.5px] font-semibold text-idle">已配对的 Mac（{desktops().length}）</Text>
+          <View class="overflow-hidden rounded-[18px] border border-separator bg-card">
             {desktops().map((d: Saved, i: number) => {
               const active = d.desktopId === paired()?.desktopId;
               return (
                 <Button onPress={() => { switchDesktop(d.desktopId); nav.pop(); }}
                   class={`ml-4 min-h-11 flex-row items-center gap-3 py-2.5 pr-4 ${i === desktops().length - 1 ? "" : "border-b border-separator"}`}>
                   <View class={`h-2 w-2 rounded-full ${active ? "bg-ok" : "bg-idle"}`} />
-                  <Text class="flex-1 text-[17px] text-card-foreground" style={{ numberOfLines: 1 }}>{d.desktopName || "Mac"}</Text>
-                  <Text class="text-[14px] text-muted-foreground">{active ? "当前" : "切换"}</Text>
+                  <Text class="flex-1 text-[15px] font-medium text-card-foreground" style={{ numberOfLines: 1 }}>{d.desktopName || "Mac"}</Text>
+                  <Text class="text-[13px] text-muted-foreground">{active ? "当前" : "切换"}</Text>
                 </Button>
               );
             })}
           </View>
-          <Button onPress={() => { nav.pop(); addingMac.set(true); }} class="h-11 items-center justify-center rounded-xl bg-card active:opacity-60" testID="add-mac">
-            <Text class="text-[17px] text-primary">配对另一台 Mac</Text>
+          <Button onPress={() => { nav.pop(); addingMac.set(true); }} class="h-11 items-center justify-center rounded-[14px] border border-separator bg-card active:bg-secondary" testID="add-mac">
+            <Text class="text-[15px] font-semibold text-foreground">配对另一台 Mac</Text>
           </Button>
         </View>
-        <Button onPress={async () => { nav.pop(); await forget(); }} class="h-11 items-center justify-center rounded-xl bg-card active:opacity-60">
-          <Text class="text-[17px] text-destructive">取消配对</Text>
+        <Button onPress={async () => { nav.pop(); await forget(); }} class="h-11 items-center justify-center rounded-[14px] border border-separator bg-card active:bg-secondary">
+          <Text class="text-[15px] font-semibold text-destructive">取消配对</Text>
         </Button>
       </Scroll>
     </NavPage>
@@ -274,7 +430,7 @@ function SettingsScreen() {
 }
 
 // ------------------------------------------------------------------ terminal ---------------
-const DARK = { bar: "#1c1c1e", tint: "#0a84ff" };
+const DARK = { bar: "#1c1c1e", tint: "#f2f2f7" };
 // Matches DESIGN.md「键盘栏的顺序」: Esc ← ↑ ↓ → ⏎ ⇧Tab ^C │ agent keys │ ^ ⌥ ⇧ │ Tab 粘贴 换行 1 2 3 y n ^D ^R ^L
 const KEYBAR_FRONT: [string, string][] = [
   ["Esc", "\x1b"], ["←", "left"], ["↑", "up"], ["↓", "down"], ["→", "right"], ["⏎", "\r"], ["⇧Tab", "\x1b[Z"], ["^C", "\x03"],
@@ -289,6 +445,8 @@ const NAME_OF: Record<string, string> = {
 };
 const MOD_LABELS: Record<string, string> = { ctrl: "^", alt: "⌥", shift: "⇧" };
 const ARROWS: Record<string, string> = { up: "A", down: "B", right: "C", left: "D" };
+const REPEAT = new Set(["up", "down", "left", "right"]);
+const MAX_VOICE_MS = 60_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function TermScreen(props: { address: string }) {
@@ -307,9 +465,16 @@ function TermScreen(props: { address: string }) {
   const focused = signal(false);
   const uploading = signal("");
   const voiceState = signal<"" | "rec" | "busy">("");
+  const voiceLevel = signal(0);
+  const voiceLeftSec = signal(60);
   const mods = signal<string[]>([]);
   const litKey = signal("");
   let litTimer: any = 0;
+  let repeatDelay: any = 0;
+  let repeatEvery: any = 0;
+  let didRepeat = false;
+  let voiceMeterTimer: any = 0;
+  let voiceLimitTimer: any = 0;
 
   let field!: InputRef;
   let web!: WebViewRef;
@@ -344,6 +509,11 @@ function TermScreen(props: { address: string }) {
     if (!litKey()) return;
     clearTimeout(litTimer);
     litKey.set("");
+  }
+  function stopRepeat() {
+    clearTimeout(repeatDelay);
+    clearInterval(repeatEvery);
+    repeatDelay = repeatEvery = 0;
   }
 
   let chain = Promise.resolve();
@@ -404,6 +574,9 @@ function TermScreen(props: { address: string }) {
   cleanup(() => {
     closed = true;
     clearTimeout(litTimer);
+    stopRepeat();
+    clearInterval(voiceMeterTimer);
+    clearTimeout(voiceLimitTimer);
     setStreamListener(null);
     if (voiceState() === "rec" && host.available()) host.call("voice.cancel").catch(() => {});
     if (s !== null) rpc("term.close", { s }).catch(() => {});
@@ -459,7 +632,7 @@ function TermScreen(props: { address: string }) {
   }
 
   async function pasteFromClipboard() {
-    if (held()) { notice.set("先回答终端里的问题，再粘贴（或点上方黄条直接输入）"); return; }
+    if (held()) { notice.set("先回答终端里的问题，再粘贴（或点气泡直接打字）"); return; }
     try {
       if (await Clipboard.hasImage()) {
         const img = await Clipboard.readImage();
@@ -496,9 +669,25 @@ function TermScreen(props: { address: string }) {
     out(bytes);
   }
 
+  function onKeyPress(label: string, seq: string) {
+    if (didRepeat) { didRepeat = false; return; }
+    key(label, seq);
+  }
+
+  function onKeyDown(label: string, seq: string) {
+    if (!REPEAT.has(seq)) return;
+    stopRepeat();
+    didRepeat = false;
+    repeatDelay = setTimeout(() => {
+      didRepeat = true;
+      key(label, seq);
+      repeatEvery = setInterval(() => key(label, seq), 70);
+    }, 380);
+  }
+
   function send() {
     if (mods().length && named()) { pressNamed(combo(new Set(mods()), "enter"), "⏎"); return; }
-    if (!line.submit()) { notice.set("先回答终端里的问题（或点黄条直接打字），刚打的字随后会进去"); return; }
+    if (!line.submit()) { notice.set("先回答终端里的问题（1 / 2 / 3、⏎ 或 Esc），刚打的字随后会进去"); return; }
     notice.set("");
     sync();
   }
@@ -527,11 +716,17 @@ function TermScreen(props: { address: string }) {
     } catch (e: any) { notice.set(`图片没发出去：${e.message}`); } finally { uploading.set(""); }
   }
 
-  // ---- Voice input via Swift host (AVAudioRecorder → Mac Volcengine flash ASR)
+  // ---- Hold-to-talk voice input (AVAudioRecorder → Mac Volcengine flash ASR)
   let recStartedAt = 0;
+  function clearVoiceTimers() {
+    clearInterval(voiceMeterTimer);
+    clearTimeout(voiceLimitTimer);
+    voiceMeterTimer = voiceLimitTimer = 0;
+  }
+
   async function startVoice() {
     if (!host.available() || !info()?.voice) {
-      notice.set("这台 Mac 没配语音识别：在 Mac 上运行 wayne-herdr-mods voice key");
+      notice.set(info()?.voice ? "当前环境不支持录音" : "这台 Mac 没开语音识别：在 Mac 上运行 wayne-herdr-mods voice key 设置");
       return;
     }
     if (voiceState() !== "") return;
@@ -539,17 +734,33 @@ function TermScreen(props: { address: string }) {
       notice.set("");
       await host.call("voice.start");
       recStartedAt = Date.now();
+      voiceLevel.set(0.1);
+      voiceLeftSec.set(60);
       tapHaptic();
       voiceState.set("rec");
+      voiceMeterTimer = setInterval(async () => {
+        if (voiceState() !== "rec") return;
+        const left = Math.max(0, Math.ceil((MAX_VOICE_MS - (Date.now() - recStartedAt)) / 1000));
+        voiceLeftSec.set(left);
+        try {
+          const r = await host.call<{ level: number }>("voice.level");
+          if (typeof r?.level === "number") voiceLevel.set(r.level);
+        } catch {}
+      }, 90);
+      voiceLimitTimer = setTimeout(() => stopVoice(false), MAX_VOICE_MS);
     } catch (e: any) {
       notice.set(e.message || "录音启动失败");
     }
   }
+
   async function stopVoice(cancel = false) {
     if (voiceState() !== "rec") return;
-    if (cancel) {
+    clearVoiceTimers();
+    const elapsed = Date.now() - recStartedAt;
+    if (cancel || elapsed < 400) {
       voiceState.set("");
       await host.call("voice.cancel").catch(() => {});
+      if (!cancel && elapsed < 400) notice.set("按住说话，松开输入");
       return;
     }
     voiceState.set("busy");
@@ -575,120 +786,166 @@ function TermScreen(props: { address: string }) {
   const title = computed(() => { const t = term(); return t ? t.app || t.program || address : address; });
   const subtitle = computed(() => {
     const t = term();
-    if (!t) return "";
+    if (!t) return address;
     const st = t.state === "blocked" ? (KIND_TEXT[t.kind ?? ""] ?? STATE_TEXT.blocked) : STATE_TEXT[t.state ?? ""];
-    return [t.where || base(t.cwd), st].filter(Boolean).join(" · ");
+    return [t.where || base(t.cwd) || address, st].filter(Boolean).join(" · ");
   });
-  const banner = computed(() => {
-    if (voiceState() === "rec") return { text: "正在录音… 松开或点「完成」识别", tap: false };
-    if (voiceState() === "busy") return { text: "正在识别语音…", tap: false };
-    if (uploading()) return { text: `上传图片 ${uploading()}…`, tap: false };
-    if (held() && pending()) return { text: `等你回答后输入：${pending()} · 点这里照样输入`, tap: true };
-    if (held()) return { text: "终端在问你 · 点这里照样打字", tap: true };
-    if (pending()) return { text: `待输入：${pending()}`, tap: false };
-    if (notice()) return { text: notice(), tap: false };
+
+  // Floating pill bubble at the bottom of the terminal stage, matching .term-bubble in app/src/main.js
+  const bubble = computed(() => {
+    if (voiceState() === "rec") {
+      const left = voiceLeftSec();
+      return {
+        text: left <= 10 ? `还剩 ${left} 秒 · 松开 输入` : "松开 输入 · 点气泡取消",
+        warn: false,
+        tap: "cancel-voice" as const,
+        level: voiceLevel(),
+        busy: false,
+      };
+    }
+    if (voiceState() === "busy") return { text: "识别中…", warn: false, tap: null, level: undefined, busy: true };
+    if (uploading()) return { text: `上传图片 ${uploading()}…`, warn: false, tap: null, level: undefined, busy: false };
+    if (composing()) return { text: composing(), warn: false, tap: null, level: undefined, busy: false };
+    if (held() && pending()) return { text: `等你回答后输入：${pending()} · 点这里照样输入`, warn: true, tap: "let-go" as const, level: undefined, busy: false };
+    if (pending()) return { text: `等你回答后输入：${pending()}`, warn: true, tap: null, level: undefined, busy: false };
+    if (held()) return { text: "终端在问你 · 点这里照样打字", warn: true, tap: "let-go" as const, level: undefined, busy: false };
+    if (notice()) return { text: notice(), warn: true, tap: "dismiss" as const, level: undefined, busy: false };
     return null;
   });
-  const handle = computed(() =>
-    composing() ? { text: composing(), color: "#ffffff" }
-    : pending() ? { text: `待输入：${pending()}`, color: "#ffd60a" }
-    : focused() ? { text: "直接打字，字会出现在终端里", color: "#8d8d93" }
-    : { text: "轻点这里或终端，开始输入", color: "#8d8d93" });
+
+  const voiceOk = computed(() => Boolean(info()?.voice) && host.available());
 
   return (
-    <NavPage title={title()} headerStyle={{ backgroundColor: DARK.bar, color: "#ffffff", tintColor: DARK.tint }} statusBar={{ foreground: "light" }}
+    <NavPage
+      title={title()}
+      headerStyle={{ backgroundColor: DARK.bar, color: "#f2f2f7", tintColor: DARK.tint }}
+      statusBar={{ foreground: "light" }}
       headerTitle={
-        <View class="items-center">
-          <Text class="text-[16px] font-semibold text-white" style={{ numberOfLines: 1 }}>{title()}</Text>
-          {subtitle() ? <Text class="text-[11px] text-[#8d8d93]" style={{ numberOfLines: 1 }}>{subtitle()}</Text> : null}
+        <View class="items-center gap-0.5" accessibilityLabel={title()}>
+          <ProgIcon t={term()} size={20} dark />
+          <Text class="text-[11.5px] text-[#8d8d93]" style={{ numberOfLines: 1 }}>{subtitle()}</Text>
         </View>
-      }>
+      }
+    >
       <View class="flex-1 bg-[#0b0b0c] pb-[env(keyboard-inset-height)]">
-        <View class="relative flex-1">
+        {/* Terminal stage + floating status bubble + scroll-to-latest button */}
+        <View class="relative flex-1 bg-[#0b0b0c]">
           <WebView ref={web} html={TERM_HTML} style={{ flex: 1 }} scrollable={false} onMessage={(e) => fromPage(e.data)} testID="term-web" />
+          <If when={bubble()}>
+            {(b) => (
+              <View class="absolute inset-x-4 bottom-2.5 items-center" style={{ pointerEvents: "box-none" }}>
+                <Button
+                  onPress={() => {
+                    const action = b().tap;
+                    if (action === "let-go") { letGo.set(true); field.focus(); }
+                    else if (action === "cancel-voice") stopVoice(true);
+                    else if (action === "dismiss") notice.set("");
+                  }}
+                  class="max-w-full flex-row items-center gap-2.5 rounded-full border border-[#3a3a3c] bg-[#2c2c2e]/95 px-3.5 py-1.5"
+                  testID="term-bubble"
+                >
+                  {b().level !== undefined ? (
+                    <View class="h-1.5 w-14 overflow-hidden rounded-full bg-[#3a3a3c]">
+                      <View class="h-full rounded-full bg-[#0a84ff]" style={{ width: Math.round((0.08 + (b().level ?? 0) * 0.92) * 56) }} />
+                    </View>
+                  ) : null}
+                  {b().busy ? <View class="h-2 w-2 rounded-full bg-[#8d8d93]" /> : null}
+                  <Text class={`text-[13.5px] ${b().warn ? "text-[#ffd60a]" : "text-[#f2f2f7]"}`} style={{ numberOfLines: 1 }}>
+                    {b().text}
+                  </Text>
+                </Button>
+              </View>
+            )}
+          </If>
           <If when={!atLatest()}>
             <Button onPress={() => post({ t: "toLatest" })}
-              class="absolute right-3 bottom-3 h-9 w-9 items-center justify-center rounded-full border border-[#3a3a3c] bg-[#1c1c1e]/90"
+              class="absolute right-3 bottom-3 h-[38px] w-[38px] items-center justify-center rounded-full bg-[#2c2c2e]"
               testID="to-latest" accessibilityLabel="回到最新">
-              <Text class="text-[16px] font-bold text-[#f2f2f7]">↓</Text>
+              <Icon src={downIcon} size={20} color="#f2f2f7" />
             </Button>
           </If>
         </View>
-        <If when={banner()}>
-          {(b) => (
-            <Button onPress={() => { if (b().tap) { letGo.set(true); field.focus(); } else notice.set(""); }}
-              class="flex-row items-center justify-between bg-[#3a2e00] px-4 py-2" testID="term-banner">
-              <Text class="flex-1 text-[13px] text-[#ffd60a]">{b().text}</Text>
-              {voiceState() === "rec" ? (
-                <View class="flex-row gap-3">
-                  <Button onPress={() => stopVoice(true)} class="rounded bg-[#48484a] px-2.5 py-1"><Text class="text-[12px] text-white">取消</Text></Button>
-                  <Button onPress={() => stopVoice(false)} class="rounded bg-[#0a84ff] px-2.5 py-1"><Text class="text-[12px] font-semibold text-white">完成</Text></Button>
-                </View>
-              ) : null}
-            </Button>
-          )}
-        </If>
+
+        {/* Footer matching .term-foot in app/src/main.js: keybar on top, [ ＋ | 按住 说话 | ⌨ ] below */}
         <View class="gap-2 bg-[#1c1c1e] px-2 pt-2 pb-[env(safe-area-inset-bottom)]">
           <Scroll horizontal scrollbar={false} keyboardShouldPersistTaps="always" class="flex-none" contentClass="flex-row items-center gap-1.5 px-0.5">
             {KEYBAR_FRONT.map(([label, seq]) => (
-              <Button onPress={() => key(label, seq)}
-                class={`h-[34px] min-w-[40px] items-center justify-center rounded-lg px-2.5 bg-[#2c2c2e] active:bg-[#48484a] ${litKey() === label ? "border border-[#ffd60a]" : ""}`}>
+              <Button
+                onPress={() => onKeyPress(label, seq)}
+                onPressDown={() => onKeyDown(label, seq)}
+                onPressUp={stopRepeat}
+                testID={seq === "\r" ? "send" : undefined}
+                class={`h-[34px] min-w-[42px] items-center justify-center rounded-[8px] bg-[#2c2c2e] px-3 active:bg-[#48484a] ${litKey() === label ? "border-2 border-[#ffd60a]" : ""}`}>
                 <Text class="text-[15px] font-medium text-[#f2f2f7]">{label}</Text>
               </Button>
             ))}
             {agentShortcuts().map(([label, names]) => (
               <Button onPress={() => pressNamed(names, label)}
-                class={`h-[34px] min-w-[40px] items-center justify-center rounded-lg px-2.5 bg-[#253040] active:bg-[#3a4a60] ${litKey() === label ? "border border-[#ffd60a]" : ""}`}>
-                <Text class="text-[14px] font-medium text-[#7cc0ff]">{label}</Text>
+                class={`h-[34px] min-w-[42px] items-center justify-center rounded-[8px] bg-[#2c2c2e] px-3 active:bg-[#48484a] ${litKey() === label ? "border-2 border-[#ffd60a]" : ""}`}>
+                <Text class="text-[15px] font-medium text-[#f2f2f7]">{label}</Text>
               </Button>
             ))}
             {named() ? MODS.map((m) => {
               const active = mods().includes(m);
               return (
                 <Button onPress={() => toggleMod(m)}
-                  class={`h-[34px] min-w-[38px] items-center justify-center rounded-lg px-2.5 ${active ? "bg-[#0a84ff]" : "bg-[#2c2c2e]"}`}>
-                  <Text class="text-[15px] font-semibold text-[#f2f2f7]">{MOD_LABELS[m]}</Text>
+                  class={`h-[34px] min-w-[42px] items-center justify-center rounded-[8px] px-3 ${active ? "bg-[#f2f2f7]" : "bg-[#2c2c2e]"} active:bg-[#48484a]`}>
+                  <Text class={`text-[15px] font-medium ${active ? "text-[#0b0b0c]" : "text-[#f2f2f7]"}`}>{MOD_LABELS[m]}</Text>
                 </Button>
               );
             }) : null}
             {KEYBAR_BACK.map(([label, seq]) => (
-              <Button onPress={() => key(label, seq)}
-                class={`h-[34px] min-w-[40px] items-center justify-center rounded-lg px-2.5 bg-[#2c2c2e] active:bg-[#48484a] ${litKey() === label ? "border border-[#ffd60a]" : ""}`}>
-                <Text class="text-[14px] font-medium text-[#f2f2f7]">{label}</Text>
+              <Button onPress={() => onKeyPress(label, seq)}
+                class={`h-[34px] min-w-[42px] items-center justify-center rounded-[8px] bg-[#2c2c2e] px-3 active:bg-[#48484a] ${litKey() === label ? "border-2 border-[#ffd60a]" : ""}`}>
+                <Text class="text-[15px] font-medium text-[#f2f2f7]">{label}</Text>
               </Button>
             ))}
           </Scroll>
-          <View class="flex-row items-center gap-1.5 pb-1">
-            <Button onPress={pick} class="h-9 w-9 items-center justify-center rounded-full bg-[#2c2c2e] active:bg-[#48484a]" testID="pick" accessibilityLabel="插入图片">
-              <Icon src={plus} size={20} color="#aeaeb2" />
+
+          <View class="relative flex-row items-center gap-2 pb-1">
+            <Button onPress={pick} class="h-10 w-10 items-center justify-center rounded-full bg-[#2c2c2e] active:bg-[#48484a]" testID="pick" accessibilityLabel="插入图片">
+              <Icon src={plusIcon} size={22} color="#aeaeb2" />
             </Button>
-            {host.available() && info()?.voice ? (
-              <Button
-                onPressDown={() => startVoice()}
-                onPressUp={() => { if (voiceState() === "rec" && Date.now() - recStartedAt >= 400) stopVoice(false); }}
-                onPress={() => { if (voiceState() === "rec" && Date.now() - recStartedAt >= 400) stopVoice(false); }}
-                class={`h-9 w-9 items-center justify-center rounded-full ${voiceState() === "rec" ? "bg-[#ff453a]" : "bg-[#2c2c2e]"} active:bg-[#48484a]`}
-                testID="voice" accessibilityLabel="按住说话">
-                <Icon src={micIcon} size={18} color={voiceState() === "rec" ? "#ffffff" : "#aeaeb2"} />
-              </Button>
-            ) : null}
-            <View class="h-9 flex-1 justify-center overflow-hidden rounded-[18px] bg-[#2c2c2e] px-3.5">
-              <Text class="text-[15px]" style={{ color: handle().color, numberOfLines: 1 }} testID="handle">{handle().text}</Text>
-              <Input ref={field} value={burst()} multiline submitBehavior="submit" returnKeyType="send" autoCapitalize="none" autoCorrect={false}
-                onChange={(e) => onInputChange(e.value)}
-                onCompositionChange={(e) => { composing.set(e.composing ? e.text : ""); line.compose(e.composing); sync(); }}
-                onKeyPress={(e) => { if (e.key === "Backspace") line.backspace(); }}
-                onSubmit={send} onFocus={() => focused.set(true)} onBlur={() => focused.set(false)}
-                class="absolute inset-0 text-[15px] opacity-[0.02]" testID="composer" accessibilityLabel="输入到终端" />
-            </View>
-            <Button onPress={() => { if (focused()) Keyboard.dismiss(); else field.focus(); }}
-              class={`h-9 px-2.5 items-center justify-center rounded-full ${focused() ? "bg-[#0a84ff]" : "bg-[#2c2c2e]"}`}
-              testID="kbd-toggle" accessibilityLabel="切换键盘">
-              <Text class="text-[13px] font-medium text-[#f2f2f7]">{focused() ? "收起" : "键盘"}</Text>
+            <Button
+              disabled={voiceState() === "busy"}
+              onPressDown={() => startVoice()}
+              onPressUp={() => { if (voiceState() === "rec") stopVoice(false); }}
+              onPress={() => { if (voiceState() === "rec" && Date.now() - recStartedAt >= 400) stopVoice(false); }}
+              class={`h-10 flex-1 items-center justify-center rounded-[20px] ${voiceState() === "rec" ? "bg-[#0a84ff]" : "bg-[#2c2c2e]"} active:bg-[#48484a] ${voiceState() === "busy" ? "opacity-60" : ""}`}
+              testID="voice"
+              accessibilityLabel="按住说话"
+            >
+              <Text class={`text-[15.5px] font-semibold tracking-[0.02em] ${voiceState() === "rec" ? "text-white" : voiceOk() ? "text-[#f2f2f7]" : "text-[#8d8d93]"}`}>
+                {voiceState() === "rec" ? "松开 输入" : voiceState() === "busy" ? "识别中…" : "按住 说话"}
+              </Text>
             </Button>
-            <Button onPress={send} class={`h-9 w-9 items-center justify-center rounded-full ${pending() ? "bg-[#3a3a3c]" : "bg-[#0a84ff]"}`} testID="send" accessibilityLabel="回车">
-              <Icon src={arrowUp} size={18} color="#ffffff" />
+            <Button
+              onPress={() => { if (focused()) Keyboard.dismiss(); else field.focus(); }}
+              class={`h-10 w-10 items-center justify-center rounded-full ${focused() ? "bg-[#f2f2f7]" : "bg-[#2c2c2e]"} active:bg-[#48484a]`}
+              testID="kbd-toggle"
+              accessibilityLabel="键盘"
+            >
+              <Icon src={kbdIcon} size={22} color={focused() ? "#1c1c1e" : "#aeaeb2"} />
             </Button>
+            {/* Invisible focusable input field (matches .term-keys in app/src/app.css) */}
+            <Input
+              ref={field}
+              value={burst()}
+              multiline
+              submitBehavior="submit"
+              returnKeyType="send"
+              autoCapitalize="none"
+              autoCorrect={false}
+              onChange={(e) => onInputChange(e.value)}
+              onCompositionChange={(e) => { composing.set(e.composing ? e.text : ""); line.compose(e.composing); sync(); }}
+              onKeyPress={(e) => { if (e.key === "Backspace") line.backspace(); }}
+              onSubmit={send}
+              onFocus={() => focused.set(true)}
+              onBlur={() => focused.set(false)}
+              class="pointer-events-none absolute left-1/2 bottom-0 h-px w-px opacity-0"
+              testID="composer"
+              accessibilityLabel="输入到终端"
+            />
           </View>
         </View>
       </View>
