@@ -190,7 +190,7 @@ function PairScreen() {
       <If when={sas()} else={
         <View class="gap-4 py-6">
           <View class="items-center gap-2 py-2">
-            <View class="h-20 w-20 overflow-hidden rounded-[22px] bg-[#161616]">
+            <View class="h-20 w-20 overflow-hidden rounded-[22px] bg-[#f1f4f5]">
               <Image src={herdrIcon} style={{ width: 80, height: 80 }} />
             </View>
             <Text class="mt-1 text-[24px] font-semibold text-foreground">herdr 远程</Text>
@@ -264,7 +264,7 @@ function PairScreen() {
       }>
         {(code) => (
           <View class="items-center gap-4 py-8">
-            <View class="h-16 w-16 overflow-hidden rounded-[18px] bg-[#161616]">
+            <View class="h-16 w-16 overflow-hidden rounded-[18px] bg-[#f1f4f5]">
               <Image src={herdrIcon} style={{ width: 64, height: 64 }} />
             </View>
             <Text class="text-[24px] font-semibold text-foreground">在 Mac 上确认</Text>
@@ -477,7 +477,7 @@ function HomeScreen() {
           class="flex-row items-center gap-3 rounded-[20px] bg-card px-4 py-3 active:bg-secondary"
           testID="settings"
         >
-          <View class="h-10 w-10 overflow-hidden rounded-[12px] bg-[#16171a]">
+          <View class="h-10 w-10 overflow-hidden rounded-[12px] bg-[#f1f4f5]">
             <Image src={herdrIcon} style={{ width: 40, height: 40 }} />
           </View>
           <View class="flex-1 gap-0.5">
