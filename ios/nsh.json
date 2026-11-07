@@ -1,6 +1,6 @@
 {
-  "name": "herdr 远程",
-  "id": "com.example.herdr",
+  "name": "Herdr",
+  "id": "com.roacherm.herdr",
   "version": "1.0.0",
   "build": 1,
   "theme": "theme.json",

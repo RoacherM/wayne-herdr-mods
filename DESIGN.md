@@ -482,7 +482,15 @@ A 部分在 `HC_SESSION=relay-probe` 的独立 core 里自己开一个 `/bin/sh`
 
 ## 原生 App（nsh）：评估 + 第 0 步原型（`ios/`）
 
-> 2026-11-06 改：新的方向见 [docs/native-app.html](docs/native-app.html)（I-004）。
+> **2026-11-07 改：做 nsh 原生 App（用户决定）。** 起因：iOS 网页里键盘的问题只能绕（见「键盘弹出和收起」），薄壳 App 用的也是同一个 WebKit，绕不开。原生 App 里键盘、输入行、键盘栏、语音按钮都是原生控件，网页视图只负责画终端、从不拿焦点。
+> - 账号：只用免费 Apple 账号，不上架，不做推送。App 每 7 天要从 Mac 重装（`ios/host/install.sh`）。通知仍走主屏幕 Web App 的 Web Push。
+> - 终端画面：先用 WebView 里的 xterm.js（换 WebGL 渲染），接口保持窄（原生 → 页面 `size/out/reset`，页面 → 原生 `ready/ack/input`），以后真不够顺再换原生组件。依据：手机实测画一个字中位数 8 ms、p95 25 ms，滑动帧间隔中位数 18 ms，慢的是网络（打开终端中位数 1.6 秒）。
+> - 语音：继续经 Mac 用火山（热词、拼写还原），录音由 Swift 宿主做。
+> - 多台 Mac：做进原生 App，网页版不加。
+> - 结构：`ios/App.tsx`（nsh 界面）+ `ios/host/`（Swift 宿主：xcodegen 工程，链接 `NativeShell.xcframework`，`NshAppView.loadBundle` 运行 `nsh build` 的产物；`handle(name)` 给 App 调录音、扫码）。
+> - 第 0 步进度（2026-11-07，nsh 0.4.0 `e626a8d`，Xcode 26，iOS 27 模拟器）：原型在 0.4.0 上类型检查、打包都过；无界面测试能配对、列终端（唯一失败是一条过时的工作区名断言）。Swift 宿主在模拟器里启动并显示配对页。iOS 27 要求 App 用 scene 生命周期，没有就在启动时停掉（`UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`）。装真机卡在 Xcode 没登录 Apple ID（`No Accounts`）。
+>
+> 2026-11-06 的方向（已被上面替代）见 [docs/native-app.html](docs/native-app.html)（I-004）：
 > - 推送：设备一直「推送关」，因为手机页只在 Chrome 标签页里用（7 天 1790 条指标全是 `standalone: false`）。iOS 只给主屏幕 Web App 推送。先用主屏幕 Web App + 现有 Web Push（0 元）。
 > - App：免费 Apple 账号不能推送、7 天失效，不做。要做就付费，做「薄壳」：WKWebView 跑现在的手机页，Swift 只管 APNs、锁屏按钮、Face ID、钥匙串。不再用 nsh 重写界面。
 > - 下面是 2026-11-02 的评估和原型记录，留作参考。

@@ -1,7 +1,7 @@
 ---
 id: I-004
-title: 手机主动推送与独立 App（第 0 步主屏幕 Web App → 薄壳 App + APNs）
-status: needs-decision
+title: nsh 原生 Herdr iOS App（免费账号，不上架）
+status: in-progress
 priority: P1
 subsystem: DESIGN.md
 repo: self
@@ -10,7 +10,12 @@ files:
   - host/push.js
   - host/phones.js
   - relay/public/sw.js
+  - ios/App.tsx
+  - ios/host/
 ---
+
+## 2026-11-07 决定
+用户决定做 nsh 原生 App，只用免费账号、不上架、不做推送。终端先用 WebView 里的 xterm.js，语音继续走火山，多台 Mac 做进 App。详情和进度见 DESIGN.md「原生 App（nsh）」开头。下面 11-06 的推荐（薄壳 + APNs）已被替代。
 
 ## 背景
 用户 2026-11-06 说交互已经够好，痛点是：1. agent 完成或要授权时收不到推送；2. 依赖浏览器，想要独立 App。没有 Apple 付费账号，必要时可以开。

@@ -17,7 +17,12 @@ Agent 自动处理规则：只认领 `Ready` 栏的条目；修完用 `git commi
 |---|---|---|---|
 | [I-002](I-002-phone-herdr-actions.md) | 手机与 Herdr 对齐 | 手机端写操作白名单范围（新建带任务的 Agent、关标签/结束终端、改 Mac 提示音） | 见卡片内 3 项拍板清单 |
 | [I-003](I-003-mac-to-mac-via-tunnel.md) | 多设备同步 | 是否启动 `wayne-herdr-mods via` 让另一台 Mac 的 Herdr.app 经加密中继挂载本机工作区 | 需要跨 Mac 协同操作同一套终端时再启动 |
-| [I-004](I-004-ios-native-app.md) | 手机推送与独立 App | 先做第 0 步（主屏幕 Web App 推送，0 元），一周后是否开 $99 账号做薄壳 App + APNs + 锁屏回答 | 推荐先第 0 步；设计见 [docs/native-app.html](../native-app.html) |
+
+## 2.5 In Progress
+
+| ID | 领域 | 标题 | 现状 |
+|---|---|---|---|
+| [I-004](I-004-ios-native-app.md) | 独立 App | nsh 原生 Herdr iOS App（免费账号，不上架） | 第 0 步：模拟器能跑；真机等 Xcode 登录 Apple ID |
 
 ## 3. External Blocked / Ops Approval（跨仓阻塞或需本机配置授权）
 

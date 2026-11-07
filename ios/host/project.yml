@@ -1,0 +1,40 @@
+# The native Herdr app for iPhone: a Swift host that runs the nsh app (ios/App.tsx) and gives it
+# what nsh lacks (recording, the camera). Build and install: ios/host/install.sh
+name: Herdr
+options:
+  deploymentTarget: { iOS: "17.0" }
+settings:
+  base:
+    DEVELOPMENT_TEAM: ${TEAM}
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: 1
+    SWIFT_VERSION: "5.0"
+    TARGETED_DEVICE_FAMILY: "1"
+targets:
+  Herdr:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+      - path: nsh          # `nsh build --out nsh`: the app's bytecode and assets, as a folder
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - framework: Frameworks/NativeShell.xcframework   # copied from ~/.nsh/embed/ios by install.sh
+        embed: false                                   # a static framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ${BUNDLE_ID}
+        PRODUCT_NAME: Herdr
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Herdr
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: 按住说话时录音，转成文字输入到终端。
+        INFOPLIST_KEY_NSCameraUsageDescription: 扫描 Mac 上的配对二维码。
+    info:
+      path: Sources/Info.plist
+      properties:
+        CADisableMinimumFrameDurationOnPhone: true     # 120 Hz on ProMotion iPhones
+        UIApplicationSceneManifest: { UIApplicationSupportsMultipleScenes: false }
