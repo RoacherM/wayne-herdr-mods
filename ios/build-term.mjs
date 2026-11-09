@@ -79,7 +79,8 @@ for (const [key, svg] of Object.entries(BUILTIN_SVGS)) {
   allKeys.set(key, { svg, tint: !NO_TINT.has(key) });
 }
 
-const herdrIconsDir = join(homedir(), '.config/herdr-app/icons');
+const herdrAppHome = join(homedir(), '.config/herdr-app');
+const herdrIconsDir = join(herdrAppHome, 'icons');
 if (existsSync(herdrIconsDir)) {
   for (const file of readdirSync(herdrIconsDir)) {
     if (!file.endsWith('.svg')) continue;
@@ -88,6 +89,24 @@ if (existsSync(herdrIconsDir)) {
     const svg = readFileSync(join(herdrIconsDir, file), 'utf8');
     allKeys.set(key, { svg, tint: !NO_TINT.has(key) });
   }
+}
+
+// programs.json gives agents Herdr knows only by extension (devin, droid, dim): register each
+// entry's icon under its key and every `match` name so a raw program-name lookup also hits.
+const programsPath = [join(herdrAppHome, 'programs.json'), join(here, '../herdr-app/programs.json')].find(existsSync);
+if (programsPath) {
+  try {
+    const { programs = {} } = JSON.parse(readFileSync(programsPath, 'utf8'));
+    for (const [key, entry] of Object.entries(programs)) {
+      if (!entry.icon) continue;
+      const iconPath = [join(herdrAppHome, entry.icon), join(here, '../herdr-app', entry.icon)].find(existsSync);
+      if (!iconPath) continue;
+      const svg = readFileSync(iconPath, 'utf8');
+      for (const name of [key, ...(entry.match ?? [])]) {
+        if (!allKeys.has(name)) allKeys.set(name, { svg, tint: entry.tint !== false });
+      }
+    }
+  } catch { /* a broken programs.json must not break the icon build */ }
 }
 
 const sortedKeys = [...allKeys.keys()].sort();

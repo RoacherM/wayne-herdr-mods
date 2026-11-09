@@ -172,7 +172,7 @@ iPhone 浏览器 / PWA ──wss /v1/client/<id>──▶ Cloudflare Worker + DO
 - 宿主（`host/terminals.js`）读这个文件（按修改时间缓存，`watchFile` 2 秒一查，变了就推给手机）：终端的图标 key 用 Herdr 的答案，图标文件和着色也用 Herdr 的；手机已经会用宿主发来的 `icons`。
 - Herdr 没开、或者答案还没写到时退回旧做法：agent 报告的 `app` 或前台程序名，经 `ALIASES` 和 Herdr 自带 `new-menu` 缓存的 agent 表（`shared("new-menu.agents")` 的 `run` → `key`，`tint`）换成 key，再找 `icons/<key>.svg`。
 - 前台是 shell 时一律是 shell 图标，不管 Herdr 上次怎么说（见上面「agent 退出后的图标」）。
-- Herdr 不认识的 agent（例如 droid，2026-11-06）Herdr 自己也只显示通用的 agent 图标，手机一样。要专门的图标，在 `~/.config/herdr-app/programs.json` 里加一项（Herdr 自己的扩展点），手机自动跟上。试过不做：从 LobeHub 图标库自动下载——droid、factory 都没有（2026-11-06 unpkg `@lobehub/icons-static-svg` 404），还要联网、要改用户的 Herdr 配置。
+- Herdr 不认识的 agent（droid、devin、dim，2026-11-09）走 Herdr 自己的扩展点 `programs.json`：仓库带 `herdr-app/programs.json` 和 `herdr-app/agent-icons/`，`install` 把我们的 key 合并进用户的 `programs.json`（用户自己的项和其它字段不动；文件不是合法 JSON 就原样留着，stderr 提醒一次）。图标来自 ACP agent registry（`https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json`，2026-11-09；LobeHub 没有 droid、factory、dimcode，2026-11-06 unpkg `@lobehub/icons-static-svg` 404）。`run` 还让它们进 Herdr 的「+」菜单。Herdr 认了 key 后，侧栏、标签栏、手机和 iOS 都自动跟上。加新 agent：把它的 ACP svg 放进 `herdr-app/agent-icons/`、`programs.json` 加一项，`install` 后再跑 `node ios/build-term.mjs`。
 - 终端页顶栏中间显示这个图标，不再显示 agent 的名字（名字只给读屏，`aria-label`）。图标 key 变了才换（列表刷新很频繁）。测法：`dev/fake-desktop.mjs` + 无头 iPhone 打开 claude 和 zsh 终端，顶栏分别是 Claude 图标和终端图标（2026-11-06）。
 
 ## 地址和域名

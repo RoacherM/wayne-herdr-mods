@@ -18,3 +18,15 @@ export function readHerdrFiles(root) {
   walk(root);
   return out;
 }
+
+// Merge our programs.json entries into the user's: ours own their keys, the rest is untouched
+// (DESIGN.md「图标跟着 Herdr.app」). Returns the new file text, or null when nothing should be
+// written — no file handled by the caller, invalid JSON (never clobber), or no change.
+export function mergePrograms(currentText, ours) {
+  if (currentText == null) return `${JSON.stringify({ programs: ours.programs }, null, 2)}\n`;
+  let current;
+  try { current = JSON.parse(currentText); } catch { return null; }
+  const merged = { ...current, programs: { ...(current.programs ?? {}), ...ours.programs } };
+  if (JSON.stringify(merged) === JSON.stringify(current)) return null;
+  return `${JSON.stringify(merged, null, 2)}\n`;
+}

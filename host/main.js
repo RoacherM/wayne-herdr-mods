@@ -20,7 +20,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import QRCode from 'qrcode';
 import { controlCall, DEFAULT_RELAY, startService, VOICE_TEST, voiceWords } from './service.js';
-import { readHerdrFiles } from './herdr-files.js';
+import { mergePrograms, readHerdrFiles } from './herdr-files.js';
 import { createMetricsStore, summarize } from './metrics.js';
 import { renderReport } from './metrics-report.js';
 import { defaultDataDir } from './state.js';
@@ -77,10 +77,21 @@ function installMod() {
   const files = herdrFiles();
   // Only what changed: writing a mod's file reloads it in Herdr.app.
   for (const [rel, text] of Object.entries(files)) {
+    if (rel === 'programs.json') continue; // merged below, never overwritten
     const p = join(appDir, rel);
     if (existsSync(p) && readFileSync(p, 'utf8') === text) continue;
     mkdirSync(dirname(p), { recursive: true });
     writeFileSync(p, text);
+  }
+  // programs.json is the user's file too: our keys go in, theirs stay (DESIGN.md「图标跟着 Herdr.app」).
+  if (files['programs.json']) {
+    const p = join(appDir, 'programs.json');
+    const current = existsSync(p) ? readFileSync(p, 'utf8') : null;
+    const merged = mergePrograms(current, JSON.parse(files['programs.json']));
+    if (merged !== null) writeFileSync(p, merged);
+    else if (current !== null) {
+      try { JSON.parse(current); } catch { console.error(`wayne-herdr-mods: ${p} is not valid JSON — left as is`); }
+    }
   }
   return appDir;
 }

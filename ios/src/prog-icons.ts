@@ -22,107 +22,111 @@ import ico_18_curl from "../assets/icons/curl.svg";
 import ico_19_cursor from "../assets/icons/cursor.svg";
 import ico_20_dart from "../assets/icons/dart.svg";
 import ico_21_deno from "../assets/icons/deno.svg";
-import ico_22_django_admin from "../assets/icons/django-admin.svg";
-import ico_23_dnf from "../assets/icons/dnf.svg";
-import ico_24_docker from "../assets/icons/docker.svg";
-import ico_25_dotnet from "../assets/icons/dotnet.svg";
-import ico_26_dsh_tui from "../assets/icons/dsh-tui.svg";
-import ico_27_electron from "../assets/icons/electron.svg";
-import ico_28_emacs from "../assets/icons/emacs.svg";
-import ico_29_epi from "../assets/icons/epi.svg";
-import ico_30_erl from "../assets/icons/erl.svg";
-import ico_31_esbuild from "../assets/icons/esbuild.svg";
-import ico_32_eslint from "../assets/icons/eslint.svg";
-import ico_33_expo from "../assets/icons/expo.svg";
-import ico_34_fastapi from "../assets/icons/fastapi.svg";
-import ico_35_ffmpeg from "../assets/icons/ffmpeg.svg";
-import ico_36_flask from "../assets/icons/flask.svg";
-import ico_37_flutter from "../assets/icons/flutter.svg";
-import ico_38_fly from "../assets/icons/fly.svg";
-import ico_39_gcloud from "../assets/icons/gcloud.svg";
-import ico_40_gemini from "../assets/icons/gemini.svg";
-import ico_41_gh from "../assets/icons/gh.svg";
-import ico_42_ghci from "../assets/icons/ghci.svg";
-import ico_43_git from "../assets/icons/git.svg";
-import ico_44_glab from "../assets/icons/glab.svg";
-import ico_45_go from "../assets/icons/go.svg";
-import ico_46_gradle from "../assets/icons/gradle.svg";
-import ico_47_grok from "../assets/icons/grok.svg";
-import ico_48_helm from "../assets/icons/helm.svg";
-import ico_49_hermes from "../assets/icons/hermes.svg";
-import ico_50_htop from "../assets/icons/htop.svg";
-import ico_51_hx from "../assets/icons/hx.svg";
-import ico_52_iex from "../assets/icons/iex.svg";
-import ico_53_java from "../assets/icons/java.svg";
-import ico_54_jest from "../assets/icons/jest.svg";
-import ico_55_julia from "../assets/icons/julia.svg";
-import ico_56_jupyter from "../assets/icons/jupyter.svg";
-import ico_57_kimi from "../assets/icons/kimi.svg";
-import ico_58_kiro from "../assets/icons/kiro.svg";
-import ico_59_kotlin from "../assets/icons/kotlin.svg";
-import ico_60_kubectl from "../assets/icons/kubectl.svg";
-import ico_61_lazygit from "../assets/icons/lazygit.svg";
-import ico_62_less from "../assets/icons/less.svg";
-import ico_63_lua from "../assets/icons/lua.svg";
-import ico_64_make from "../assets/icons/make.svg";
-import ico_65_mastracode from "../assets/icons/mastracode.svg";
-import ico_66_mongosh from "../assets/icons/mongosh.svg";
-import ico_67_muse from "../assets/icons/muse.svg";
-import ico_68_mvn from "../assets/icons/mvn.svg";
-import ico_69_mysql from "../assets/icons/mysql.svg";
-import ico_70_nano from "../assets/icons/nano.svg";
-import ico_71_netlify from "../assets/icons/netlify.svg";
-import ico_72_next from "../assets/icons/next.svg";
-import ico_73_nginx from "../assets/icons/nginx.svg";
-import ico_74_nix from "../assets/icons/nix.svg";
-import ico_75_node from "../assets/icons/node.svg";
-import ico_76_npm from "../assets/icons/npm.svg";
-import ico_77_nuxt from "../assets/icons/nuxt.svg";
-import ico_78_nvim from "../assets/icons/nvim.svg";
-import ico_79_ocaml from "../assets/icons/ocaml.svg";
-import ico_80_ollama from "../assets/icons/ollama.svg";
-import ico_81_opencode from "../assets/icons/opencode.svg";
-import ico_82_pacman from "../assets/icons/pacman.svg";
-import ico_83_perl from "../assets/icons/perl.svg";
-import ico_84_php from "../assets/icons/php.svg";
-import ico_85_pi from "../assets/icons/pi.svg";
-import ico_86_pig from "../assets/icons/pig.svg";
-import ico_87_pnpm from "../assets/icons/pnpm.svg";
-import ico_88_podman from "../assets/icons/podman.svg";
-import ico_89_poetry from "../assets/icons/poetry.svg";
-import ico_90_prettier from "../assets/icons/prettier.svg";
-import ico_91_prime_agent from "../assets/icons/prime-agent.svg";
-import ico_92_prisma from "../assets/icons/prisma.svg";
-import ico_93_program from "../assets/icons/program.svg";
-import ico_94_psql from "../assets/icons/psql.svg";
-import ico_95_pytest from "../assets/icons/pytest.svg";
-import ico_96_python from "../assets/icons/python.svg";
-import ico_97_qoder from "../assets/icons/qoder.svg";
-import ico_98_r from "../assets/icons/r.svg";
-import ico_99_redis_cli from "../assets/icons/redis-cli.svg";
-import ico_100_rg from "../assets/icons/rg.svg";
-import ico_101_ruby from "../assets/icons/ruby.svg";
-import ico_102_ruff from "../assets/icons/ruff.svg";
-import ico_103_scala from "../assets/icons/scala.svg";
-import ico_104_shell from "../assets/icons/shell.svg";
-import ico_105_sqlite3 from "../assets/icons/sqlite3.svg";
-import ico_106_ssh from "../assets/icons/ssh.svg";
-import ico_107_supabase from "../assets/icons/supabase.svg";
-import ico_108_swift from "../assets/icons/swift.svg";
-import ico_109_tauri from "../assets/icons/tauri.svg";
-import ico_110_terraform from "../assets/icons/terraform.svg";
-import ico_111_tmux from "../assets/icons/tmux.svg";
-import ico_112_tsc from "../assets/icons/tsc.svg";
-import ico_113_turbo from "../assets/icons/turbo.svg";
-import ico_114_uv from "../assets/icons/uv.svg";
-import ico_115_vercel from "../assets/icons/vercel.svg";
-import ico_116_vim from "../assets/icons/vim.svg";
-import ico_117_vite from "../assets/icons/vite.svg";
-import ico_118_vitest from "../assets/icons/vitest.svg";
-import ico_119_webpack from "../assets/icons/webpack.svg";
-import ico_120_wrangler from "../assets/icons/wrangler.svg";
-import ico_121_yarn from "../assets/icons/yarn.svg";
-import ico_122_zig from "../assets/icons/zig.svg";
+import ico_22_devin from "../assets/icons/devin.svg";
+import ico_23_dim from "../assets/icons/dim.svg";
+import ico_24_dimcode from "../assets/icons/dimcode.svg";
+import ico_25_django_admin from "../assets/icons/django-admin.svg";
+import ico_26_dnf from "../assets/icons/dnf.svg";
+import ico_27_docker from "../assets/icons/docker.svg";
+import ico_28_dotnet from "../assets/icons/dotnet.svg";
+import ico_29_droid from "../assets/icons/droid.svg";
+import ico_30_dsh_tui from "../assets/icons/dsh-tui.svg";
+import ico_31_electron from "../assets/icons/electron.svg";
+import ico_32_emacs from "../assets/icons/emacs.svg";
+import ico_33_epi from "../assets/icons/epi.svg";
+import ico_34_erl from "../assets/icons/erl.svg";
+import ico_35_esbuild from "../assets/icons/esbuild.svg";
+import ico_36_eslint from "../assets/icons/eslint.svg";
+import ico_37_expo from "../assets/icons/expo.svg";
+import ico_38_fastapi from "../assets/icons/fastapi.svg";
+import ico_39_ffmpeg from "../assets/icons/ffmpeg.svg";
+import ico_40_flask from "../assets/icons/flask.svg";
+import ico_41_flutter from "../assets/icons/flutter.svg";
+import ico_42_fly from "../assets/icons/fly.svg";
+import ico_43_gcloud from "../assets/icons/gcloud.svg";
+import ico_44_gemini from "../assets/icons/gemini.svg";
+import ico_45_gh from "../assets/icons/gh.svg";
+import ico_46_ghci from "../assets/icons/ghci.svg";
+import ico_47_git from "../assets/icons/git.svg";
+import ico_48_glab from "../assets/icons/glab.svg";
+import ico_49_go from "../assets/icons/go.svg";
+import ico_50_gradle from "../assets/icons/gradle.svg";
+import ico_51_grok from "../assets/icons/grok.svg";
+import ico_52_helm from "../assets/icons/helm.svg";
+import ico_53_hermes from "../assets/icons/hermes.svg";
+import ico_54_htop from "../assets/icons/htop.svg";
+import ico_55_hx from "../assets/icons/hx.svg";
+import ico_56_iex from "../assets/icons/iex.svg";
+import ico_57_java from "../assets/icons/java.svg";
+import ico_58_jest from "../assets/icons/jest.svg";
+import ico_59_julia from "../assets/icons/julia.svg";
+import ico_60_jupyter from "../assets/icons/jupyter.svg";
+import ico_61_kimi from "../assets/icons/kimi.svg";
+import ico_62_kiro from "../assets/icons/kiro.svg";
+import ico_63_kotlin from "../assets/icons/kotlin.svg";
+import ico_64_kubectl from "../assets/icons/kubectl.svg";
+import ico_65_lazygit from "../assets/icons/lazygit.svg";
+import ico_66_less from "../assets/icons/less.svg";
+import ico_67_lua from "../assets/icons/lua.svg";
+import ico_68_make from "../assets/icons/make.svg";
+import ico_69_mastracode from "../assets/icons/mastracode.svg";
+import ico_70_mongosh from "../assets/icons/mongosh.svg";
+import ico_71_muse from "../assets/icons/muse.svg";
+import ico_72_mvn from "../assets/icons/mvn.svg";
+import ico_73_mysql from "../assets/icons/mysql.svg";
+import ico_74_nano from "../assets/icons/nano.svg";
+import ico_75_netlify from "../assets/icons/netlify.svg";
+import ico_76_next from "../assets/icons/next.svg";
+import ico_77_nginx from "../assets/icons/nginx.svg";
+import ico_78_nix from "../assets/icons/nix.svg";
+import ico_79_node from "../assets/icons/node.svg";
+import ico_80_npm from "../assets/icons/npm.svg";
+import ico_81_nuxt from "../assets/icons/nuxt.svg";
+import ico_82_nvim from "../assets/icons/nvim.svg";
+import ico_83_ocaml from "../assets/icons/ocaml.svg";
+import ico_84_ollama from "../assets/icons/ollama.svg";
+import ico_85_opencode from "../assets/icons/opencode.svg";
+import ico_86_pacman from "../assets/icons/pacman.svg";
+import ico_87_perl from "../assets/icons/perl.svg";
+import ico_88_php from "../assets/icons/php.svg";
+import ico_89_pi from "../assets/icons/pi.svg";
+import ico_90_pig from "../assets/icons/pig.svg";
+import ico_91_pnpm from "../assets/icons/pnpm.svg";
+import ico_92_podman from "../assets/icons/podman.svg";
+import ico_93_poetry from "../assets/icons/poetry.svg";
+import ico_94_prettier from "../assets/icons/prettier.svg";
+import ico_95_prime_agent from "../assets/icons/prime-agent.svg";
+import ico_96_prisma from "../assets/icons/prisma.svg";
+import ico_97_program from "../assets/icons/program.svg";
+import ico_98_psql from "../assets/icons/psql.svg";
+import ico_99_pytest from "../assets/icons/pytest.svg";
+import ico_100_python from "../assets/icons/python.svg";
+import ico_101_qoder from "../assets/icons/qoder.svg";
+import ico_102_r from "../assets/icons/r.svg";
+import ico_103_redis_cli from "../assets/icons/redis-cli.svg";
+import ico_104_rg from "../assets/icons/rg.svg";
+import ico_105_ruby from "../assets/icons/ruby.svg";
+import ico_106_ruff from "../assets/icons/ruff.svg";
+import ico_107_scala from "../assets/icons/scala.svg";
+import ico_108_shell from "../assets/icons/shell.svg";
+import ico_109_sqlite3 from "../assets/icons/sqlite3.svg";
+import ico_110_ssh from "../assets/icons/ssh.svg";
+import ico_111_supabase from "../assets/icons/supabase.svg";
+import ico_112_swift from "../assets/icons/swift.svg";
+import ico_113_tauri from "../assets/icons/tauri.svg";
+import ico_114_terraform from "../assets/icons/terraform.svg";
+import ico_115_tmux from "../assets/icons/tmux.svg";
+import ico_116_tsc from "../assets/icons/tsc.svg";
+import ico_117_turbo from "../assets/icons/turbo.svg";
+import ico_118_uv from "../assets/icons/uv.svg";
+import ico_119_vercel from "../assets/icons/vercel.svg";
+import ico_120_vim from "../assets/icons/vim.svg";
+import ico_121_vite from "../assets/icons/vite.svg";
+import ico_122_vitest from "../assets/icons/vitest.svg";
+import ico_123_webpack from "../assets/icons/webpack.svg";
+import ico_124_wrangler from "../assets/icons/wrangler.svg";
+import ico_125_yarn from "../assets/icons/yarn.svg";
+import ico_126_zig from "../assets/icons/zig.svg";
 
 export const PROG_ICONS: Record<string, { src: ImageAsset; tint: boolean }> = {
   "agent": { src: ico_0_agent, tint: true },
@@ -147,105 +151,109 @@ export const PROG_ICONS: Record<string, { src: ImageAsset; tint: boolean }> = {
   "cursor": { src: ico_19_cursor, tint: true },
   "dart": { src: ico_20_dart, tint: true },
   "deno": { src: ico_21_deno, tint: true },
-  "django-admin": { src: ico_22_django_admin, tint: true },
-  "dnf": { src: ico_23_dnf, tint: true },
-  "docker": { src: ico_24_docker, tint: true },
-  "dotnet": { src: ico_25_dotnet, tint: true },
-  "dsh-tui": { src: ico_26_dsh_tui, tint: true },
-  "electron": { src: ico_27_electron, tint: true },
-  "emacs": { src: ico_28_emacs, tint: true },
-  "epi": { src: ico_29_epi, tint: false },
-  "erl": { src: ico_30_erl, tint: true },
-  "esbuild": { src: ico_31_esbuild, tint: true },
-  "eslint": { src: ico_32_eslint, tint: true },
-  "expo": { src: ico_33_expo, tint: true },
-  "fastapi": { src: ico_34_fastapi, tint: true },
-  "ffmpeg": { src: ico_35_ffmpeg, tint: true },
-  "flask": { src: ico_36_flask, tint: true },
-  "flutter": { src: ico_37_flutter, tint: true },
-  "fly": { src: ico_38_fly, tint: true },
-  "gcloud": { src: ico_39_gcloud, tint: true },
-  "gemini": { src: ico_40_gemini, tint: true },
-  "gh": { src: ico_41_gh, tint: true },
-  "ghci": { src: ico_42_ghci, tint: true },
-  "git": { src: ico_43_git, tint: true },
-  "glab": { src: ico_44_glab, tint: true },
-  "go": { src: ico_45_go, tint: true },
-  "gradle": { src: ico_46_gradle, tint: true },
-  "grok": { src: ico_47_grok, tint: true },
-  "helm": { src: ico_48_helm, tint: true },
-  "hermes": { src: ico_49_hermes, tint: true },
-  "htop": { src: ico_50_htop, tint: true },
-  "hx": { src: ico_51_hx, tint: true },
-  "iex": { src: ico_52_iex, tint: true },
-  "java": { src: ico_53_java, tint: true },
-  "jest": { src: ico_54_jest, tint: true },
-  "julia": { src: ico_55_julia, tint: true },
-  "jupyter": { src: ico_56_jupyter, tint: true },
-  "kimi": { src: ico_57_kimi, tint: false },
-  "kiro": { src: ico_58_kiro, tint: false },
-  "kotlin": { src: ico_59_kotlin, tint: true },
-  "kubectl": { src: ico_60_kubectl, tint: true },
-  "lazygit": { src: ico_61_lazygit, tint: true },
-  "less": { src: ico_62_less, tint: true },
-  "lua": { src: ico_63_lua, tint: true },
-  "make": { src: ico_64_make, tint: true },
-  "mastracode": { src: ico_65_mastracode, tint: true },
-  "mongosh": { src: ico_66_mongosh, tint: true },
-  "muse": { src: ico_67_muse, tint: true },
-  "mvn": { src: ico_68_mvn, tint: true },
-  "mysql": { src: ico_69_mysql, tint: true },
-  "nano": { src: ico_70_nano, tint: true },
-  "netlify": { src: ico_71_netlify, tint: true },
-  "next": { src: ico_72_next, tint: true },
-  "nginx": { src: ico_73_nginx, tint: true },
-  "nix": { src: ico_74_nix, tint: true },
-  "node": { src: ico_75_node, tint: true },
-  "npm": { src: ico_76_npm, tint: true },
-  "nuxt": { src: ico_77_nuxt, tint: true },
-  "nvim": { src: ico_78_nvim, tint: true },
-  "ocaml": { src: ico_79_ocaml, tint: true },
-  "ollama": { src: ico_80_ollama, tint: true },
-  "opencode": { src: ico_81_opencode, tint: true },
-  "pacman": { src: ico_82_pacman, tint: true },
-  "perl": { src: ico_83_perl, tint: true },
-  "php": { src: ico_84_php, tint: true },
-  "pi": { src: ico_85_pi, tint: true },
-  "pig": { src: ico_86_pig, tint: false },
-  "pnpm": { src: ico_87_pnpm, tint: true },
-  "podman": { src: ico_88_podman, tint: true },
-  "poetry": { src: ico_89_poetry, tint: true },
-  "prettier": { src: ico_90_prettier, tint: true },
-  "prime-agent": { src: ico_91_prime_agent, tint: true },
-  "prisma": { src: ico_92_prisma, tint: true },
-  "program": { src: ico_93_program, tint: true },
-  "psql": { src: ico_94_psql, tint: true },
-  "pytest": { src: ico_95_pytest, tint: true },
-  "python": { src: ico_96_python, tint: true },
-  "qoder": { src: ico_97_qoder, tint: true },
-  "r": { src: ico_98_r, tint: true },
-  "redis-cli": { src: ico_99_redis_cli, tint: true },
-  "rg": { src: ico_100_rg, tint: true },
-  "ruby": { src: ico_101_ruby, tint: true },
-  "ruff": { src: ico_102_ruff, tint: true },
-  "scala": { src: ico_103_scala, tint: true },
-  "shell": { src: ico_104_shell, tint: true },
-  "sqlite3": { src: ico_105_sqlite3, tint: true },
-  "ssh": { src: ico_106_ssh, tint: true },
-  "supabase": { src: ico_107_supabase, tint: true },
-  "swift": { src: ico_108_swift, tint: true },
-  "tauri": { src: ico_109_tauri, tint: true },
-  "terraform": { src: ico_110_terraform, tint: true },
-  "tmux": { src: ico_111_tmux, tint: true },
-  "tsc": { src: ico_112_tsc, tint: true },
-  "turbo": { src: ico_113_turbo, tint: true },
-  "uv": { src: ico_114_uv, tint: true },
-  "vercel": { src: ico_115_vercel, tint: true },
-  "vim": { src: ico_116_vim, tint: true },
-  "vite": { src: ico_117_vite, tint: true },
-  "vitest": { src: ico_118_vitest, tint: true },
-  "webpack": { src: ico_119_webpack, tint: true },
-  "wrangler": { src: ico_120_wrangler, tint: true },
-  "yarn": { src: ico_121_yarn, tint: true },
-  "zig": { src: ico_122_zig, tint: true },
+  "devin": { src: ico_22_devin, tint: true },
+  "dim": { src: ico_23_dim, tint: true },
+  "dimcode": { src: ico_24_dimcode, tint: true },
+  "django-admin": { src: ico_25_django_admin, tint: true },
+  "dnf": { src: ico_26_dnf, tint: true },
+  "docker": { src: ico_27_docker, tint: true },
+  "dotnet": { src: ico_28_dotnet, tint: true },
+  "droid": { src: ico_29_droid, tint: true },
+  "dsh-tui": { src: ico_30_dsh_tui, tint: true },
+  "electron": { src: ico_31_electron, tint: true },
+  "emacs": { src: ico_32_emacs, tint: true },
+  "epi": { src: ico_33_epi, tint: false },
+  "erl": { src: ico_34_erl, tint: true },
+  "esbuild": { src: ico_35_esbuild, tint: true },
+  "eslint": { src: ico_36_eslint, tint: true },
+  "expo": { src: ico_37_expo, tint: true },
+  "fastapi": { src: ico_38_fastapi, tint: true },
+  "ffmpeg": { src: ico_39_ffmpeg, tint: true },
+  "flask": { src: ico_40_flask, tint: true },
+  "flutter": { src: ico_41_flutter, tint: true },
+  "fly": { src: ico_42_fly, tint: true },
+  "gcloud": { src: ico_43_gcloud, tint: true },
+  "gemini": { src: ico_44_gemini, tint: true },
+  "gh": { src: ico_45_gh, tint: true },
+  "ghci": { src: ico_46_ghci, tint: true },
+  "git": { src: ico_47_git, tint: true },
+  "glab": { src: ico_48_glab, tint: true },
+  "go": { src: ico_49_go, tint: true },
+  "gradle": { src: ico_50_gradle, tint: true },
+  "grok": { src: ico_51_grok, tint: true },
+  "helm": { src: ico_52_helm, tint: true },
+  "hermes": { src: ico_53_hermes, tint: true },
+  "htop": { src: ico_54_htop, tint: true },
+  "hx": { src: ico_55_hx, tint: true },
+  "iex": { src: ico_56_iex, tint: true },
+  "java": { src: ico_57_java, tint: true },
+  "jest": { src: ico_58_jest, tint: true },
+  "julia": { src: ico_59_julia, tint: true },
+  "jupyter": { src: ico_60_jupyter, tint: true },
+  "kimi": { src: ico_61_kimi, tint: false },
+  "kiro": { src: ico_62_kiro, tint: false },
+  "kotlin": { src: ico_63_kotlin, tint: true },
+  "kubectl": { src: ico_64_kubectl, tint: true },
+  "lazygit": { src: ico_65_lazygit, tint: true },
+  "less": { src: ico_66_less, tint: true },
+  "lua": { src: ico_67_lua, tint: true },
+  "make": { src: ico_68_make, tint: true },
+  "mastracode": { src: ico_69_mastracode, tint: true },
+  "mongosh": { src: ico_70_mongosh, tint: true },
+  "muse": { src: ico_71_muse, tint: true },
+  "mvn": { src: ico_72_mvn, tint: true },
+  "mysql": { src: ico_73_mysql, tint: true },
+  "nano": { src: ico_74_nano, tint: true },
+  "netlify": { src: ico_75_netlify, tint: true },
+  "next": { src: ico_76_next, tint: true },
+  "nginx": { src: ico_77_nginx, tint: true },
+  "nix": { src: ico_78_nix, tint: true },
+  "node": { src: ico_79_node, tint: true },
+  "npm": { src: ico_80_npm, tint: true },
+  "nuxt": { src: ico_81_nuxt, tint: true },
+  "nvim": { src: ico_82_nvim, tint: true },
+  "ocaml": { src: ico_83_ocaml, tint: true },
+  "ollama": { src: ico_84_ollama, tint: true },
+  "opencode": { src: ico_85_opencode, tint: true },
+  "pacman": { src: ico_86_pacman, tint: true },
+  "perl": { src: ico_87_perl, tint: true },
+  "php": { src: ico_88_php, tint: true },
+  "pi": { src: ico_89_pi, tint: true },
+  "pig": { src: ico_90_pig, tint: false },
+  "pnpm": { src: ico_91_pnpm, tint: true },
+  "podman": { src: ico_92_podman, tint: true },
+  "poetry": { src: ico_93_poetry, tint: true },
+  "prettier": { src: ico_94_prettier, tint: true },
+  "prime-agent": { src: ico_95_prime_agent, tint: true },
+  "prisma": { src: ico_96_prisma, tint: true },
+  "program": { src: ico_97_program, tint: true },
+  "psql": { src: ico_98_psql, tint: true },
+  "pytest": { src: ico_99_pytest, tint: true },
+  "python": { src: ico_100_python, tint: true },
+  "qoder": { src: ico_101_qoder, tint: true },
+  "r": { src: ico_102_r, tint: true },
+  "redis-cli": { src: ico_103_redis_cli, tint: true },
+  "rg": { src: ico_104_rg, tint: true },
+  "ruby": { src: ico_105_ruby, tint: true },
+  "ruff": { src: ico_106_ruff, tint: true },
+  "scala": { src: ico_107_scala, tint: true },
+  "shell": { src: ico_108_shell, tint: true },
+  "sqlite3": { src: ico_109_sqlite3, tint: true },
+  "ssh": { src: ico_110_ssh, tint: true },
+  "supabase": { src: ico_111_supabase, tint: true },
+  "swift": { src: ico_112_swift, tint: true },
+  "tauri": { src: ico_113_tauri, tint: true },
+  "terraform": { src: ico_114_terraform, tint: true },
+  "tmux": { src: ico_115_tmux, tint: true },
+  "tsc": { src: ico_116_tsc, tint: true },
+  "turbo": { src: ico_117_turbo, tint: true },
+  "uv": { src: ico_118_uv, tint: true },
+  "vercel": { src: ico_119_vercel, tint: true },
+  "vim": { src: ico_120_vim, tint: true },
+  "vite": { src: ico_121_vite, tint: true },
+  "vitest": { src: ico_122_vitest, tint: true },
+  "webpack": { src: ico_123_webpack, tint: true },
+  "wrangler": { src: ico_124_wrangler, tint: true },
+  "yarn": { src: ico_125_yarn, tint: true },
+  "zig": { src: ico_126_zig, tint: true },
 };

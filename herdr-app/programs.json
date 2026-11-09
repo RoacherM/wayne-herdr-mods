@@ -1,0 +1,25 @@
+{
+  "programs": {
+    "devin": {
+      "name": "Devin",
+      "icon": "agent-icons/devin.svg",
+      "tint": true,
+      "match": ["devin"],
+      "run": ["devin"]
+    },
+    "droid": {
+      "name": "Droid",
+      "icon": "agent-icons/droid.svg",
+      "tint": true,
+      "match": ["droid"],
+      "run": ["droid"]
+    },
+    "dim": {
+      "name": "Dim",
+      "icon": "agent-icons/dim.svg",
+      "tint": true,
+      "match": ["dim", "dimcode"],
+      "run": ["dim"]
+    }
+  }
+}
