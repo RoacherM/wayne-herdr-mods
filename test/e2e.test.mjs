@@ -88,3 +88,52 @@ test('phone hub tolerates stale pre-handshake frames and re-handshake on same ci
   assert.equal(c2.open(sent[1].text).type, 'ready');
   assert.equal(closed.length, 0);
 });
+
+test('re-hello while a pairing ask waits ends it: the new key is never trusted', async () => {
+  const D = newBoxKeys(), P1 = newBoxKeys(), P2 = newBoxKeys();
+  const sent = [];
+  const closed = [];
+  const dropped = [];
+  const added = [];
+  let resolveAsk;
+  const phones = createPhones({
+    state: {
+      boxKeys: D,
+      desktopName: 'Mac',
+      deviceByKey: () => null,
+      addDevice: async (d) => { added.push(d); return { id: 'dev-new', ...d }; },
+      updateDevice: async () => {},
+    },
+    pairing: {
+      ask: () => new Promise((resolve) => { resolveAsk = resolve; }),
+      dropped: (cid) => dropped.push(cid),
+    },
+    push: { publicKey: 'vapid' },
+    terminals: { list: async () => ({ core: 'online', terminals: [], spaces: [] }) },
+    link: () => ({
+      send: (cid, text) => sent.push({ cid, text }),
+      close: (cid, code) => closed.push({ cid, code }),
+    }),
+  });
+
+  phones.open('c1');
+  const hs1 = phoneHandshake(P1, D.publicKey);
+  await phones.data('c1', hs1.hello);
+  const { cipher: c1 } = hs1.finish(sent[0].text);
+  const pendingAuth = phones.data('c1', c1.seal({ type: 'auth', mode: 'pair', token: 'tok', name: 'iPhone' }));
+  assert.equal(c1.open(sent[1].text).type, 'confirm'); // Mac is asking; the ask is pending
+
+  // A different phone re-handshakes on the same cid while the ask waits.
+  const hs2 = phoneHandshake(P2, D.publicKey);
+  await phones.data('c1', hs2.hello);
+  assert.deepEqual(dropped, ['c1']); // the pending ask resolved 'denied', dialog cleared
+
+  resolveAsk('allowed'); // the Mac said yes to P1 — but the peer now speaks P2's cipher
+  await pendingAuth;
+
+  assert.equal(added.length, 0); // P2's key is never trusted
+  assert.equal(sent.length, 3); // welcome(P1), confirm, welcome(P2) — and no ready sealed to anyone
+  const { cipher: c2 } = hs2.finish(sent[2].text);
+  assert.equal(closed.length, 0); // no kick either: the request just died
+  assert.ok(c2);
+});

@@ -92,6 +92,7 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
     const peer = peers.get(cid);
     if (!peer) return;
     if (typeof text === 'string' && text.startsWith('{"type":"hello"') && peer.stage !== 'hello') {
+      if (peer.stage === 'pairing') pairing.dropped(cid); // ends the pending ask: 'denied', dialog clears
       for (const stream of [...peer.streams.values()]) stream.stop('rehandshake');
       peer.streams.clear();
       Object.assign(peer, { stage: 'hello', cipher: null, early: null });
@@ -134,12 +135,14 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
     if (message.mode === 'pair') {
       peer.stage = 'pairing';
       send(peer, { type: 'confirm', sas: peer.sas, desktopName: state.desktopName });
-      const verdict = await pairing.ask({ cid: peer.cid, token: message.token, name: message.name, sas: peer.sas, pub: peer.pub });
-      if (!peers.has(peer.cid)) return;
+      // A re-hello on this cid while we wait swaps cipher/pub: trust only what we asked about.
+      const { cipher, pub } = peer;
+      const verdict = await pairing.ask({ cid: peer.cid, token: message.token, name: message.name, sas: peer.sas, pub });
+      if (peers.get(peer.cid) !== peer || peer.cipher !== cipher) return;
       if (verdict === 'invalid') return kick(peer, 'expired', '配对二维码已失效，请在 Mac 的 Herdr.app 里点手机图标，重新配对');
       if (verdict === 'busy') return kick(peer, 'busy', '电脑正在确认另一台设备，请稍后再试');
       if (verdict !== 'allowed') return kick(peer, 'denied', '电脑上拒绝了这次配对');
-      const device = await state.addDevice({ name: message.name, pub: peer.pub });
+      const device = await state.addDevice({ name: message.name, pub });
       return ready(peer, device, true);
     }
     return kick(peer, 'bad-auth', 'unknown auth mode');
