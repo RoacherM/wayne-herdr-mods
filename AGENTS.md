@@ -1,12 +1,12 @@
 # wayne-herdr-mods contributor entrypoint
 
-`wayne-herdr-mods`（旧名 `herdr-relay`）在手机浏览器里通过端到端加密中继或 WebRTC 直连操作本机 `Herdr.app` 的终端，并维护 `Herdr.app` 里我们的自定义界面（`herdr-app/`）。
+`wayne-herdr-mods`（旧名 `herdr-relay`）在 iPhone 上的 Herdr App 里通过端到端加密中继操作本机 `Herdr.app` 的终端，并维护 `Herdr.app` 里我们的自定义界面（`herdr-app/`）。
 
 ## 1. 目录与边界测试（The Boundary Test）
 
 | 目录 | 职责 | 放进这里的判断标准 |
 |---|---|---|
-| `app/` | 手机端 PWA（终端列表、xterm.js 终端页、语音、直连） | 代码跑在手机浏览器里吗？构建产物进 `relay/public/` |
+| `app/` | 手机端 PWA（对外已停 2026-11-09；代码保留，本地 `relay:dev` 仍可用）（终端列表、xterm.js 终端页、语音、直连） | 代码跑在手机浏览器里吗？构建产物进 `relay/public/` |
 | `host/` | Mac 常驻服务与 `wayne-herdr-mods` CLI | 代码跑在 Mac Node.js 进程里，负责连接 `herdr-core` / 中继 / 钥匙串吗？ |
 | `relay/` | Cloudflare Worker + Durable Object | 代码跑在 Cloudflare 边缘、且只转发密文或托管静态页吗？ |
 | `shared/` | 手机与 Mac 共用的纯逻辑（`e2e.js`、`coast.js`、`wheel.js`、`pieces.js`） | 双端都要用且不依赖 Node/DOM 专有 API 吗？ |

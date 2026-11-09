@@ -137,7 +137,7 @@ export default class Phones extends View {
 
   deviceList(devices) {
     const t = theme();
-    if (!devices.length) return div().text_color(t.muted).child("还没有配对的手机。点「配对新手机」，用手机相机扫码。");
+    if (!devices.length) return div().text_color(t.muted).child("还没有配对的手机。点「配对新手机」，用 Herdr App 扫码。");
     return v_flex().gap(2).children(devices.map((d) => {
       const asking = this.removing === d.id;
       return h_flex().id(`dev-${d.id}`).h(44).px(10).gap(10).items_center().rounded(8).hover((s) => s.bg(t.hover))
@@ -193,7 +193,7 @@ export default class Phones extends View {
       .child(this.qr
         ? div().p(10).rounded(10).bg("#ffffff").child(image(this.qr.path).size(220))
         : div().size(240).flex().items_center().justify_center().text_color(t.muted).child("生成二维码…"))
-      .child(div().text_color(t.muted).child(`用手机相机扫码。只能配对一台，${hhmm(offer.expiresAt)} 前有效。`))
+      .child(div().text_color(t.muted).child(`用 Herdr App 扫码。只能配对一台，${hhmm(offer.expiresAt)} 前有效。`))
       .child(h_flex().w_full().items_center()
         .child(div().flex_1().text_size(12).text_color(t.dim).child("等待手机…"))
         .child(this.button("cancel", "取消", false, this.act("cancel", async () => { this.known = null; await this.show(await ctl("pair.cancel")); }))));

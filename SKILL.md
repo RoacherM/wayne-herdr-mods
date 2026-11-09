@@ -1,6 +1,6 @@
 ---
 name: wayne-herdr-mods
-description: "Wayne 的 Herdr 套件：用手机浏览器操作这台 Mac 上 Herdr 的终端（配对手机、看谁在线、移除手机），以及 Herdr.app 里我们自己的界面（布局 main-preview、标签栏、文件面板、「手机」窗口）。用户提到手机连 Mac、配对手机、herdr-relay、wayne-herdr-mods，或要改 Herdr.app 的这套界面时使用。"
+description: "Wayne 的 Herdr 套件：用 iPhone 上的 Herdr App 操作这台 Mac 上 Herdr 的终端（配对手机、看谁在线、移除手机），以及 Herdr.app 里我们自己的界面（布局 main-preview、标签栏、文件面板、「手机」窗口）。用户提到手机连 Mac、配对手机、herdr-relay、wayne-herdr-mods，或要改 Herdr.app 的这套界面时使用。"
 ---
 
 # wayne-herdr-mods
@@ -24,7 +24,7 @@ wayne-herdr-mods ctl status   # 同样的信息，JSON（脚本用这个）
 
 ## 配对一台手机
 
-配对只在 Herdr.app 里做：标签栏右上角的手机图标打开「手机」窗口，点「配对新手机」。要人做的：用手机相机扫码，核对手机和 Mac 上的 6 位数字，一样就点「允许」。
+配对只在 Herdr.app 里做：标签栏右上角的手机图标打开「手机」窗口，点「配对新手机」。要人做的：用 Herdr App 扫码，核对手机和 Mac 上的 6 位数字，一样就点「允许」。
 
 你可以替人把二维码摆出来：
 

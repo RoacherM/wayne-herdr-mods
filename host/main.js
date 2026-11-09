@@ -28,7 +28,7 @@ import { checkKey, deleteKey, KEYCHAIN, readKey, saveKey, sayAndRecognize } from
 
 const NAME = 'wayne-herdr-mods';
 const LABEL = `com.roacherm.${NAME}`;
-const HELP = `wayne-herdr-mods — 在手机浏览器里操作 Herdr.app 的终端；Herdr.app 里我们的界面
+const HELP = `wayne-herdr-mods — 在 iPhone 上的 Herdr App 里操作 Herdr.app 的终端；Herdr.app 里我们的界面
 
   wayne-herdr-mods serve       前台运行（LaunchAgent 跑的就是它）
   wayne-herdr-mods pair        打开 Herdr.app 的「手机」窗口，显示配对二维码
@@ -125,7 +125,7 @@ async function ctl() {
 async function pair() {
   openInHerdr();
   await controlCall(dataDir, 'pair.start');
-  console.log('已在 Herdr.app 的「手机」窗口里显示二维码。用手机相机扫码，再在窗口里核对 6 位数字。');
+  console.log('已在 Herdr.app 的「手机」窗口里显示二维码。在手机的 Herdr App 里扫码，再在窗口里核对 6 位数字。');
 }
 
 async function devices() {

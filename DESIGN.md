@@ -22,7 +22,7 @@ description: 手机浏览器通过端到端加密中继或 WebRTC 直连操作�
 ## 结构
 
 ```
-iPhone 浏览器 / PWA ──wss /v1/client/<id>──▶ Cloudflare Worker + DO（只见密文）
+iPhone 上的 Herdr App（网页版已停，2026-11-09）──wss /v1/client/<id>──▶ Cloudflare Worker + DO（只见密文）
                                                    ▲
                                         wss /v1/desktop/<id>（只出站，Ed25519 签名占座）
                                                    │
@@ -179,6 +179,8 @@ iPhone 浏览器 / PWA ──wss /v1/client/<id>──▶ Cloudflare Worker + DO
 - 终端页顶栏中间显示这个图标，不再显示 agent 的名字（名字只给读屏，`aria-label`）。图标 key 变了才换（列表刷新很频繁）。测法：`dev/fake-desktop.mjs` + 无头 iPhone 打开 claude 和 zsh 终端，顶栏分别是 Claude 图标和终端图标（2026-11-06）。
 
 ## 地址和域名
+
+- **网页版已停（2026-11-09，用户定的）**：对外只留 iPhone 上的 Herdr App。生产中继的静态资源是 `relay/landing/`（一页停用提示 + `sw.js` 杀开关，删掉旧 PWA 的缓存并注销），`relay:deploy` 只发它；PWA 代码还在 `app/`，本地 `npm run relay:dev` 照常起（`relay/public` 给 dev 冒烟用）。`/v1/*` WebSocket 不变，原生 App 经它连接。Web Push 因此没用了。
 
 用免费的 `https://herdr-relay.sir-housir.workers.dev`。Worker 名 `herdr-relay`，部署后这个地址自动就有，`wrangler.jsonc` 里不写 `routes`。`dsh-pair` 已经在同一个账号下用 `dsh-pair-relay.sir-housir.workers.dev`。
 
@@ -556,7 +558,7 @@ node probe/image-paste.mjs [claude|codex|agy]   # 图片路径粘贴进 agent �
 ## 原生 App（nsh）：评估 + 第 0 步原型（`ios/`）
 
 > **2026-11-07 改：做 nsh 原生 App（用户决定）。** 起因：iOS 网页里键盘的问题只能绕（见「键盘弹出和收起」），薄壳 App 用的也是同一个 WebKit，绕不开。原生 App 里键盘、输入行、键盘栏、语音按钮都是原生控件，网页视图只负责画终端、从不拿焦点。
-> - 账号：只用免费 Apple 账号，不上架，不做推送。App 每 7 天要从 Mac 重装（`ios/host/install.sh`）。通知仍走主屏幕 Web App 的 Web Push。
+> - 账号：只用免费 Apple 账号，不上架，不做推送。App 每 7 天要从 Mac 重装（`ios/host/install.sh`）。通知仍走主屏幕 Web App 的 Web Push（网页版已停，2026-11-09，见「地址和域名」）。
 > - 终端画面：先用 WebView 里的 xterm.js（换 WebGL 渲染），接口保持窄（原生 → 页面 `size/out/reset`，页面 → 原生 `ready/ack/input`），以后真不够顺再换原生组件。依据：手机实测画一个字中位数 8 ms、p95 25 ms，滑动帧间隔中位数 18 ms，慢的是网络（打开终端中位数 1.6 秒）。
 > - 语音：继续经 Mac 用火山（热词、拼写还原），录音由 Swift 宿主做。
 > - 多台 Mac：做进原生 App，网页版不加。

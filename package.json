@@ -12,7 +12,7 @@
     "test": "node --test --test-force-exit test/*.test.mjs",
     "probe": "node probe/sync.mjs",
     "relay:dev": "wrangler dev -c relay/wrangler.jsonc --port 8799",
-    "relay:deploy": "node app/build.mjs && wrangler deploy -c relay/wrangler.jsonc",
+    "relay:deploy": "wrangler deploy -c relay/wrangler.jsonc --assets relay/landing",
     "ios:term": "node ios/build-term.mjs",
     "ios:dev": "node ios/build-term.mjs && cd ios && nsh run --target ios"
   },
