@@ -15,6 +15,7 @@ import { TERM_HTML } from "./src/term-html";
 import { imageInput, LiveLine, PASTE_LF, pasteText } from "../app/src/live-line.js";
 import { agentKeys, combo, keyOfChar, MODS } from "../app/src/agent-keys.js";
 import { enqueue, termSession } from "../app/src/term-session.js";
+import { voiceHold } from "../app/src/voice-hold.js";
 import chevronDownIcon from "./assets/chevron-down.svg";
 import chevronIcon from "./assets/chevron.svg";
 import docIosIcon from "./assets/doc-ios.png";
@@ -795,7 +796,7 @@ function TermScreen(props: { address: string }) {
     clearInterval(voiceMeterTimer);
     clearTimeout(voiceLimitTimer);
     clearStreamListener(onStream);
-    if (voiceState() === "rec" && host.available()) host.call("voice.cancel").catch(() => {});
+    voice.send({ type: "dispose" });
     session.send({ type: "dispose" });
   });
 
@@ -944,22 +945,31 @@ function TermScreen(props: { address: string }) {
     voiceMeterTimer = voiceLimitTimer = 0;
   }
 
-  async function startVoice() {
-    if (!host.available() || !info()?.voice) {
-      notice.set(info()?.voice ? "当前环境不支持录音" : "这台 Mac 没开语音识别：在 Mac 上运行 wayne-herdr-mods voice key 设置");
-      return;
-    }
-    if (voiceState() !== "") return;
-    try {
-      notice.set("");
-      await host.call("voice.start");
+  // The press/release race is decided by the pure reducer app/src/voice-hold.js
+  // (DESIGN.md「语音输入（已实现）」): here we only run its effects.
+  const voice = voiceHold((effects) => {
+    voiceState.set(voice.state.phase === "rec" || voice.state.phase === "busy" ? voice.state.phase : "");
+    for (const e of effects) runVoiceEffect(e);
+  });
+  function runVoiceEffect(e: string) {
+    if (e === "start") {
+      (async () => {
+        try {
+          notice.set("");
+          await host.call("voice.start");
+          voice.send({ type: "started" });
+        } catch (err: any) {
+          notice.set(err.message || "录音启动失败");
+          voice.send({ type: "startFailed" });
+        }
+      })();
+    } else if (e === "recording") {
       recStartedAt = Date.now();
       voiceLevel.set(0.1);
       voiceLeftSec.set(60);
       tapHaptic();
-      voiceState.set("rec");
       voiceMeterTimer = setInterval(async () => {
-        if (voiceState() !== "rec") return;
+        if (voice.state.phase !== "rec") return;
         const left = Math.max(0, Math.ceil((MAX_VOICE_MS - (Date.now() - recStartedAt)) / 1000));
         voiceLeftSec.set(left);
         try {
@@ -967,39 +977,41 @@ function TermScreen(props: { address: string }) {
           if (typeof r?.level === "number") voiceLevel.set(r.level);
         } catch {}
       }, 90);
-      voiceLimitTimer = setTimeout(() => stopVoice(false), MAX_VOICE_MS);
-    } catch (e: any) {
-      notice.set(e.message || "录音启动失败");
-    }
-  }
-
-  async function stopVoice(cancel = false) {
-    if (voiceState() !== "rec") return;
-    clearVoiceTimers();
-    const elapsed = Date.now() - recStartedAt;
-    if (cancel || elapsed < 400) {
-      voiceState.set("");
-      await host.call("voice.cancel").catch(() => {});
-      if (!cancel && elapsed < 400) notice.set("按住说话，松开输入");
-      return;
-    }
-    voiceState.set("busy");
-    try {
-      const res = await host.call<{ data: string; mime: string }>("voice.stop");
-      if (!res?.data) { notice.set("没录到声音，请再说一次"); return; }
-      const { text } = await transcribeAudio(res.data, res.mime || "audio/mp4", address);
-      if (text) {
-        tapHaptic();
-        const sep = line.value && !/\s$/.test(line.value) ? " " : "";
-        line.set(line.value + sep + text);
-        sync();
-      } else {
-        notice.set("没听清，请再说一次");
+      voiceLimitTimer = setTimeout(() => voice.send({ type: "release" }), MAX_VOICE_MS);
+    } else if (e === "finish") {
+      clearVoiceTimers();
+      const elapsed = Date.now() - recStartedAt;
+      if (elapsed < 400) {
+        host.call("voice.cancel").catch(() => {});
+        notice.set("按住说话，松开输入");
+        voice.send({ type: "done" });
+        return;
       }
-    } catch (e: any) {
-      notice.set(`语音识别失败：${e.message}`);
-    } finally {
-      voiceState.set("");
+      voice.send({ type: "busy" });
+      (async () => {
+        try {
+          const res = await host.call<{ data: string; mime: string }>("voice.stop");
+          if (!res?.data) { notice.set("没录到声音，请再说一次"); return; }
+          const { text } = await transcribeAudio(res.data, res.mime || "audio/mp4", address);
+          if (text) {
+            tapHaptic();
+            const sep = line.value && !/\s$/.test(line.value) ? " " : "";
+            line.set(line.value + sep + text);
+            sync();
+          } else {
+            notice.set("没听清，请再说一次");
+          }
+        } catch (err: any) {
+          notice.set(`语音识别失败：${err.message}`);
+        } finally {
+          voice.send({ type: "done" });
+        }
+      })();
+    } else if (e === "cancel") {
+      clearVoiceTimers();
+      try { host.call("voice.cancel").catch(() => {}); } catch {}
+    } else if (e === "hint") {
+      notice.set("按住说话，松开输入");
     }
   }
 
@@ -1078,7 +1090,7 @@ function TermScreen(props: { address: string }) {
                   onPress={() => {
                     const action = b().tap;
                     if (action === "let-go") { letGo.set(true); field.focus(); }
-                    else if (action === "cancel-voice") stopVoice(true);
+                    else if (action === "cancel-voice") voice.send({ type: "cancel" });
                     else if (action === "dismiss") notice.set("");
                   }}
                   class="max-w-full flex-row items-center gap-2 rounded-full border border-[#3a3a3c] bg-[#232325]/95 px-4 py-2"
@@ -1149,9 +1161,15 @@ function TermScreen(props: { address: string }) {
             </Button>
             <Button
               disabled={voiceState() === "busy"}
-              onPressDown={() => startVoice()}
-              onPressUp={() => { if (voiceState() === "rec") stopVoice(false); }}
-              onPress={() => { if (voiceState() === "rec" && Date.now() - recStartedAt >= 400) stopVoice(false); }}
+              onPressDown={() => {
+                if (!host.available() || !info()?.voice) {
+                  notice.set(info()?.voice ? "当前环境不支持录音" : "这台 Mac 没开语音识别：在 Mac 上运行 wayne-herdr-mods voice key 设置");
+                  return;
+                }
+                voice.send({ type: "press" });
+              }}
+              onPressUp={() => voice.send({ type: "release" })}
+              onPress={() => { if (voice.state.phase === "rec" && Date.now() - recStartedAt >= 400) voice.send({ type: "release" }); }}
               class={`h-10 flex-1 items-center justify-center rounded-full ${voiceState() === "rec" ? "bg-[#f2f2f7]" : "bg-[#2c2c2e]"} active:bg-[#48484a] ${voiceState() === "busy" ? "opacity-60" : ""}`}
               testID="voice"
               accessibilityLabel="按住说话"
@@ -1839,7 +1857,7 @@ function PreviewScreen(props: { rootId: string; path: string; title: string }) {
                   </Button>
                 ) : null}
                 <View class="rounded-[14px] bg-secondary p-3">
-                  <Text class="font-mono text-[12.5px] leading-relaxed text-card-foreground" selectable>
+                  <Text class="font-mono text-[12.5px] leading-relaxed text-card-foreground">
                     {safeTextInfo()?.display || "（空文件）"}
                   </Text>
                 </View>

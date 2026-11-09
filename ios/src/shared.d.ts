@@ -59,3 +59,12 @@ declare module "*/app/src/agent-keys.js" {
   export const combo: (mods: Set<string>, key: string) => string;
   export const keyOfChar: (ch: string) => string | null;
 }
+declare module "*/app/src/voice-hold.js" {
+  export type VoicePhase = "" | "starting" | "rec" | "busy";
+  export type VoiceState = { phase: VoicePhase; held: boolean; gone: boolean };
+  export type VoiceEffect = "start" | "recording" | "finish" | "cancel" | "hint";
+  export type VoiceSession = { readonly state: VoiceState; send: (ev: { type: string }) => VoiceEffect[] };
+  export const initial: () => VoiceState;
+  export const step: (st: VoiceState, ev: { type: string }) => { state: VoiceState; fx: VoiceEffect[] };
+  export const voiceHold: (run: (effects: VoiceEffect[], session: VoiceSession) => void) => VoiceSession;
+}
