@@ -65,6 +65,7 @@ export class Core {
     this.pending = new Map();
     this.channels = new Map(); // channel → { onData, onResize, onClose }
     this.early = new Map(); // frames for a channel whose handlers are not registered yet
+    this.released = new Set(); // CLOSE sent: late frames are dropped until the id is free again
     this.closeHandlers = new Set();
     this.ready = new Promise((resolve, reject) => { this.helloResolve = resolve; this.helloReject = reject; });
     readable.on('data', (d) => { try { this.receive(d); } catch (error) { this.end(error); } });
@@ -104,8 +105,14 @@ export class Core {
       const p = this.pending.get(msg.id);
       if (!p) return;
       this.pending.delete(msg.id);
+      // A reply naming a channel frees that id: its frames come after this reply in order.
+      if (typeof msg.result?.channel === 'number') this.released.delete(msg.result.channel);
       if (msg.error) p.reject(new CoreError(msg.error.message, msg.error.data));
       else p.resolve(msg.result);
+      return;
+    }
+    if (this.released.has(channel)) {
+      if (kind === CLOSE) this.released.delete(channel);
       return;
     }
     const ch = this.channels.get(channel);
@@ -151,8 +158,12 @@ export class Core {
 
   /** Stop listening to a channel and tell the core (a viewer detaching). */
   release(channel) {
-    if (!this.channels.delete(channel)) return;
+    // The core already closed it (its CLOSE is queued in early): nothing to send back.
+    if (this.early.get(channel)?.some(([kind]) => kind === CLOSE)) { this.early.delete(channel); return; }
+    this.channels.delete(channel);
+    this.early.delete(channel);
     this.send(channel, CLOSE);
+    this.released.add(channel);
   }
 
   credit(channel, n) { if (n > 0) this.send(channel, CREDIT, u32(n)); }
@@ -167,6 +178,7 @@ export class Core {
     this.pending.clear();
     const channels = [...this.channels.values()];
     this.channels.clear();
+    this.released.clear();
     for (const ch of channels) ch.onClose?.({ reason: 'core_lost' });
     try { this.writable.end?.(); } catch {}
     try { this.kill(); } catch {}
