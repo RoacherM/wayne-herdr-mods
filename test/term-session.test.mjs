@@ -108,6 +108,15 @@ test('F1: a control key while the stream is down is dropped, not replayed after 
   assert.equal(of(effects, 'notice').at(-1).text, NOTICE.dropped(1), '有 1 次输入没发出去');
 });
 
+test('F1: a key before the first open says the terminal is still opening (pressEarly), not disconnected', () => {
+  const opening = run([{ type: 'link', ready: true }, { type: 'fit', fit: F }, { type: 'view' }]).st;
+  const { st, effects } = run([{ type: 'input', m: 'term.press', p: { keys: ['enter'] } }], opening);
+  assert.equal(of(effects, 'notice').at(-1).text, NOTICE.pressEarly, 'nothing was disconnected yet');
+  assert.equal(st.dropped, 1);
+  const { effects: effects2 } = run([{ type: 'input', m: 'term.press', p: { keys: ['esc'] } }], live());
+  assert.deepEqual(of(effects2, 'notify').map((e) => e.m), ['term.press'], 'live: the key goes out');
+});
+
 test('F1: text and a key while down: only the text goes out after the reopen, in order', () => {
   const { st, effects } = run([{ type: 'stream', msg: { ev: 'closed', s: 7, reason: 'closed' } },
     { type: 'input', m: 'term.input', p: { d: 'ab' } },

@@ -36,6 +36,7 @@ export const NOTICE = {
   lost: '连接断开，正在重连…',
   held: '连接断开，正在重连…（刚输入的内容重连后发出）',
   pressLost: '连接断开，正在重连…（刚按的键没有发出）',
+  pressEarly: '终端还在打开，刚按的键没有发出',
   exited: (code) => `程序已退出${code !== null && code !== undefined ? `（${code}）` : ''}`,
   dropped: (n) => `有 ${n} 次输入没发出去`,
   cannotOpen: (message) => `打不开：${message}`,
@@ -190,7 +191,7 @@ function onInput(st, { m, p, after = 0 }, fx) {
   // A control key answers the screen as it was: replayed after a reconnect it may answer another
   // prompt. Drop it and say so (F1, the user decided 2026-11-09). Text still queues.
   if (m === 'term.press') {
-    fx.push({ type: 'notice', text: NOTICE.pressLost });
+    fx.push({ type: 'notice', text: st.opened ? NOTICE.pressLost : NOTICE.pressEarly });
     return { ...st, dropped: st.dropped + 1 };
   }
   if (st.queue.length >= QUEUE_MAX) return { ...st, dropped: st.dropped + 1 };

@@ -46,6 +46,7 @@ npm run relay:dev                                  # 起本地中继（127.0.0.1
 node dev/bench.mjs                                 # 模拟跑分（需先 build + relay:dev），慢 20% 以上退出码为 1
 node dev/asks.mjs --show                           # 查看本机捕获的 blocked 提问屏幕样本
 npm run build && node dist/wayne-herdr-mods.mjs install  # 构建并同步命令、LaunchAgent、Herdr.app 界面与 skill
+ios/host/install.sh                                # 原生 App 装到真 iPhone（npm run ios:dev 只跑模拟器）；手机要解锁
 ```
 
 ## 4. 必须遵守的 6 条规则
