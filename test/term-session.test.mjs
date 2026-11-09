@@ -90,13 +90,33 @@ test('events before term.open answered are drawn after the open, in order', () =
 
 test('F10: input while the stream is reopening is held and goes in after the reopen, in order', () => {
   let { st, effects } = run([{ type: 'stream', msg: { ev: 'closed', s: 7, reason: 'closed' } },
-    { type: 'input', m: 'term.input', p: { d: 'ab' } }, { type: 'input', m: 'term.press', p: { keys: ['enter'] } }], live());
+    { type: 'input', m: 'term.input', p: { d: 'ab' } }, { type: 'input', m: 'term.input', p: { d: 'cd' } }], live());
   assert.deepEqual(of(effects, 'notify'), [], 'nothing sent into a closed stream');
   assert.deepEqual(of(effects, 'retry'), [{ type: 'retry', ms: RETRY_MS }]);
   assert.equal(of(effects, 'notice').at(-1).text, NOTICE.held, 'the page says the input will follow');
   ({ st, effects } = run([{ type: 'retry' }, opened(8, 1)], st));
-  assert.deepEqual(of(effects, 'notify').map((e) => [e.m, e.p]), [['term.input', { d: 'ab', s: 8 }], ['term.press', { keys: ['enter'], s: 8 }]]);
+  assert.deepEqual(of(effects, 'notify').map((e) => [e.m, e.p]), [['term.input', { d: 'ab', s: 8 }], ['term.input', { d: 'cd', s: 8 }]]);
   assert.equal(st.queue.length, 0);
+});
+
+test('F1: a control key while the stream is down is dropped, not replayed after the reopen', () => {
+  let { st, effects } = run([{ type: 'stream', msg: { ev: 'closed', s: 7, reason: 'closed' } },
+    { type: 'input', m: 'term.press', p: { keys: ['enter'] } }], live());
+  assert.equal(of(effects, 'notice').at(-1).text, NOTICE.pressLost, 'the page says the key did not go out');
+  ({ st, effects } = run([{ type: 'retry' }, opened(8, 1)], st));
+  assert.deepEqual(of(effects, 'notify', 'term.press'), [], 'the key is not replayed');
+  assert.equal(of(effects, 'notice').at(-1).text, NOTICE.dropped(1), '有 1 次输入没发出去');
+});
+
+test('F1: text and a key while down: only the text goes out after the reopen, in order', () => {
+  const { st, effects } = run([{ type: 'stream', msg: { ev: 'closed', s: 7, reason: 'closed' } },
+    { type: 'input', m: 'term.input', p: { d: 'ab' } },
+    { type: 'input', m: 'term.press', p: { keys: ['c'], mods: ['ctrl'] } },
+    { type: 'input', m: 'term.input', p: { d: 'cd' } },
+    { type: 'retry' }, opened(8, 1)], live());
+  assert.deepEqual(of(effects, 'notify').map((e) => [e.m, e.p]),
+    [['term.input', { d: 'ab', s: 8 }], ['term.input', { d: 'cd', s: 8 }]]);
+  assert.ok(of(effects, 'notice').some((e) => e.text === NOTICE.pressLost));
 });
 
 test('F10: after the program exited, input is not kept; the notice gives the exit code', () => {

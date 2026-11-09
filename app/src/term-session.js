@@ -35,6 +35,7 @@ export const QUEUE_MAX = 256; // inputs held while the stream is down; more are 
 export const NOTICE = {
   lost: '连接断开，正在重连…',
   held: '连接断开，正在重连…（刚输入的内容重连后发出）',
+  pressLost: '连接断开，正在重连…（刚按的键没有发出）',
   exited: (code) => `程序已退出${code !== null && code !== undefined ? `（${code}）` : ''}`,
   dropped: (n) => `有 ${n} 次输入没发出去`,
   cannotOpen: (message) => `打不开：${message}`,
@@ -186,6 +187,12 @@ function onLinkReady(st, { renewed = false }, fx) {
 function onInput(st, { m, p, after = 0 }, fx) {
   if (st.phase === 'live' && st.linkReady) { fx.push({ type: 'notify', m, p: { ...p, s: st.s }, after }); return st; }
   if (['exited', 'replaced', 'failed', 'disposed'].includes(st.phase)) return st; // nothing will take it
+  // A control key answers the screen as it was: replayed after a reconnect it may answer another
+  // prompt. Drop it and say so (F1, the user decided 2026-11-09). Text still queues.
+  if (m === 'term.press') {
+    fx.push({ type: 'notice', text: NOTICE.pressLost });
+    return { ...st, dropped: st.dropped + 1 };
+  }
   if (st.queue.length >= QUEUE_MAX) return { ...st, dropped: st.dropped + 1 };
   if (!st.queue.length && (st.phase === 'retrying' || (st.phase === 'waiting' && st.opened))) fx.push({ type: 'notice', text: NOTICE.held });
   return { ...st, queue: [...st.queue, { m, p, after }] };
