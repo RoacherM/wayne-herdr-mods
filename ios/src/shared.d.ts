@@ -36,8 +36,21 @@ declare module "*/app/src/live-line.js" {
     backspace(): boolean;
   }
 }
-declare module "*/app/src/lead.js" {
-  export const leadsAfterSize: (leads: boolean, fitSent: string, size: { cols: number; rows: number }) => boolean;
+declare module "*/app/src/term-session.js" {
+  export type Grid = { cols: number; rows: number };
+  export type Effect =
+    | { type: "rpc"; m: "term.open"; p: { address: string; fit: Grid | null; lead: boolean }; epoch: number }
+    | { type: "rpc"; m: "term.close"; p: { s: number } }
+    | { type: "notify"; m: string; p: any; after?: number }
+    | { type: "view"; msg: any }
+    | { type: "notice"; text: string }
+    | { type: "retry"; ms: number };
+  export type Session = { readonly state: { phase: string; s: number | null; sized: boolean; opened: boolean; [k: string]: any }; send: (ev: any) => Effect[] };
+  export const RETRY_MS: number;
+  export const QUEUE_MAX: number;
+  export const leadsAfterSize: (leads: boolean, fitSent: string, size: Grid) => boolean;
+  export const termSession: (address: string, run: (effects: Effect[], session: Session) => void) => Session;
+  export const enqueue: (q: Promise<void>, fn: () => unknown) => Promise<void>;
 }
 declare module "*/app/src/agent-keys.js" {
   export type AgentKey = [label: string, names: string[], what: string];

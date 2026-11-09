@@ -9,7 +9,13 @@ Agent 自动处理规则：只认领 `Ready` 栏的条目；修完用 `git commi
 
 ## 1. Ready（Agent 可直接认领）
 
-（当前无待修代码缺陷）
+| ID | 优先级 | 领域 | 标题 |
+|---|---|---|---|
+| [I-004](I-004-pairing-rehello-sas-bypass.md) | P0 | 安全 / 配对 | 配对确认中途重发 hello，宿主把新密钥加进信任表（SAS 被绕过） |
+| [I-005](I-005-core-release-unregistered-channel.md) | P1 | 宿主流 | `Core.release()` 对没注册的通道不发 CLOSE，viewer 留在 herdr-core 里 |
+| [I-006](I-006-ios-voice-release-before-start.md) | P1 | 语音 | 原生 App：`voice.start` 回来前松手，会录满 60 秒再输入 |
+
+来源：2026-11-09 隐式状态机盘点（DESIGN.md「终端会话状态机」→「其它隐式状态机」）。
 
 ## 2. Needs Decision（等用户拍板）
 

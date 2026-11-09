@@ -16,7 +16,7 @@ import { touchScroll } from './touch-scroll.js';
 import { atomic, SYNC_ON } from './paint.js';
 import { textStyle } from './text-style.js';
 import { coastSteps } from '../../shared/coast.js';
-import { leadsAfterSize } from './lead.js';
+import { enqueue, termSession } from './term-session.js';
 import { LiveLine, PASTE_LF, imageInput, pasteText } from './live-line.js';
 import { MAX_MS, shrinkImage, startRecording, transcribe, upload, voiceSupported } from './voice.js';
 import { createMetrics } from './metrics.js';
@@ -424,7 +424,8 @@ function openTerm(address) {
   app.view = { name: 'term', address };
   const t0 = app.list.terminals.find((t) => t.address === address);
   if (t0?.state === 'done') t0.state = 'idle'; // looking turns done into idle, as on Herdr.app
-  const page = { address, s: null, closed: false, cols: t0?.cols ?? 80, rows: t0?.rows ?? 24, unacked: 0, opening: false, early: [], sized: false, opened: false };
+  // page.s (the stream id) and page.sized come from the session (term-session.js), defined below.
+  const page = { address, cols: t0?.cols ?? 80, rows: t0?.rows ?? 24, unacked: 0 };
   app.term = page;
   const status = { notice: '', uploading: '', composing: '', voice: null }; // what the bubble may say
 
@@ -595,8 +596,8 @@ function openTerm(address) {
   // grid, and the program redraws for it. Typing on the Mac takes the Mac's size back (the device
   // used last leads); leaving the page, locking the phone or going to the background gives it back
   // at once. Rows are counted with the keyboard down: it comes and goes without a redraw.
-  let fullHeight = 0, fitSent = '';
-  let leads = true; // the terminal is at the phone's grid (a Mac window has not taken it back)
+  // Whether the phone leads, and which grid it last sent, live in the session (term-session.js).
+  let fullHeight = 0;
   function fitNow() {
     if (globalThis.__herdrPan) return null; // tests of the Mac-size view only (dev/term-smoke.mjs): as an older page
     const cell = cellNow(), pad = getComputedStyle(viewport);
@@ -606,16 +607,9 @@ function openTerm(address) {
     if (!cell?.width || !cell?.height || width <= 0 || fullHeight <= 0) return null;
     return { cols: Math.floor(width / cell.width), rows: Math.floor(fullHeight / cell.height) };
   }
-  /** Tell the Mac the phone's grid (null: the phone is away). Only when it changed. */
-  function refit(away = false) {
-    if (!page.s || !page.sized || app.link?.status !== 'ready') return;
-    const fit = away ? null : fitNow();
-    const key = JSON.stringify(fit);
-    if (key === fitSent) return;
-    fitSent = key;
-    app.link.notify('term.fit', { s: page.s, fit });
-  }
-  const onVisibility = () => refit(document.visibilityState === 'hidden');
+  /** The phone's grid and whether it is away go to the session; it tells the Mac when they changed. */
+  const measure = () => { const fit = fitNow(); if (fit) session.send({ type: 'fit', fit }); };
+  const onVisibility = () => { measure(); session.send({ type: 'away', on: document.visibilityState === 'hidden' }); };
   document.addEventListener('visibilitychange', onVisibility);
   const follow = { x: true, y: true };
   let placing = false, setLeft = 0;
@@ -667,30 +661,54 @@ function openTerm(address) {
     layout();
   }
 
-  // ---- the stream
-  async function open() {
-    if (page.opening || page.closed || app.link?.status !== 'ready') return;
-    page.opening = true;
-    page.early = [];
-    try {
-      const fit = fitNow();
-      // Opened again (a reconnect) while a Mac window led: it keeps leading until the phone is used.
-      const r = await app.link.rpc('term.open', { address, fit, lead: leads || !page.opened });
-      fitSent = JSON.stringify(fit);
-      if (page.closed) { app.link.rpc('term.close', { s: r.s }).catch(() => {}); return; }
-      page.s = r.s;
-      page.sized = r.sized === true;
-      if (!page.sized) { xterm.reset(); resizeTo(r.cols, r.rows); }
+  // ---- the stream: its states live in one pure state machine, shared with the native app
+  // (term-session.js, DESIGN.md「终端会话状态机」). Here its effects are carried out.
+  let sendQ = Promise.resolve(); // input in order; an image path waits for the program to read the file
+  function draw(m) {
+    if (m.t === 'open') {
+      if (!m.sized) { xterm.reset(); resizeTo(m.cols, m.rows); }
       // Opened again (a reconnect, or a switch between relay and direct): the old screen stays
       // until the repaint replaces it in one frame, history and all (write()).
-      else if (page.opened) page.clearHistory = true;
-      page.opened = true;
-      setStatus('notice', '');
-      for (const msg of page.early.splice(0)) onEvent(msg);
-    } catch (e) {
-      setStatus('notice', `打不开：${e.message}`);
-    } finally { page.opening = false; }
+      else if (m.reopened) page.clearHistory = true;
+    } else if (m.t === 'out') {
+      // A fresh paint in place of a program's reprint (host/phones.js reprint()): it brings the history again.
+      if (m.fresh) page.clearHistory = true;
+      write(m.d, m.w);
+    } else if (m.t === 'size') {
+      // In order with the bytes: those before were drawn for the old grid, the repaint after for
+      // this one. Nothing is drawn from here until that repaint is done (sync on, see write()).
+      xterm.write(SYNC_ON, () => resizeTo(m.cols, m.rows));
+    }
   }
+  function typed(e) {
+    sendQ = enqueue(sendQ, async () => {
+      // The stream changed during an image's pause: the session sends it on the stream there is now.
+      if (e.p.s !== session.state.s) { session.send({ type: 'input', m: e.m, p: { ...e.p, s: undefined }, after: e.after }); return; }
+      app.link.notify(e.m, e.p);
+      if (e.m === 'term.input') {
+        metrics.input(e.p.s, e.p.d);
+        xterm.scrollToBottom(); follow.x = follow.y = true; showLatest(); layout();
+      }
+      if (e.after) await new Promise((r) => setTimeout(r, e.after));
+    });
+  }
+  const session = termSession(address, (effects, ses) => {
+    for (const e of effects) {
+      if (e.type === 'rpc' && e.m === 'term.open') {
+        app.link.rpc('term.open', e.p).then((r) => ses.send({ type: 'opened', r, epoch: e.epoch }),
+          (err) => ses.send({ type: 'openFailed', message: err.message, epoch: e.epoch }));
+      } else if (e.type === 'rpc') app.link.rpc(e.m, e.p).catch(() => {});
+      else if (e.type === 'notify' && e.m === 'term.fit') app.link.notify(e.m, e.p);
+      else if (e.type === 'notify') typed(e);
+      else if (e.type === 'view') draw(e.msg);
+      else if (e.type === 'notice') setStatus('notice', e.text);
+      else if (e.type === 'retry') setTimeout(() => ses.send({ type: 'retry' }), e.ms);
+    }
+  });
+  Object.defineProperties(page, {
+    s: { get: () => session.state.s },
+    sized: { get: () => session.state.sized },
+  });
 
   function onList() {
     const t = app.list.terminals.find((x) => x.address === address);
@@ -718,42 +736,17 @@ function openTerm(address) {
     if (on !== line.held) { line.hold(on); sync(); }
   }
 
-  function onEvent(msg) {
-    // The first paint can arrive before term.open's reply: hold it until we know our stream id.
-    if (page.s === null && page.opening) { page.early.push(msg); return; }
-    if (msg.s !== page.s) return;
-    if (msg.ev === 'out') {
-      // A fresh paint in place of a program's reprint (host/phones.js reprint()): it brings the history again.
-      if (msg.fresh) page.clearHistory = true;
-      write(msg.d, msg.w);
-    }
-    else if (msg.ev === 'size') {
-      // In order with the bytes: those before were drawn for the old grid, the repaint after for
-      // this one. Nothing is drawn from here until that repaint is done (sync on, see write()).
-      xterm.write(SYNC_ON, () => resizeTo(msg.cols, msg.rows));
-      leads = leadsAfterSize(leads, fitSent, msg);
-    }
-    else if (msg.ev === 'closed') {
-      page.s = null;
-      if (msg.reason === 'replaced' || page.closed) return;
-      setStatus('notice', msg.reason === 'exited' ? `程序已退出${msg.exitCode !== null && msg.exitCode !== undefined ? `（${msg.exitCode}）` : ''}` : '连接断开，正在重连…');
-      if (msg.reason !== 'exited') setTimeout(open, 800);
-    }
-  }
+  const onEvent = (msg) => session.send({ type: 'stream', msg });
 
-  // ---- typing: everything goes out in order; an image path waits for the program to read the file.
-  let chain = Promise.resolve();
+  // ---- typing: everything goes out in order (typed()). While the stream is down, what you type
+  // waits in the session and goes in once it is back. Wheel steps and mouse reports do not wait:
+  // they point at what is on the screen now.
   /** Input to the terminal; the metrics count its wheel steps (as the Mac does). */
-  function send(d) { app.link.notify('term.input', { s: page.s, d }); metrics.input(page.s, d); }
+  function send(d) { if (!page.s) return; app.link.notify('term.input', { s: page.s, d }); metrics.input(page.s, d); }
   function out(d, after = 0, latest = true) {
-    if (latest) toLatest();
-    chain = chain.then(async () => {
-      if (page.s) {
-        send(d);
-        if (latest) { xterm.scrollToBottom(); follow.x = follow.y = true; showLatest(); layout(); }
-      }
-      if (after) await new Promise((r) => setTimeout(r, after));
-    });
+    if (!latest) { sendQ = enqueue(sendQ, () => send(d)); return; }
+    toLatest();
+    session.send({ type: 'input', m: 'term.input', p: { d }, after });
   }
   const line = new LiveLine((d) => { metrics.typed(); out(d); });
   /** The textarea shows the burst; the bubble says what the line cannot. */
@@ -871,7 +864,7 @@ function openTerm(address) {
     metrics.typed();
     line.commit(); sync();
     toLatest();
-    chain = chain.then(() => { if (page.s) app.link.notify('term.press', { s: page.s, keys: list }); });
+    session.send({ type: 'input', m: 'term.press', p: { keys: list } });
   }
   function toggleMod(m) {
     if (mods.has(m)) mods.delete(m); else mods.add(m);
@@ -1048,20 +1041,21 @@ function openTerm(address) {
   // ---- with the keyboard up, the page follows the visible viewport (keyboard-fit.js)
   let kbdNotes = 0;
   const stopKeyboard = followKeyboard({ screen, field: keys, note: (d) => { if (++kbdNotes <= 300) metrics.mark('kbd', d); } }); // capped: they must not crowd out the rest
-  const ro = new ResizeObserver(() => { refit(document.visibilityState === 'hidden'); layout(); });
+  const ro = new ResizeObserver(() => { measure(); layout(); });
   ro.observe(viewport);
   requestAnimationFrame(layout);
 
   Object.assign(page, {
     onEvent, onList,
+    // The link is ready on a new connection (a reconnect, or a switch between relay and direct).
     reopen() {
       metrics.opening(true);
-      page.s = null; open();
+      measure();
+      session.send({ type: 'link', ready: true, renewed: true });
     },
-    lost() { if (page.s) { page.s = null; setStatus('notice', '连接断开，正在重连…'); } },
+    lost() { session.send({ type: 'link', ready: false }); },
     dispose() {
       toLatest(true); // leave the Mac's view at the latest too, before the stream closes
-      page.closed = true;
       ro.disconnect();
       stopKeyboard();
       document.removeEventListener('visibilitychange', onVisibility);
@@ -1069,12 +1063,15 @@ function openTerm(address) {
       stopTouch();
       page.stopTalk?.();
       clearTimeout(page.ackTimer);
-      if (page.s && app.link?.status === 'ready') app.link.rpc('term.close', { s: page.s }).catch(() => {});
+      session.send({ type: 'dispose' });
       xterm.dispose();
     },
   });
   onList();
-  open();
+  measure();
+  if (document.visibilityState === 'hidden') session.send({ type: 'away', on: true });
+  session.send({ type: 'link', ready: app.link?.status === 'ready' });
+  session.send({ type: 'view' });
 }
 
 // ------------------------------------------------------------------ push -------

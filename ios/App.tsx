@@ -7,14 +7,14 @@ import {
   consumePendingNotificationTap, desktops, disableNotifications, enableNotifications,
   fetchPreviewDataUrl, forget, info, list, macStatuses, notify, notifyEnabled, notifyPermission,
   openNativePreview, paired, pairWith, problem, refresh, refreshNotifyStatus, rpc, sas, sendImage,
-  sendTestNotification, setStreamListener, status, switchDesktop, transcribeAudio, wake,
+  linkEpoch, sendTestNotification, setStreamListener, status, switchDesktop, transcribeAudio, wake,
   type Saved, type Space, type Terminal,
 } from "./src/conn";
 import { PROG_ICONS } from "./src/prog-icons";
 import { TERM_HTML } from "./src/term-html";
 import { imageInput, LiveLine, PASTE_LF, pasteText } from "../app/src/live-line.js";
 import { agentKeys, combo, keyOfChar, MODS } from "../app/src/agent-keys.js";
-import { leadsAfterSize } from "../app/src/lead.js";
+import { enqueue, termSession } from "../app/src/term-session.js";
 import chevronDownIcon from "./assets/chevron-down.svg";
 import chevronIcon from "./assets/chevron.svg";
 import docIosIcon from "./assets/doc-ios.png";
@@ -710,27 +710,36 @@ function TermScreen(props: { address: string }) {
 
   let field!: InputRef;
   let web!: WebViewRef;
-  let s: number | null = null;
-  let opening = false;
   let pageReady = false;
-  let closed = false;
-  let sized = true;
-  let opened = false;
-  let leads = true;
-  let lastFit: { cols: number; rows: number } | null = null;
-  let fitSent = "";
   const toPage: string[] = [];
-  const early: any[] = [];
   const post = (v: object) => { const m = JSON.stringify(v); if (pageReady) web.postMessage(m); else toPage.push(m); };
 
-  function refit(away = false) {
-    if (s === null || !sized || status() !== "ready") return;
-    const fit = away ? null : lastFit;
-    const key = JSON.stringify(fit);
-    if (key === fitSent) return;
-    fitSent = key;
-    notify("term.fit", { s, fit });
+  // The stream and the grid: one pure state machine, shared with the PWA (app/src/term-session.js,
+  // DESIGN.md「终端会话状态机」). Here its effects are carried out.
+  let sendQ = Promise.resolve(); // input in order; an image path waits for the program to read the file
+  function typed(e: { m: string; p: any; after?: number }) {
+    sendQ = enqueue(sendQ, async () => {
+      // The stream changed during an image's pause: the session sends it on the stream there is now.
+      if (e.p.s !== session.state.s) { session.send({ type: "input", m: e.m, p: { ...e.p, s: undefined }, after: e.after }); return; }
+      notify(e.m, e.p);
+      if (e.after) await sleep(e.after);
+    });
   }
+  const session = termSession(address, (effects, ses) => {
+    for (const e of effects) {
+      if (e.type === "rpc" && e.m === "term.open") {
+        const epoch = e.epoch;
+        rpc("term.open", e.p).then((r: any) => ses.send({ type: "opened", r, epoch }),
+          (err: any) => ses.send({ type: "openFailed", message: err?.message ?? String(err), epoch }));
+      } else if (e.type === "rpc") rpc(e.m, e.p).catch(() => {});
+      else if (e.type === "notify" && e.m === "term.fit") notify(e.m, e.p);
+      else if (e.type === "notify") typed(e);
+      else if (e.type === "view") post(e.msg.t === "out" ? { t: "out", d: e.msg.d, fresh: e.msg.fresh } : e.msg);
+      else if (e.type === "notice") notice.set(e.text);
+      else if (e.type === "retry") setTimeout(() => ses.send({ type: "retry" }), e.ms);
+    }
+  });
+  const sid = () => session.state.s;
 
   function lightKey(label: string) {
     clearTimeout(litTimer);
@@ -748,67 +757,37 @@ function TermScreen(props: { address: string }) {
     repeatDelay = repeatEvery = 0;
   }
 
-  let chain = Promise.resolve();
+  /** Typing: held by the session while the stream is down, and sent once it is back. */
   function out(d: string, after = 0, scrollLatest = true) {
     if (scrollLatest) post({ t: "typing" });
-    chain = chain.then(async () => {
-      if (s !== null) notify("term.input", { s, d });
-      if (after) await sleep(after);
-    });
+    session.send({ type: "input", m: "term.input", p: { d }, after });
   }
   const line = new LiveLine((d) => out(d));
   const sync = () => { burst.set(line.value); pending.set(line.pending); };
 
-  function onStream(msg: any) {
-    if (s === null && opening) { early.push(msg); return; }
-    if (msg.s !== s) return;
-    if (msg.ev === "out") post({ t: "out", d: msg.d, fresh: Boolean(msg.fresh) });
-    else if (msg.ev === "size") {
-      post({ t: "size", cols: msg.cols, rows: msg.rows });
-      leads = leadsAfterSize(leads, fitSent, msg);
-    } else if (msg.ev === "closed") {
-      s = null;
-      if (msg.reason === "replaced" || closed) return;
-      notice.set(msg.reason === "exited" ? "程序已退出" : "连接断开，正在重连…");
-      if (msg.reason !== "exited") setTimeout(open, 800);
-    }
-  }
-
-  async function open() {
-    if (opening || closed || status() !== "ready") return;
-    opening = true;
-    early.length = 0;
-    try {
-      const fit = lastFit;
-      const r = (await rpc("term.open", { address, fit, lead: leads || !opened })) as {
-        s: number; cols: number; rows: number; sized?: boolean;
-      };
-      fitSent = JSON.stringify(fit);
-      if (closed) { rpc("term.close", { s: r.s }).catch(() => {}); return; }
-      s = r.s;
-      sized = r.sized === true;
-      post({ t: "open", sized, reopened: opened, cols: r.cols, rows: r.rows });
-      opened = true;
-      notice.set("");
-      for (const m of early.splice(0)) onStream(m);
-      refit(false);
-    } catch (e: any) { notice.set(`打不开：${e.message}`); } finally { opening = false; }
-  }
+  const onStream = (msg: any) => { session.send({ type: "stream", msg }); };
 
   activeTermAddress.set(address);
   setStreamListener(onStream);
-  effect(() => { if (webReady() && status() === "ready" && s === null) open(); else if (status() !== "ready") s = null; });
-  effect(() => { const t = term(); if (t && opened && !sized) post({ t: "size", cols: t.cols, rows: t.rows }); });
+  // The link: ready on a new connection (linkEpoch moved) means the old stream is gone there.
+  let seenEpoch = linkEpoch();
+  effect(() => {
+    const n = linkEpoch();
+    const ready = status() === "ready";
+    session.send({ type: "link", ready, renewed: ready && n !== seenEpoch });
+    if (ready) seenEpoch = n;
+  });
+  effect(() => { if (webReady()) session.send({ type: "view" }); });
+  effect(() => { const t = term(); const st = session.state; if (t && st.opened && !st.sized) post({ t: "size", cols: t.cols, rows: t.rows }); });
   effect(() => { if (!blocked()) letGo.set(false); });
   effect(() => { line.hold(held()); sync(); });
   effect(() => {
     const st = lifecycle();
-    if (st === "active") { wake(); refit(false); }
-    else if (st === "background") refit(true);
+    if (st === "active") { wake(); session.send({ type: "away", on: false }); }
+    else if (st === "background") session.send({ type: "away", on: true });
   });
   cleanup(() => {
-    closed = true;
-    clientLog("info", "term.cleanup", { address, s });
+    clientLog("info", "term.cleanup", { address, s: sid() });
     if (activeTermAddress() === address) activeTermAddress.set(null);
     clearTimeout(bootTimer);
     clearTimeout(litTimer);
@@ -817,7 +796,7 @@ function TermScreen(props: { address: string }) {
     clearTimeout(voiceLimitTimer);
     clearStreamListener(onStream);
     if (voiceState() === "rec" && host.available()) host.call("voice.cancel").catch(() => {});
-    if (s !== null) rpc("term.close", { s }).catch(() => {});
+    session.send({ type: "dispose" });
   });
 
   function fromPage(data: string) {
@@ -827,26 +806,25 @@ function TermScreen(props: { address: string }) {
       // How long the page takes on real phones: the data for PAGE_READY_FALLBACK_MS.
       clientLog("info", "term.ready", { ms: Date.now() - mountedAt, fit: m.fit ?? null });
       pageReady = true;
-      if (m.fit) lastFit = m.fit;
-      webReady.set(true);
-      refit(false);
+      if (m.fit) session.send({ type: "fit", fit: m.fit });
       for (const x of toPage.splice(0)) web.postMessage(x);
+      webReady.set(true);
     } else if (m.t === "fit") {
-      lastFit = m.fit;
-      refit(false);
-    } else if (m.t === "ack" && s !== null) {
-      notify("term.ack", { s, n: m.n });
+      session.send({ type: "fit", fit: m.fit });
+    } else if (m.t === "ack" && sid() !== null) {
+      notify("term.ack", { s: sid(), n: m.n });
     } else if (m.t === "drawn") {
       clearLit();
       cursorHidden.set(Boolean(m.cursorHidden));
       appCursor.set(Boolean(m.appCursor));
     } else if (m.t === "atLatest") {
       atLatest.set(Boolean(m.on));
-    } else if (m.t === "wheel" && s !== null) {
-      notify("term.input", { s, d: m.d });
-    } else if (m.t === "coast" && s !== null) {
-      if (m.stop) notify("term.coast", { s, stop: true });
-      else notify("term.coast", { s, d: m.d, v: m.v, cell: m.cell });
+    } else if (m.t === "wheel" && sid() !== null) {
+      // Wheel steps point at what is on the screen now: never held over a reconnect.
+      notify("term.input", { s: sid(), d: m.d });
+    } else if (m.t === "coast" && sid() !== null) {
+      if (m.stop) notify("term.coast", { s: sid(), stop: true });
+      else notify("term.coast", { s: sid(), d: m.d, v: m.v, cell: m.cell });
     } else if (m.t === "tap") {
       field.focus();
     } else if (m.t === "log") {
@@ -871,7 +849,7 @@ function TermScreen(props: { address: string }) {
     tapHaptic();
     line.commit(); sync();
     post({ t: "typing" });
-    chain = chain.then(() => { if (s !== null) notify("term.press", { s, keys: klist }); });
+    session.send({ type: "input", m: "term.press", p: { keys: klist } });
   }
 
   async function pasteFromClipboard() {

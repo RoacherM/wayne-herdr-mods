@@ -36,7 +36,7 @@ iPhone 浏览器 / PWA ──wss /v1/client/<id>──▶ Cloudflare Worker + DO
 - `shared/e2e.js`：X25519 三次 DH + XSalsa20-Poly1305，计数器 nonce 防重放。改协议标签为 `herdr-relay/v1`，其余不动。
 - `relay/src/index.js`：Room DO，一个桌面座位、最多 8 个手机连接，ping/pong 不唤醒 DO。原样复制，改名。
 - 配对：二维码里有桌面公钥和一次性令牌（10 分钟），两边显示 6 位核对码，电脑上确认。确认在哪里做见下文「电脑上的确认」。
-- 手机端 `link.js`（每步都有超时、回到前台就重连）原样复制。回到前台（`wake()`）时：30 秒（`asleep`）没收到任何帧，马上换新连接；否则发一次 `ping`，4 秒（`wakePong`）内一帧都没收到（中继自己回 `pong`，直连时 Mac 回；按收到的帧数判断，不比时间戳），也马上换。直连用 15 秒（`direct.js` `DIRECT_TIMEOUTS`，和它的 `silent` 一样）：直连的 Link 只用一次，没过检查就永久关闭，`Duo` 退回中继，直连要隔 3 秒到 5 分钟（`RETRY_MS`）才再试，而刚解锁时无线电和 ICE 可能还没醒。原因：iOS 挂起期间连接可能已经死了，却还显示 OPEN，`onclose` 也不来；以前要等 30 秒的请求超时或 50 秒的 `silent`（2026-11-07 实测：解锁后 17 秒才 `link.ready`）。原生 App 在 `ios/src/conn.ts` 模块级监听 `lifecycle()`，不管在哪个页面，回前台都 `wake()`。测法：`test/link-wake.test.mjs`、`test/ios-conn.test.mjs`。
+- 手机端 `link.js`（每步都有超时、回到前台就重连）原样复制。回到前台（`wake()`）时：30 秒（`asleep`）没收到任何帧，马上换新连接；否则发一次 `ping`，4 秒（`wakePong`）内一帧都没收到（中继自己回 `pong`，直连时 Mac 回；按收到的帧数判断，不比时间戳），也马上换。直连用 15 秒（`direct.js` `DIRECT_TIMEOUTS`，和它的 `silent` 一样）：直连的 Link 只用一次，没过检查就永久关闭，`Duo` 退回中继，直连要隔 3 秒到 5 分钟（`RETRY_MS`）才再试，而刚解锁时无线电和 ICE 可能还没醒。原因：iOS 挂起期间连接可能已经死了，却还显示 OPEN，`onclose` 也不来；以前要等 30 秒的请求超时或 50 秒的 `silent`（2026-11-07 实测：解锁后 17 秒才 `link.ready`）。原生 App 在 `ios/src/conn.ts` 模块级监听 `lifecycle()`，不管在哪个页面，回前台都 `wake()`。测法：`test/link-wake.test.mjs`、`test/ios-conn.test.mjs`。从连上中继到 `ready`，每一步都有期限（2026-11-09 补齐）：连上后等中继的 `\0online` / `\0offline`，最多 `handshake`（12 秒），超时换新连接；`\0offline` 之后不设期限（等 Mac 上线）；握手在手机这边出错（不是永久错误）时，先显示错误，再断开、按退避重连（以前这条连接一直开着、没有期限，停在 `error`）。永久错误（`unknown-device`、`revoked` 等）照旧关掉不重连。测法：`test/link-steps.test.mjs`。
 
 新写的只有两块：宿主进程里对接 herdr-core 的部分，和手机上的终端页面。
 
@@ -85,7 +85,7 @@ iPhone 浏览器 / PWA ──wss /v1/client/<id>──▶ Cloudflare Worker + DO
 不闪的细节：
 
 - **重连不抢、不让。** 中继 / 直连切换或重连时，旧流的打字 viewer 在宿主里保留 4 秒（`PARK_MS`），新流接手它。否则中间有一刻 Mac 主导，程序会重画两次。同一连接上重开同一个终端，新流也接手旧流的打字 viewer。
-- **重连时 Mac 正在主导，就不抢。** 前提：终端页一直开着、手机在前台。终端页记得手机是否在主导（最后一次 `size` 是不是自己发的格子）。不是的话，重开时带 `lead: false`，等手机下次打字再抢。这个记忆只在这一次打开的页面里（`leads`，每次进终端页从「主导」开始，第一次 `term.open` 总是 `lead: true`）。手机还没发过格子、或正在离开（发的是 `null`）时，`size` 说明不了手机，主导状态不变（`app/src/lead.js` `leadsAfterSize`，网页版和原生 App 共用；`test/lead.test.mjs`）。所以手机离开期间 Mac 接管不算数：回到前台就按手机的格子（`refit` 发尺寸；离开期间重连也带 `lead: true`）。以前 `term.open` 不带 `fit` 时，回放的 Mac 尺寸会把它误改成「不主导」。
+- **重连时 Mac 正在主导，就不抢。** 前提：终端页一直开着、手机在前台。终端页记得手机是否在主导（最后一次 `size` 是不是自己发的格子）。不是的话，重开时带 `lead: false`，等手机下次打字再抢。这个记忆只在这一次打开的页面里（`leads`，每次进终端页从「主导」开始，第一次 `term.open` 总是 `lead: true`）。手机还没发过格子、或正在离开（发的是 `null`）时，`size` 说明不了手机，主导状态不变（`app/src/term-session.js` `leadsAfterSize`，见「终端会话状态机」）。所以手机离开期间 Mac 接管不算数：回到前台就按手机的格子（会话发 `term.fit`；离开期间重连也带 `lead: true`）。以前 `term.open` 不带 `fit` 时，回放的 Mac 尺寸会把它误改成「不主导」。
 - 旧手机页（不带 `fit`）照旧：打字 viewer 第一次输入时才 attach，`resumed: true`，每次输入前重报 Mac 的尺寸，从不改尺寸。旧 herdr-core（没有 `resize_notifications`）也走这条，因为手机没法和字节同步地知道新尺寸。
 
 以前有过「适配手机」开关（2026-11-03 删掉了：要手动切换）。现在不用开关：谁最后用，就按谁的尺寸。测法：`dev/layout-smoke.mjs`（Mac 窗口 160x50 在场；手机打开、Mac 打字、手机打字、重连 3 次（尺寸一直不变）、锁屏、回来、离开，每一步核对 herdr-core 里的尺寸）；`test/host.live.test.mjs` 在协议层测同一套。
@@ -426,7 +426,68 @@ Claude Code 自己怎么回应（`probe/wheel-batch.mjs`：复制一个旧会话
 
 **⏺ 画成字，不画成 emoji。** Claude Code 每条回复前的 ⏺（U+23FA）默认是文字样式，Ghostty 画成一格的圆点。iOS 没有带这个字的文字字体，WebKit 退到 Apple Color Emoji，画成蓝色按钮（真 iPhone 和 iOS 模拟器都能看到；Mac 上的 Chrome 有文字字体，看不出来）。手机写入 xterm 前，在 ⌨ ⏏ ⏭ ⏮ ⏯ ⏱ ⏲ ⏸ ⏹ ⏺ 后面补 VS15（U+FE0E，「按文字画」），已经带 VS15 / VS16 的不动（`app/src/text-style.js`，`test/text-style.test.mjs`）。xterm 仍算一格，`dev/flicker-smoke.mjs` 的 19 种宽度仍全对。
 
-首屏可能比 `term.open` 的回复先到。页面在拿到流编号前先把输出存起来，拿到后再放。
+首屏可能比 `term.open` 的回复先到。页面在拿到流编号前先把输出存起来，拿到后再放（「终端会话状态机」的 `early`）。
+
+## 终端会话状态机（2026-11-09）
+
+一个终端页的流和尺寸，由一个纯函数状态机管：`app/src/term-session.js`。「纯」的意思：没有 DOM、计时器和网络，只有 `step(状态, 事件) → { 新状态, 效果 }`。网页版（`app/src/main.js` `openTerm`）和原生 App（`ios/App.tsx` `TermScreen`）把事件交给它，再执行它给的效果。两边的规则只写一次，测试不用浏览器（`test/term-session.test.mjs`，42 条，合计约 3 ms）。
+
+**为什么。** 以前两边各写一份（`s`、`opening`、`opened`、`sized`、`leads`、`fitSent`、`early` 散在闭包里），已经不一样了。原样抄出旧代码跑同一组场景（`.scratch/old-shells.mjs`，2026-11-09）：
+
+| 场景 | 旧原生 App | 旧网页版 | 现在 |
+|---|---|---|---|
+| `term.open` 在路上时格子变了（转屏）→ 打开后补发新格子 | 对 | **错**（不补发，终端停在旧格子） | 对 |
+| `term.open` 在路上时手机离开 → 打开后发 `fit: null` | **错**（手机一直占着尺寸） | **错** | 对 |
+| 流断开重开的 800 ms 里打的字 | **丢了** | **丢了** | 留着，重开后按顺序发出 |
+| `term.open` 在路上时连接断了 | **显示「打不开：连接已断开」** | **同左** | 「连接断开，正在重连…」，连上后再开 |
+| `term.open` 在路上时换了连接（中继 ↔ 直连） | **新连接上不再打开** | **同左** | 关掉旧回复的流，在新连接上再开 |
+
+**阶段（`phase`）。**
+
+| 阶段 | 意思 | 去向 |
+|---|---|---|
+| `waiting` | 等连接和页面都就绪 | 都就绪 → `opening` |
+| `opening` | `term.open` 在路上；收到的流事件存进 `early` | 回复 → `live`；连接断了 → `waiting`；连接换了 → 马上在新连接上再开（不等旧回复）；真失败 → `failed` |
+| `live` | 有流编号 `s` | 流 `closed`（其它原因）→ `retrying`；连接断了 → `waiting`；`exited` / `replaced` → 结束 |
+| `retrying` | 等 800 ms（`RETRY_MS`）再开 | → `waiting` → `opening` |
+| `failed` | 宿主拒绝打开（例如终端没了）。提示「打不开：…」 | 下一次连接就绪再试 |
+| `exited` / `replaced` | 程序退出 / 别的页面接手了（这台手机开了超过 4 个流，宿主关掉最早的：`host/phones.js` `MAX_STREAMS`）。提示「程序已退出（N）」/「这个终端在别的页面打开了」。不自动重试 | 下一次连接就绪再开（和以前一样） |
+| `disposed` | 页面关了；之后回来的流马上 `term.close` | — |
+
+**事件。** `link {ready, renewed}`（`renewed`：在新连接上就绪；网页版是 `Duo` 的每次 `ready`，原生 App 是 `conn.ts` 的 `linkEpoch` 变了）、`view`（页面能画了）、`fit {cols, rows}`、`away {on}`（后台、锁屏、页面隐藏）、`opened {r, epoch}`、`openFailed {message, epoch}`、`stream {msg}`、`input {m, p, after}`、`retry`、`dispose`。
+
+**效果。** `rpc term.open`（结果带着 `epoch` 送回来）、`rpc term.close`、`notify`（`term.fit` / `term.input` / `term.press`）、`view`（`open` / `out` / `size`，就是原生 App 网页的消息）、`notice`（终端下面那行字）、`retry {ms}`。
+
+**规则。**
+
+1. **一个连接一个 `epoch`。** 每次连接就绪 `epoch + 1`。`term.open` 还在旧连接上没回时，马上在新连接上再开（旧请求最长要等 30 秒的 rpc 超时）。旧 `epoch` 的回复到了只关掉那条流，不再开第三次；旧 `epoch` 的失败不算数。
+2. **格子只在 `live`、Mac 报尺寸（`sized`）、连接就绪时发，且只在变了时发。** 手机离开时发 `null`；没量到格子时不发。`term.open` 带的是打开那一刻的格子；回复后马上对一次，变了就补发 `term.fit`。**顺序：先 `term.fit`，再补发存着的输入**（效果数组就是这个顺序），字才按新格子进程序，中间不多一次旧格子的重画。
+3. **打的字不丢。** 流不在时（`opening`、`retrying`、断线的 `waiting`），`term.input` / `term.press` 按顺序存在 `queue` 里（最多 `QUEUE_MAX` = 256 条，多的计数），提示「（刚输入的内容重连后发出）」。重开后用新 `s` 按顺序发出。程序退出、别的页面接手（`replaced`）、真打不开时，存的字作废，提示里写「有 N 次输入没发出去」；之后打的字不收。滚轮和鼠标报告不存：它们指的是当时屏幕上的位置。
+4. **主导。** `leads` 只看 `leadsAfterSize`（「多个窗口怎么同步」）。重开带 `lead: leads || !opened`。
+5. **旧宿主照旧。** `sized: false` 的流从不发 `term.fit`，页面跟 Mac 的尺寸（原生 App：`terminals.list` 的行列，网页版 `onList`）。
+
+**两边壳子做的事。** 量格子、跟踪前后台、把 `view` 画到 xterm（网页版 `draw()`）或发给页面（原生 App `post()`）、把输入放进一条按顺序的队列（`typed()`：图片之间等 `after` 毫秒；等待中流换了，就交回会话重发）。队列用 `enqueue()` 接：一步出错只记一条警告，后面的输入照常发（以前一次同步异常会让这一页之后的输入全部静默丢失）。协议没变：消息名、字段和以前一样，新手机页 + 旧宿主、旧手机页 + 新宿主都照旧。
+
+**没做的（有原因）。**
+
+- 离开后台再回来，重开时多重画一次（review F6）：手机这边改不了。Mac 的旧尺寸和离开期间的输出一起在回放里，丢掉就丢了历史。要宿主一起改协议，先写进本文档再做。
+- 「中继没把 `online` 发过来，手机一直 connecting」（review F3）：不成立。中继在 101 之前同步发 `\0online` / `\0offline`（`relay/src/index.js` `fetch`）。真问题在别处：`pong` 会刷新 `lastHeard`，所以中继上 `silent` 检查永远不会触发（`app/src/link.js` `receive`）；手机一直卡在 `connecting` 时，只有中继 30–60 秒的认证超时把它踢掉。所以仍给这一步加了期限（「结构」，`test/link-steps.test.mjs`），不依赖中继一定先发状态帧。
+
+### 其它隐式状态机（2026-11-09 盘点）
+
+盘点了整个仓库。下表只记位置和最要紧的缺口；改其中任何一个，先在这里把规则写清，再配 Red→Green 测试。
+
+| 状态机 | 位置 | 状态在哪 | 最要紧的缺口 |
+|---|---|---|---|
+| 终端会话 | `app/src/term-session.js` | 显式（本节） | — |
+| 中继连接 | `app/src/link.js` | `status` + `ws` / `hs` / `cipher` / `deadline` 等计时器 | 每步的期限已补齐（「结构」）；`connecting` 一个字盖住 5 种情况；中继的 `pong` 会刷新 `lastHeard`，`silent` 在中继上不起作用 |
+| 中继 + 直连 | `app/src/direct.js` `Duo` | `trying` / `direct` / `active` 共用一个 `timer` | 中继再次就绪会取消直连的退避 |
+| 宿主连接与配对 | `host/phones.js` `peer.stage` | 按 `cid` 判断，不按对象 | **配对确认中途重发 hello：宿主把新密钥加进信任表（SAS 被绕过）** |
+| 宿主流 / 打字 viewer / 重印 | `host/phones.js` `openStream` / `typer` / `reprint` | `stream.*` 字段、`parked` | `Core.release()` 对没注册的通道什么都不做，viewer 留在 herdr-core 里；`Core.call` 没有超时 |
+| herdr-core 连接 | `host/terminals.js`、`host/relay-link.js` | `core` / `ws` + 计时器 | 唤醒时两次 `connect()` 并发，漏一个 Core / 第二个 WebSocket |
+| 语音 | `ios/App.tsx`、`app/src/main.js`、`host/voice.js` | `voiceState`、`held`、`peer.recognizing` | 原生 App：`voice.start` 回来前松手会录满 60 秒 |
+| 打字先等着 | `app/src/live-line.js` + 两边的 `held` | `value` / `typed` / `held` / `letGo` | 删到已发出的字里再提交，字会重复；`letGo` 带到下一个问题 |
+| 原生 App 配对 / 多台 Mac | `ios/src/conn.ts` | `status` / `sas` / `paired` / `addingMac` / `bgLinks` | Mac 拒绝后手机停在 SAS 页，不显示错误 |
 
 ## probe 怎么跑
 

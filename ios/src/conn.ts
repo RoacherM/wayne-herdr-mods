@@ -28,6 +28,8 @@ export const addingMac = signal<boolean>(false);
 export const list = signal<List>({ terminals: [], layout: [] });
 export const info = signal<any>(null);
 export const activeTermAddress = signal<string | null>(null);
+/** +1 each time the link is ready on a new connection (with `status`, in one batch): streams on the old one are gone. */
+export const linkEpoch = signal(0);
 export const notifyPermission = signal<"prompt" | "granted" | "denied">("prompt");
 export const notifyEnabled = signal<boolean>(false);
 
@@ -472,7 +474,7 @@ function start(saved: Saved, pair?: { token: string; name: string }) {
   console.log(`link: start ${pair ? "pairing" : "resume"} → ${saved.relay} desktop ${saved.desktopId}`);
   l.addEventListener("status", (e: any) => {
     if (link === l) {
-      status.set(e.detail.status);
+      batch(() => { status.set(e.detail.status); if (e.detail.status === "ready") linkEpoch.set(linkEpoch() + 1); });
       if (e.detail.status === "ready" || e.detail.status === "connecting") problem.set("");
       setMacStatus(saved.desktopId, e.detail.status);
     }

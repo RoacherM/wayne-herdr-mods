@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
-import { b64, newBoxKeys } from '../shared/e2e.js';
+import { b64, desktopAccept, newBoxKeys } from '../shared/e2e.js';
 
 const FAKE_NSH = `
 let running = null, batching = 0;
@@ -59,11 +59,11 @@ async function loadConn() {
 }
 
 /** conn.ts with a saved Mac booted onto a fake socket (OPEN, handshake not started). */
-async function booted() {
+async function booted(desktopKeys = newBoxKeys()) {
   FakeSocket.all = [];
   globalThis.WebSocket = FakeSocket;
   globalThis.__nshSaved = JSON.stringify({
-    relay: 'https://relay.test', desktopId: 'd1', desktopKey: b64(newBoxKeys().publicKey), deviceSecret: b64(newBoxKeys().secretKey),
+    relay: 'https://relay.test', desktopId: 'd1', desktopKey: b64(desktopKeys.publicKey), deviceSecret: b64(newBoxKeys().secretKey),
   });
   const { conn, nsh } = await loadConn();
   await conn.boot();
@@ -89,4 +89,24 @@ test('ios conn: coming back to the foreground wakes the link on any screen', asy
   nsh.lifecycle.set('background');
   nsh.lifecycle.set('active'); // no HomeScreen / TermScreen mounted
   assert.ok(ws.sent.includes('ping'), 'wake() pinged the socket');
+});
+
+/** Play the Mac's side of one handshake on the fake socket, up to `ready` (shared/e2e.js). */
+function macReady(ws, D) {
+  ws.onmessage({ data: '\u0000online' });
+  const desk = desktopAccept(D, ws.sent.at(-1));
+  ws.onmessage({ data: desk.welcome });
+  ws.onmessage({ data: desk.cipher.seal({ type: 'ready', desktopName: 'Mac', deviceId: 'p1', paired: false }) });
+}
+
+test('ios conn: linkEpoch moves with each ready, in the same batch as status (TermScreen reopens on it)', async (t) => {
+  const D = newBoxKeys();
+  const { conn, nsh, ws, done } = await booted(D);
+  t.after(() => { ws.onclose(); return done(); }); // not ready: forget() does not wait for the Mac's answer
+  const seen = [];
+  nsh.effect(() => { seen.push(`${conn.status()}#${conn.linkEpoch()}`); });
+  macReady(ws, D);
+  macReady(ws, D); // the Mac restarted: a new session on the same socket
+  assert.equal(conn.linkEpoch(), 2);
+  assert.deepEqual(seen.filter((x) => x.startsWith('ready')), ['ready#1', 'ready#2'], `never "ready" with the old epoch: ${seen.join(' ')}`);
 });

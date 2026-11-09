@@ -59,7 +59,8 @@ export class Link extends EventTarget {
     this.stepTimer(this.t.connect, ws);
     ws.onopen = () => {
       if (this.ws !== ws) return;
-      clearTimeout(this.deadline); // the relay's online/offline frame follows at once
+      // The relay's online/offline frame follows at once; without it, do not wait forever.
+      this.stepTimer(this.t.handshake, ws);
       clearInterval(this.pingTimer);
       this.lastHeard = Date.now();
       this.pingTimer = setInterval(() => {
@@ -192,6 +193,9 @@ export class Link extends EventTarget {
     this.setStatus('error', { code, message });
     this.emit('fatal', { code, message });
     if (permanent) this.close();
+    // Not final: retry on a new socket (the error stays shown until then). Kept open, this socket
+    // has no deadline left and nothing would move it on.
+    else if (this.ws) this.drop(this.ws);
   }
 
   send(value) { if (this.cipher && this.ws?.readyState === 1) this.ws.send(this.cipher.seal(value)); }
