@@ -11,11 +11,6 @@ Agent 自动处理规则：只认领 `Ready` 栏的条目；修完用 `git commi
 
 | ID | 优先级 | 领域 | 标题 |
 |---|---|---|---|
-| [I-004](I-004-pairing-rehello-sas-bypass.md) | P0 | 安全 / 配对 | 配对确认中途重发 hello，宿主把新密钥加进信任表（SAS 被绕过） |
-| [I-005](I-005-core-release-unregistered-channel.md) | P1 | 宿主流 | `Core.release()` 对没注册的通道不发 CLOSE，viewer 留在 herdr-core 里 |
-| [I-006](I-006-ios-voice-release-before-start.md) | P1 | 语音 | 原生 App：`voice.start` 回来前松手，会录满 60 秒再输入 |
-
-来源：2026-11-09 隐式状态机盘点（DESIGN.md「终端会话状态机」→「其它隐式状态机」）。
 
 ## 2. Needs Decision（等用户拍板）
 
@@ -39,10 +34,13 @@ Agent 自动处理规则：只认领 `Ready` 栏的条目；修完用 `git commi
 
 | ID | 领域 | 标题 | Commit | 测试 |
 |---|---|---|---|---|
+| [I-006](I-006-ios-voice-release-before-start.md) | 语音 | 原生 App：`voice.start` 回来前松手，会录满 60 秒再输入 | `a30ac9a` | `test/voice-hold.test.mjs`、`nsh check`、`nsh test App.test.tsx`；待装到真机按一下 |
 
 ## 5. Done（最近已闭环，单卡已删）
 
 | ID | 领域 | 标题 | Commit | 测试 | 日期 |
 |---|---|---|---|---|---|
+| I-007 | 安全 / 配对 | 配对确认中途重发 hello，宿主把新密钥加进信任表（SAS 被绕过）（原编号与下面的 I-004 重复，改为 I-007） | `9a91256` | `test/e2e.test.mjs` | 2026-11-09 |
+| I-005 | 宿主流 | `Core.release()` 对没注册的通道不发 CLOSE，viewer 留在 herdr-core 里 | `5be9a9c` | `test/core-release.test.mjs`、`probe/release.mjs` | 2026-11-09 |
 | I-004 | `ios` | nsh 原生 Herdr iOS App（免费账号，不上架） | `82a83dd` | `nsh test App.test.tsx` + 真机 iPhone | 2026-11-07 |
 | I-000 | `herdr-app` | `my-files` 文件树/预览复制与 Markdown 半透明选区修复 | `50bfd18` | `herdr-app check` | 2026-11-05 |

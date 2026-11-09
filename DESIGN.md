@@ -80,6 +80,7 @@ iPhone 浏览器 / PWA ──wss /v1/client/<id>──▶ Cloudflare Worker + DO
 
 - **显示**：`observe: true` + `resize_notifications: true`。只看，从不改尺寸。herdr-core 改尺寸时，在这条流里先发 RESIZE 帧，再发新尺寸的整屏重画（`viewers.rs` `apply_size`；这个选项只对 observe 生效）。宿主把 RESIZE 原样转成 `size` 事件，和输出同一个顺序，手机先改格子再画后面的字节。
 - **打字**：普通 viewer，尺寸是手机的格子（`fit`）。它自己收到的输出直接丢掉，信用立刻回给 core。
+- **松开 viewer（`Core.release`，host/hc.js，2026-11-09 修）**：不管 handler 注册没有都发 CLOSE——attach 回复还在路上、流先被松开时也发，不然 viewer 留在 herdr-core 里。发过的通道记进 `released`，迟到的帧丢掉；通道号有了新主人才放行（它的 CLOSE 回显，或 channel 0 的回复重新用了这个号）。core 已经先关了（CLOSE 存在 `early` 里）时只清掉不回发。实测（hc 0.1.19，2026-11-09，`probe/release.mjs`）：herdr-core 对客户端 CLOSE 回一个 CLOSE，通道号不会马上复用。
 - 手机的格子按键盘收起时的高度算。键盘弹出不改尺寸（程序不用重画），页面跟着光标滚。
 
 不闪的细节：
@@ -110,6 +111,8 @@ iPhone 浏览器 / PWA ──wss /v1/client/<id>──▶ Cloudflare Worker + DO
 | 命令行 | `wayne-herdr-mods devices`（`devices rm <id>`） | 只列出、移除。配对只在 Herdr.app 里做（2026-11-04 起，终端里打二维码的方式删了）。 |
 
 「手机」窗口是一个 Herdr.app mod（插件），叫 `wayne-phones`，在 `herdr-app/mods/wayne-phones/`。它是下面「Herdr.app 里的界面」的一部分。
+
+- 确认等人时点「允许 / 拒绝」之前，同一条连接上再来一个 hello 会换掉这台对端的密钥（重新握手）。这时那次配对请求作废：核对码的对话框关掉，新握手的密钥不进信任表，对方要从头再来（2026-11-09 修，`test/e2e.test.mjs`）。二维码本身还有效，真手机可以重试。
 
 - 它不直接连后台服务，只运行 `wayne-herdr-mods ctl <方法> <json>`。`ctl` 走后台服务的控制 socket：`status`、`pair.start`、`pair.cancel`、`pair.decide`、`devices.remove`、`watch`。`watch` 在有变化时返回，最多等 20 秒，所以窗口跟着手机上线、下线、来配对。有二维码时 `ctl` 顺带给出 `qrSvg`。
 - 二维码写成 `~/.config/herdr-app/data/wayne-phones/qr-<到期时间>.svg` 再显示（`image()` 只读文件）。不写进 mod 目录：那里的文件一变 mod 就重新加载。
@@ -462,7 +465,7 @@ Claude Code 自己怎么回应（`probe/wheel-batch.mjs`：复制一个旧会话
 
 1. **一个连接一个 `epoch`。** 每次连接就绪 `epoch + 1`。`term.open` 还在旧连接上没回时，马上在新连接上再开（旧请求最长要等 30 秒的 rpc 超时）。旧 `epoch` 的回复到了只关掉那条流，不再开第三次；旧 `epoch` 的失败不算数。
 2. **格子只在 `live`、Mac 报尺寸（`sized`）、连接就绪时发，且只在变了时发。** 手机离开时发 `null`；没量到格子时不发。`term.open` 带的是打开那一刻的格子；回复后马上对一次，变了就补发 `term.fit`。**顺序：先 `term.fit`，再补发存着的输入**（效果数组就是这个顺序），字才按新格子进程序，中间不多一次旧格子的重画。
-3. **打的字不丢。** 流不在时（`opening`、`retrying`、断线的 `waiting`），`term.input` / `term.press` 按顺序存在 `queue` 里（最多 `QUEUE_MAX` = 256 条，多的计数），提示「（刚输入的内容重连后发出）」。重开后用新 `s` 按顺序发出。程序退出、别的页面接手（`replaced`）、真打不开时，存的字作废，提示里写「有 N 次输入没发出去」；之后打的字不收。滚轮和鼠标报告不存：它们指的是当时屏幕上的位置。
+3. **打的字不丢，按的键丢。** 流不在时（`opening`、`retrying`、断线的 `waiting`），`term.input` 按顺序存在 `queue` 里（最多 `QUEUE_MAX` = 256 条，多的计数），提示「（刚输入的内容重连后发出）」。`term.press` 不存：一个键回答的是当时的屏幕，重连后补发可能答到另一个提示上（Esc、^C、方向键），所以丢掉、计数，提示「刚按的键没有发出」（用户定的，2026-11-09）。重开后存的字用新 `s` 按顺序发出，丢掉的键报「有 N 次输入没发出去」。程序退出、别的页面接手（`replaced`）、真打不开时，存的字作废；之后打的字不收。滚轮和鼠标报告不存：它们指的是当时屏幕上的位置。
 4. **主导。** `leads` 只看 `leadsAfterSize`（「多个窗口怎么同步」）。重开带 `lead: leads || !opened`。
 5. **旧宿主照旧。** `sized: false` 的流从不发 `term.fit`，页面跟 Mac 的尺寸（原生 App：`terminals.list` 的行列，网页版 `onList`）。
 
@@ -482,10 +485,10 @@ Claude Code 自己怎么回应（`probe/wheel-batch.mjs`：复制一个旧会话
 | 终端会话 | `app/src/term-session.js` | 显式（本节） | — |
 | 中继连接 | `app/src/link.js` | `status` + `ws` / `hs` / `cipher` / `deadline` 等计时器 | 每步的期限已补齐（「结构」）；`connecting` 一个字盖住 5 种情况；中继的 `pong` 会刷新 `lastHeard`，`silent` 在中继上不起作用 |
 | 中继 + 直连 | `app/src/direct.js` `Duo` | `trying` / `direct` / `active` 共用一个 `timer` | 中继再次就绪会取消直连的退避 |
-| 宿主连接与配对 | `host/phones.js` `peer.stage` | 按 `cid` 判断，不按对象 | **配对确认中途重发 hello：宿主把新密钥加进信任表（SAS 被绕过）** |
-| 宿主流 / 打字 viewer / 重印 | `host/phones.js` `openStream` / `typer` / `reprint` | `stream.*` 字段、`parked` | `Core.release()` 对没注册的通道什么都不做，viewer 留在 herdr-core 里；`Core.call` 没有超时 |
+| 宿主连接与配对 | `host/phones.js` `peer.stage` | 按 `cid` 判断，不按对象 | 配对确认中途重发 hello 会换 `cipher`/`pub`：已修（2026-11-09）——那次配对作废，新密钥不进信任表 |
+| 宿主流 / 打字 viewer / 重印 | `host/phones.js` `openStream` / `typer` / `reprint` | `stream.*` 字段、`parked` | `Core.release()` 已修（2026-11-09）：没注册的通道也发 CLOSE，见本节上面「松开 viewer」；`Core.call` 没有超时 |
 | herdr-core 连接 | `host/terminals.js`、`host/relay-link.js` | `core` / `ws` + 计时器 | 唤醒时两次 `connect()` 并发，漏一个 Core / 第二个 WebSocket |
-| 语音 | `ios/App.tsx`、`app/src/main.js`、`host/voice.js` | `voiceState`、`held`、`peer.recognizing` | 原生 App：`voice.start` 回来前松手会录满 60 秒 |
+| 语音 | `ios/App.tsx`、`app/src/main.js`、`host/voice.js` | iOS：`app/src/voice-hold.js` 状态机；`held`、`peer.recognizing` | 原生 App：`voice.start` 回来前松手会录满 60 秒——已修（2026-11-09），见「语音输入」 |
 | 打字先等着 | `app/src/live-line.js` + 两边的 `held` | `value` / `typed` / `held` / `letGo` | 删到已发出的字里再提交，字会重复；`letGo` 带到下一个问题 |
 | 原生 App 配对 / 多台 Mac | `ios/src/conn.ts` | `status` / `sas` / `paired` / `addingMac` / `bgLinks` | Mac 拒绝后手机停在 SAS 页，不显示错误 |
 
@@ -544,6 +547,7 @@ node probe/image-paste.mjs [claude|codex|agy]   # 图片路径粘贴进 agent �
 - 原因 2：上传的分块存在 Mac 的「这条连接」上。手机在中继和直连之间切换，或者重连，分块就找不到了，也报「已过期」。改法：按手机（设备）存，换连接也能找到。
 - 记录：每次录音写一条 `voice`（`kb` 大小、`ms` 时长、`muted` 开始时是否静音、`err`：`null` 成功，`silence` 没听清，`empty` 0 字节，`expired`、`timeout`、`link`、`other`）。
 - 测法：`test/voice.test.mjs`（静音的流被换掉、0 字节不上传）；`test/host.live.test.mjs`（分块在一条连接上传，在下一条连接上用）。两个测试在旧代码上都失败。iOS 真机上切后台的行为没有自动测，是从记录推断的。
+- iOS 的按住说话由纯状态机 `app/src/voice-hold.js` 决定（2026-11-09）：按下、松开、`voice.start` 回来、页面消失都是事件，效果只有 start / recording / finish / cancel / hint。修的是：`voice.start` 还没回来就松手，以前落在「没状态」上什么也不做，一直录到 60 秒；现在 `held`/`gone` 决定迟到的 `started` 是进 `rec` 还是补 `cancel`。网页版 `app/src/main.js` 用自己的 `held` 已覆盖同样情况，不用这个模块。测法：`test/voice-hold.test.mjs`。
 
 备选（不做，除非云端用不了）：本地 whisper.cpp。本机 M5 Pro 实测 9.7 秒中文，热启动 0.6 秒；中文对，英文词会被拆开（`npm` → `N,T,M`）。模型在 `~/.local/share/herdr-relay/models/`（574 MB；改名时没搬也没删，留在旧目录），不用就删。
 

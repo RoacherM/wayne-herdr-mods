@@ -1,7 +1,7 @@
 ---
 id: I-006
 title: 原生 App 按住说话：voice.start 回来前松手，会录满 60 秒再输入
-status: ready
+status: verifying
 priority: P1
 subsystem: DESIGN.md「语音输入（已实现）」
 repo: self
