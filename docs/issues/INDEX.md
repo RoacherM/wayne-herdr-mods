@@ -40,7 +40,7 @@ Agent 自动处理规则：只认领 `Ready` 栏的条目；修完用 `git commi
 
 | ID | 领域 | 标题 | Commit | 测试 | 日期 |
 |---|---|---|---|---|---|
-| I-008 | `herdr-app` / 宿主 | 观测面板：侧栏里把当前窗格的 agent、它的决定和子 agent 画成一张 git graph，数据全部来自 herdr-core（`records`、`parent`、标签） | 未提交 | `test/board.test.mjs`、`test/board-layout.test.mjs`、`test/claude-hook.test.mjs`、`herdr-app check`；真窗口里的样子待用户看 | 2026-11-12 |
+| I-008 | `herdr-app` / 宿主 | 观测面板：侧栏里把当前窗格的 agent、它的决定和子 agent 画成一张 git graph，数据全部来自 herdr-core（`records`、`parent`、标签） | `8062dea` | `test/board.test.mjs`、`test/board-layout.test.mjs`、`test/claude-hook.test.mjs`、`herdr-app check`；真窗口里的样子待用户看 | 2026-11-12 |
 | I-007 | 安全 / 配对 | 配对确认中途重发 hello，宿主把新密钥加进信任表（SAS 被绕过）（原编号与下面的 I-004 重复，改为 I-007） | `9a91256` | `test/e2e.test.mjs` | 2026-11-09 |
 | I-005 | 宿主流 | `Core.release()` 对没注册的通道不发 CLOSE，viewer 留在 herdr-core 里 | `5be9a9c` | `test/core-release.test.mjs`、`probe/release.mjs` | 2026-11-09 |
 | I-004 | `ios` | nsh 原生 Herdr iOS App（免费账号，不上架） | `82a83dd` | `nsh test App.test.tsx` + 真机 iPhone | 2026-11-07 |
