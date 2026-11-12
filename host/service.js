@@ -20,6 +20,7 @@ import { createPush } from './push.js';
 import { createRelayLink } from './relay-link.js';
 import { createRtcLink } from './rtc-link.js';
 import { createState } from './state.js';
+import { createBoard } from './board.js';
 import { createTerminals } from './terminals.js';
 import { checkKey, KEYCHAIN_KEYS, keyTail, recognize, sayAndRecognize, toWav } from './voice.js';
 
@@ -44,11 +45,18 @@ export async function startService({ relayUrl = process.env.WAYNE_HERDR_MODS_URL
   });
   // What each question looked like, kept on this Mac to teach the phone new menus (ask-samples.js).
   const samples = createAskSamples({ dir: state.dir, core: () => terminals.core(), log });
+  // The observability board's memory (board.js). Offline, the terminal list is empty: that is not
+  // "every agent ended", so the board only looks while the core is connected.
+  const board = createBoard({ dir: state.dir, log });
+  const watch = () => { if (terminals.state() === 'online') board.update(terminals.every()); };
   const terminals = createTerminals({
     coreOptions, log,
-    onChange: () => phones?.broadcast('terminals', {}),
-    onStatus: (change) => { notifier.onStatus(change); samples.onStatus(change); },
-    onCore: () => { phones?.coreChanged(); changed(); },
+    // The board looks after every single event: two changes inside one moment (a sub-agent that starts
+    // and ends, two notes) are both history. onChange (at most every 250 ms) adds the one change that
+    // is not an event: a `missed` snapshot replacing the whole list.
+    onChange: () => { phones?.broadcast('terminals', {}); watch(); },
+    onStatus: (change) => { notifier.onStatus(change); samples.onStatus(change); watch(); },
+    onCore: () => { phones?.coreChanged(); changed(); watch(); },
   });
   const voice = createVoice({ dir: state.dir, log, keys: voiceKeys });
   let voiceShown = keyTail(await voiceKeys.read()); // what status shows of the key; read once, then on each change
@@ -167,6 +175,7 @@ export async function startService({ relayUrl = process.env.WAYNE_HERDR_MODS_URL
       link.dispose();
       rtc.dispose();
       terminals.dispose();
+      board.dispose();
       server.close();
       await rm(sockPath, { force: true });
     },

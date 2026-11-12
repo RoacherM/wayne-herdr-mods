@@ -113,22 +113,21 @@ export default class Tabs extends View {
     const panel = find(root, "panel"), body = find(root, "panel-body");
     // This layout has one fixed panel button, so the welcome screen's panel choice
     // does not apply here. The list still drives the per-space memory below.
-    const enabled = ["files", "changes"];
+    const enabled = ["files", "changes", "board"];
     this.syncPanel(space, panel, body, enabled);
-    // One icon at the far right of the bar opens and closes the file panel, like the
-    // panel button in an editor's title bar. It shows whichever panel is active, and
-    // starts on the file tree.
-    const panelToggle = () => {
-      const on = Boolean(panel) && !panel.hidden;
-      return div().id("panel-toggle").size(26).flex_none().flex().items_center().justify_center().rounded(6)
-        .bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted)
-        .hover(s => s.bg(t.hover).text_color(t.foreground)).on_mouse_down("left", stop)
-        .on_click(() => {
-          if (on) run("layout.hide", { id: "panel" });
-          else { run("layout.select", { stack: "panel-body", child: "files" }); run("layout.show", { id: "panel" }); }
-        })
-        .child(svg("mods/my-tabs/panel-right.svg").size(15));
-    };
+    // Two icons at the far right of the bar share the one side panel, like the panel buttons in an
+    // editor's title bar: the board (wayne-board: the agent of the window you are in, its decisions
+    // and its sub-agents) and the files (whichever of files / changes is active; starts on the tree).
+    // A lit icon closes the panel; the other one switches what it shows.
+    const shows = panel && !panel.hidden ? body?.active ?? null : null;
+    const panelToggle = (id, icon, on, child) => div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6)
+      .bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted)
+      .hover(s => s.bg(t.hover).text_color(t.foreground)).on_mouse_down("left", stop)
+      .on_click(() => {
+        if (on) run("layout.hide", { id: "panel" });
+        else { run("layout.select", { stack: "panel-body", child }); run("layout.show", { id: "panel" }); }
+      })
+      .child(svg(icon).size(15));
     return h_flex().size_full().min_w(0).px(10).pl(lightsPadding).gap(3).items_center().bg(t.chrome).border_b(1).border_color(t.border)
       .on_mouse_up("left", () => { this.pressed = null; })
       .on_scroll_wheel(e => { if (Math.abs(e.delta.y) >= 1) run(e.delta.y > 0 ? "tab.prev" : "tab.next"); })
@@ -139,6 +138,7 @@ export default class Tabs extends View {
         .child(button("close-window", w.platform === "windows" ? svg("mods/my-tabs/win-close.svg").size(16) : svg("mods/pane/close.svg").size(13), () => run("window.close"))))
       // wayne-herdr-mods: the phones paired with this Mac, and pairing a new one (mods/wayne-phones).
       .child(button("phones", svg("mods/wayne-phones/phone.svg").size(15), () => run("mod.open", { name: "wayne-phones" })))
-      .child(panelToggle());
+      .child(panelToggle("board", "mods/wayne-board/board.svg", shows === "board", "board"))
+      .child(panelToggle("panel-toggle", "mods/my-tabs/panel-right.svg", shows !== null && shows !== "board", "files"));
   }
 }

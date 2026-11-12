@@ -10,7 +10,7 @@
 | `host/` | Mac 常驻服务与 `wayne-herdr-mods` CLI | 代码跑在 Mac Node.js 进程里，负责连接 `herdr-core` / 中继 / 钥匙串吗？ |
 | `relay/` | Cloudflare Worker + Durable Object | 代码跑在 Cloudflare 边缘、且只转发密文或托管静态页吗？ |
 | `shared/` | 手机与 Mac 共用的纯逻辑（`e2e.js`、`coast.js`、`wheel.js`、`pieces.js`） | 双端都要用且不依赖 Node/DOM 专有 API 吗？ |
-| `herdr-app/` | `Herdr.app` 自定义布局与 mod（`main-preview`、`my-tabs`、`my-files`、`wayne-phones`） | 是装进 `~/.config/herdr-app/` 的界面配置或 mod 吗？ |
+| `herdr-app/` | `Herdr.app` 自定义布局与 mod（`main-preview`、`my-tabs`、`my-files`、`wayne-phones`、`wayne-board`） | 是装进 `~/.config/herdr-app/` 的界面配置或 mod 吗？ |
 | `test/` | 单测与全链路协议测试 | 不预先起任何服务就能跑通吗？需要中继时用 `test/local-relay.mjs` 起临时实例 |
 | `dev/` | 无头 Chrome 冒烟（`*-smoke.mjs`）、`fake-desktop.mjs`、`bench.mjs`、`asks.mjs` | 需要起无头浏览器、假桌面或跑分吗？文件第 1 行写明前置条件 |
 | `probe/` | `herdr-core` 行为探针（`sync.mjs` 等） | 是在验证外部二进制/协议的未知行为吗？ |
@@ -35,6 +35,7 @@
 | `app/` 终端页（画面、滚动、键盘、输入） | 「终端页怎么显示」「终端页布局」「画面不闪」「滑动延迟」「重印整段对话」 |
 | `host/voice.js`、`app/src/voice.js` | 「语音输入（已实现）」 |
 | `herdr-app/` | 「Herdr.app 里的界面」 |
+| `host/board.js`、`host/claude-hook.js`、`herdr-app/mods/wayne-board/` | 「观测面板」 |
 | `ios/`、`shell/ios/` | 「原生 App（nsh）」+ [docs/native-app.html](docs/native-app.html) |
 | `probe/` | 「probe 怎么跑」及对应章节的版本号与日期 |
 
@@ -61,3 +62,7 @@ ios/host/install.sh                                # 原生 App 装到真 iPhone
 ## 5. Issue 自动处理闭环
 
 处理 [docs/issues/INDEX.md](docs/issues/INDEX.md) 时：只自动认领 `status: ready` 的条目；按卡内 `verify` 先跑出 Red → 改代码跑出 Green → 提交并更新 [DESIGN.md](DESIGN.md) → 将状态改为 `done` 并删除已 `done` 的单张 `docs/issues/I-*.md`。
+
+## 6. 教训
+
+- **Herdr.app 里新加的界面，原型要画出它在窗口里的位置和它显示谁的数据**：默认做成侧栏、只看当前窗格里的 agent，不开全屏标签、不铺所有 agent。用户说「全局」「全部」这类范围词时，先对照他前面给的单位（如 session based）再定范围。原因：2026-11-12 观测面板的原型只确认了画法，装上后「全屏」和「显示所有 agent」都被否，布局重写。

@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 import QRCode from 'qrcode';
 import { controlCall, DEFAULT_RELAY, startService, VOICE_TEST, voiceWords } from './service.js';
 import { mergePrograms, readHerdrFiles } from './herdr-files.js';
+import { editSettingsFile, mergeHook, removeHook, said } from './claude-hook.js';
 import { createMetricsStore, summarize } from './metrics.js';
 import { renderReport } from './metrics-report.js';
 import { defaultDataDir } from './state.js';
@@ -204,9 +205,10 @@ async function install() {
     catch (error) { if (i >= 20) throw error; execFileSync('/bin/sleep', ['0.3']); }
   }
   const mod = installMod();
+  const hook = editClaudeSettings(mergeHook);
   const herdr = mod ? `\n  Herdr  ${mod}（布局 main-preview；标签栏右上角的手机图标打开「手机」窗口）` : '';
   const old = moved.length ? `\n\n从 herdr-relay 搬过来：\n${moved.map((m) => `  ${m}`).join('\n')}` : '';
-  console.log(`已安装：\n  程序   ${target}\n  命令   ${binPath}\n  自启动 ${plistPath}\n  日志   ${logPath}${herdr}\n  Skill  ${skill}${old}\n\n配对：在 Herdr.app 里点标签栏右上角的手机图标。`);
+  console.log(`已安装：\n  程序   ${target}\n  命令   ${binPath}\n  自启动 ${plistPath}\n  日志   ${logPath}${herdr}\n  Skill  ${skill}${hook ? `\n  Hook   ${hook}（Claude Code 的 UserPromptSubmit：把你说的话记到终端标签上，给观测面板用）` : ''}${old}\n\n配对：在 Herdr.app 里点标签栏右上角的手机图标。`);
 }
 
 // ------------------------------------------------------------------ the old name --
@@ -269,6 +271,15 @@ function installSkill() {
   return skillDir;
 }
 
+/** Claude Code's own settings, changed by `edit` (claude-hook.js). Only when Claude Code is set up on this Mac. */
+function editClaudeSettings(edit) {
+  const file = join(home, '.claude', 'settings.json');
+  if (!existsSync(dirname(file))) return null;
+  if (editSettingsFile(file, edit) !== 'skipped') return file;
+  console.error(`${file} 不是合法 JSON，或者 hooks 的写法不是我们认识的：没有改它。`);
+  return null;
+}
+
 function uninstall() {
   try { execFileSync('launchctl', ['bootout', `gui/${uid}/${LABEL}`], { stdio: 'ignore' }); } catch {}
   for (const p of [plistPath, binPath]) if (existsSync(p)) rmSync(p);
@@ -276,6 +287,7 @@ function uninstall() {
   rmSync(skillDir, { recursive: true, force: true });
   rmSync(installDir, { recursive: true, force: true });
   uninstallMod();
+  editClaudeSettings(removeHook);
   console.log(`已停止并移除。密钥和已配对设备保留在 ${dataDir}（删除这个目录等于重置所有配对）。`);
 }
 
@@ -355,7 +367,7 @@ async function metrics() {
   if (!args.includes('--no-open')) execFileSync('open', [out]);
 }
 
-const commands = { serve, pair, ctl, devices, status, metrics, install, uninstall, voice: voiceCmd, '--skill': () => process.stdout.write(skillText()) };
+const commands = { serve, pair, ctl, devices, status, metrics, install, uninstall, said: () => said(), voice: voiceCmd, '--skill': () => process.stdout.write(skillText()) };
 if (!commands[cmd]) {
   console.log(HELP);
   process.exit(cmd === 'help' || cmd === '--help' ? 0 : 1);

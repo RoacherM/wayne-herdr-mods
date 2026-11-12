@@ -160,6 +160,13 @@
                       "content": {
                         "mod": "changes"
                       }
+                    },
+                    {
+                      "id": "board",
+                      "type": "block",
+                      "content": {
+                        "mod": "wayne-board"
+                      }
                     }
                   ]
                 }

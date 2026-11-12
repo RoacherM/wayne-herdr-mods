@@ -1,6 +1,6 @@
 ---
 name: wayne-herdr-mods
-description: "Wayne 的 Herdr 套件：用 iPhone 上的 Herdr App 操作这台 Mac 上 Herdr 的终端（配对手机、看谁在线、移除手机），以及 Herdr.app 里我们自己的界面（布局 main-preview、标签栏、文件面板、「手机」窗口）。用户提到手机连 Mac、配对手机、herdr-relay、wayne-herdr-mods，或要改 Herdr.app 的这套界面时使用。"
+description: "Wayne 的 Herdr 套件：用 iPhone 上的 Herdr App 操作这台 Mac 上 Herdr 的终端（配对手机、看谁在线、移除手机），以及 Herdr.app 里我们自己的界面（布局 main-preview、标签栏、文件面板、「手机」窗口、观测面板）。启动子 agent 或做了重要取舍时也要读（面板靠它看见你）。用户提到手机连 Mac、配对手机、herdr-relay、wayne-herdr-mods，或要改 Herdr.app 的这套界面时使用。"
 ---
 
 # wayne-herdr-mods
@@ -62,6 +62,20 @@ wayne-herdr-mods metrics                   # 同样的内容，打开一个报�
 测量：`echo.paint` 打字到看见、`scroll.lag` 全屏程序里滑动到画面跟上、`open.ms` 打开终端、`resume.paint` 切回页面到画出来、`resume.ready` 切回到连接恢复、`rtt.ms` 往返（含排队）、`rtt.ice` 直连时的网络往返（不含排队）、`macscroll.prog` 程序回应滚轮（Mac 上，不含网络）、`macscroll.behind` 滑动时在路上的数据（KB）、`reprint.kb` / `reprint.ms` 程序清掉历史整段重印的大小、到手机拿到新画面的时间（Mac 上；超过 64 KB 换成新首屏，`fresh: true`）、`scroll.p95` 滑动时慢的帧。原始记录每天一个文件：`~/.config/wayne-herdr-mods/metrics/YYYY-MM-DD.jsonl`。改了手机网页或连接的代码后，在仓库里跑 `node dev/bench.mjs`（只看滑动：`--scroll`）（要先 `npm run build` 和 `npm run relay:dev`）：它和上次比，慢了 20% 以上会指出来，退出码 1。
 
 提问样本：终端每次问你（程序报告 `blocked`），Mac 把那一屏存到 `~/.config/wayne-herdr-mods/asks/`（只在本机，最多 200 份）。手机上答不了某个问题时，在仓库里跑 `node dev/asks.mjs --show`，看那个问题的屏幕长什么样。
+
+## 让观测面板看得见你（每个 agent 都要做）
+
+Herdr.app 标签栏右上角的图标打开观测面板（右边的侧栏）：显示当前窗格里那个 agent 的决定，决定下面挂着子 agent。它只看 herdr-core 知道的事。所以：
+
+- **启动子 agent，用 herdr-core 看得见的方式**：你自己的子 agent 工具（Claude Code 的 `Agent`），或者 `hc run --bg --name <名字> <agent 或模板> "<任务>"`。**不要**用后台 shell 跑 `agy -p …`、`claude -p …` 或包装脚本：herdr-core 把它当普通命令，面板上没有它。
+- **做了重要取舍，记一行**：
+
+  ```sh
+  hc label $HC_TERMINAL_ID wayne.note="指标存 JSONL，不进 doc：并发写会冲突"
+  ```
+
+  写「决定 + 原因」，一句话。什么算重要取舍：换方案、砍范围、选了 A 没选 B、决定先不修。日常步骤（读文件、跑测试）不记。
+- 你说的话由 Claude Code 的 hook 自动记，不用管。
 
 ## 改 Herdr.app 的界面
 

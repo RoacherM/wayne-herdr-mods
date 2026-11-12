@@ -126,9 +126,10 @@ iPhone 上的 Herdr App（网页版已停，2026-11-09）──wss /v1/client/<i
 |---|---|---|
 | `layouts/main-preview.json`、`.svg` | 窗口布局：在 Herdr 自带的 `main` 上换了标签栏、文件面板和窗格框的顶栏（`my-pane`） | 复制自 `main` |
 | `mods/my-pane/` | 窗格框的顶栏：标签里只有一个窗格（且没放大）时不显示放大按钮（放大没东西可盖）；文件标签显示文件名和所在文件夹，不显示「my-files」 | 复制自 `pane` 0.1.13 |
-| `mods/my-tabs/` | 标签栏：右上角只留「+」、手机图标、一个面板按钮。标签的图标是你在这个标签里最后点进的 agent（2026-11-05 改：原来是标签里第一个 agent，一个标签里有 Claude Code 和 agy 时会显示错）。只有窗口当前的窗格有 `focused`，所以每个标签自己记住。agent 退出后前台回到 shell，图标就是终端（2026-11-05 改，见「agent 退出后的图标」） | 复制自 `tabs` 0.1.12 |
+| `mods/my-tabs/` | 标签栏：右上角只留「+」、手机图标、观测面板图标、文件面板图标（后两个共用右边的侧栏）。标签的图标是你在这个标签里最后点进的 agent（2026-11-05 改：原来是标签里第一个 agent，一个标签里有 Claude Code 和 agy 时会显示错）。只有窗口当前的窗格有 `focused`，所以每个标签自己记住。agent 退出后前台回到 shell，图标就是终端（2026-11-05 改，见「agent 退出后的图标」） | 复制自 `tabs` 0.1.12 |
 | `mods/my-files/` | 文件面板：只放文件树，每个窗格（window）各记一份展开的文件夹；点文件就把它开成一个 Herdr 标签（见下面「文件面板：每个窗格一份，文件开成 Herdr 标签」）。「复制路径」在树的每一行（悬停、右键）；「复制全文」2026-11-06 去掉（用户：没用）。`TextView.markdown` 的选区色绘制在文字上层，必须用带透明度的 `#rrggbb59`（约 35% alpha），否则实色选区会盖死选中的文字。纯逻辑在 `state.js`（`test/my-files-state.test.mjs`） | 复制自 `files` 0.1.12 |
 | `mods/wayne-phones/` | 「手机」窗口和它的图标 `phone.svg` | 新写 |
+| `mods/wayne-board/` | 观测面板：侧栏，当前窗格里的 agent、它的决定和子 agent 画成一张图；标签栏的图标开关它（见「观测面板」） | 新写 |
 
 ### agent 退出后的图标（2026-11-05）
 
@@ -177,6 +178,137 @@ iPhone 上的 Herdr App（网页版已停，2026-11-09）──wss /v1/client/<i
 - 前台是 shell 时一律是 shell 图标，不管 Herdr 上次怎么说（见上面「agent 退出后的图标」）。
 - Herdr 不认识的 agent（droid、devin、dim，2026-11-09）走 Herdr 自己的扩展点 `programs.json`：仓库带 `herdr-app/programs.json` 和 `herdr-app/agent-icons/`，`install` 把我们的 key 合并进用户的 `programs.json`（用户自己的项和其它字段不动；文件不是合法 JSON 就原样留着，stderr 提醒一次）。图标来自 ACP agent registry（`https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json`，2026-11-09；LobeHub 没有 droid、factory、dimcode，2026-11-06 unpkg `@lobehub/icons-static-svg` 404）。`run` 还让它们进 Herdr 的「+」菜单。Herdr 认了 key 后，侧栏、标签栏、手机和 iOS 都自动跟上。加新 agent：把它的 ACP svg 放进 `herdr-app/agent-icons/`、`programs.json` 加一项，`install` 后再跑 `node ios/build-term.mjs`。
 - 终端页顶栏中间显示这个图标，不再显示 agent 的名字（名字只给读屏，`aria-label`）。图标 key 变了才换（列表刷新很频繁）。测法：`dev/fake-desktop.mjs` + 无头 iPhone 打开 claude 和 zsh 终端，顶栏分别是 Claude 图标和终端图标（2026-11-06）。
+
+## 观测面板（2026-11-12）
+
+长任务里，一个 agent 会启动很多子 agent。面板把当前窗格里的 agent、它的决定和子 agent 画成一张图，让人直接看到：现在谁在跑、谁在等人、为什么这样分工。
+
+### 术语
+
+- **子 agent**：一个 agent 启动的另一个 agent。有两种，herdr-core 都自己知道：
+  - **进程内的**：在主 agent 自己的进程里跑（Claude Code 的 `Agent` 工具）。没有自己的终端。
+  - **终端里的**：主 agent 用 `hc run` 启动，有自己的终端，但不占窗格（Herdr.app 把它归在父终端的标签下，可以 peek）。
+- **决定**：一句话，记下「做什么、为什么」。分两种：人说的，和 agent 自己定的。
+- **一条线（lane）**：一个 agent 终端从 agent 启动到退出的这一段。
+
+### 图怎么读
+
+面板是窗口右边的侧栏，和文件面板共用一个位置、一样宽。它只显示**你当前所在窗格里的那个 agent**（2026-11-12 第二版，见下面「试过不做」）。焦点换到另一个终端窗格，面板跟着换；焦点在文件标签或面板自己上时，保持上一个终端。
+
+画法是 git graph（地铁线路图）：一列一条轨道，每一行在某条轨道上有一个站（2026-11-12 第三版，用户：「布局可以类似 metro 的 line 么？或者 git graph」）。
+
+```
+●  herdr-relay / 1                 t48     ← 终端（轨道 0 的顶端）
+│
+│ ●  Review settings merge        等你     ← 子 agent 是一条支线（轨道 1）
+│ │ ◌  bugs                       10 分    ← 它的子 agent 再分一条（轨道 2）
+│ │ ·  perf                    完成 8 分
+│ ├─╯
+│ ◌  board-review                 10 分
+│ ·  Explore layout API        完成 8 分
+├─╯
+○  agent 12:08  面板改成侧栏…              ← 最新的决定
+│ ○  2 个子 agent · 1 失败 · 1 完成         ← 旧决定的子 agent 叠成一行
+├─╯
+●  你 12:05  把指标统计做完                 ← 更早的决定
+```
+
+- 轨道 0 是 agent 自己的线：最上面是终端，往下是决定，最新的在上。这条线就是决策记录，没有另外的文字栏。
+- 一个决定之后启动的子 agent 是一条支线：在这个决定的正上方离开主线，沿轨道 1 往上，一个子 agent 一个站。时间往上走，和 `git log --graph` 一样：越靠上越新。
+- 支线里需要人的排最上面，然后是失败的、在跑的、已结束的。
+- 子 agent 自己的子 agent 再分到右边一条轨道。最多到轨道 3，再深就沿同一条轨道接着画。
+- 一个状态一个颜色，站、站旁边的字、计数里的数都用它（2026-11-12 用户：带一点颜色，状态明显一点）：等人 `blocked`、在跑 `working`、完成 `done`（都是主题色）、失败 `#e5675f`（主题没有这个颜色）。
+- 站的样子：人说的话是主题强调色的实心点，agent 的决定是空心圈；子 agent 在跑是转圈，等人、失败、完成是各自颜色的实心点。
+- 终端那一行和叠起来的那一行写计数（「1 等你 · 2 在跑 · 1 失败 · 3 完成」），每个数用它的状态色。
+- 线的颜色是这一段还带着什么：有人在等是黄色，有在跑的是蓝色虚线，都结束了是灰色。所以一条支线从分叉处一直亮到它最上面那个还没结束的站。
+- 没有方块和边框，一行只有字。行没有固定宽度，字从站的右边开始，到侧栏右边缘。
+
+- 入口：标签栏右上角的面板图标。亮着时再点一次收起；旁边的文件图标把同一个侧栏换成文件树。每个 space 记住自己开的是哪一个（`my-tabs` 的 `syncPanel`）。布局里是 `panel-body` 这个 stack 的第三个子节点 `board`。
+- 还没有任何决定就有了子 agent 时，先放一个「开始」站。
+- 旧的决定自动变矮（只留一行字），它的子 agent 叠成一行（「7 个子 agent · 5 完成 · 2 失败」）。最新的决定和还有子 agent 没结束的决定保持展开。点决定那一行可以反过来。
+- 点终端里的子 agent 看它的屏幕（`terminal.peek`）。
+- 一个终端有过几个 agent（退出又启动）时，显示还在的那个；都退出了就显示最后一个（`layout.js` 的 `laneOf`）。宿主仍然记录所有终端，`board.json` 没变。
+- 普通命令（`npm test`、后台 shell）不画。主角是子 agent。
+
+### 数据全部来自 herdr-core
+
+不解析任何 agent 的会话文件。herdr-core 自己就有三样事实（hc 0.1.20、Claude Code 2.1.316，2026-11-12 实测）：
+
+| 要看的 | herdr-core 里的事实 | 实测 |
+|---|---|---|
+| 进程内的子 agent | 终端的 `records`：每个子 agent 一条 `{app, state, title}`，键是它的 id | 在 t48 里启动一个 `Agent` 子 agent：`status` 事件里 `records` 立刻多一条，`title` 是任务描述；子 agent 结束时这一条直接消失（没有先变成 `done`）。后台 shell 命令不出现在 `records` 里 |
+| 终端里的子 agent | 终端的 `parent`：谁启动了它 | `probe/board.mjs` B：用 `parent` 启动的终端带着它；退出时有 `finished` 事件和 `exit_code` |
+| 决定 | 终端的标签（`hc label`） | `probe/board.mjs` A：中文、引号、`=`、400 个字的值都原样保留；每次设置都有 `labels` 事件 |
+
+两个标签：
+
+| 标签 | 谁写 | 值 |
+|---|---|---|
+| `wayne.said` | Claude Code 的 `UserPromptSubmit` hook（`wayne-herdr-mods said`，`install` 装进 `~/.claude/settings.json`） | `<毫秒时间>\|<这句话的开头，最多 300 字，压成一行>`。带时间是为了两次说同样的话也算两个决定 |
+| `wayne.note` | agent 自己：`hc label $HC_TERMINAL_ID wayne.note="决定和原因"` | 一句话 |
+
+`install` 改 `~/.claude/settings.json` 的规则（`host/claude-hook.js` 的 `editSettingsFile`）：只加我们这一条命令，已有就不动；`uninstall` 只拿走我们这一条，和别人的命令在同一项里也只删自己的。文件不是 JSON、或 `hooks` 的写法不是文档里的样子（不是对象、`UserPromptSubmit` 不是列表）就完全不碰，并在安装输出里说一声。写法是先在旁边写好整个新文件再改名盖过去，写到一半失败时旧文件还在；新文件沿用旧文件的权限（新建的是 `0600`）；`settings.json` 是软链接时改的是它指向的文件，链接本身不动。
+
+hook 每次还往 agent 的上下文里加一行提醒，告诉它上面这条命令。没有这个 hook 的 agent（agy、epi、droid 等）没有白框，其它都一样。
+
+### 谁记历史（`host/board.js`）
+
+herdr-core 只说现在。子 agent 结束后它的 `records` 就没了，标签也只留最后一个值。所以要有一个一直开着的程序把变化记下来：就是宿主。它本来就订阅着 herdr-core 的事件。
+
+- 每来一个事件，`observe(board, 所有终端, 现在)` 对一次：
+  - 报告状态、没有 `parent` 的活终端各有一条线。状态没了（agent 退回 shell，herdr-core 会清掉状态）这条线就结束；同一个终端里再来一个 agent 是新的一条线。
+  - 标签值和上次记下的不一样：加一个决定。记下的值按终端存在 `labels` 里，宿主重启后不会重复加。
+  - 现在有、上次没有的子 agent：挂到最新的决定下面。上次有、现在没有的：记结束时间。进程内的记「完成」；终端里的看 `exit_code`，不是 0 记「失败」。
+  - 用 `hc run` 启动、没报告过状态、也不是模板启动的子终端是普通命令，不算子 agent。
+- 结果整个写进 `~/.config/wayne-herdr-mods/board.json`（先写临时文件再改名，变化后 300 毫秒内写一次）。宿主启动时读回来。
+- 上限（agent 可能连跑几天）：
+  - 结束超过 12 小时的线删掉；最多 30 条线。
+  - 每条线最多 40 个决定，多了删最旧的。但最新的决定不删（下一个子 agent 要挂在它下面），还有子 agent 在跑的决定也不删；都删不了时宁可超出上限。
+  - 每个决定（和每个子 agent）下面最多留 60 个子 agent，多了删最旧的已结束的，只留计数 `dropped: { done, failed }`（连它下面的一起算）。收窄时的方块把这些也算进去。
+- 每个事件都对一次（同一瞬间里「子 agent 启动又结束」「连记两个决定」都是历史，不能合并）；另外每次列表变化（最多 250 毫秒一次）再对一次，因为 herdr-core 的 `missed` 整表重发不是事件。
+- herdr-core 断开时终端列表是空的，这不等于「所有 agent 都退出了」，所以断开期间不记。
+
+mod（`herdr-app/mods/wayne-board/`）每秒读一次这个文件，原样画出来。方块的位置在 `layout.js` 里算（纯函数），连线用带边框的 `div` 画，不用 `PathBuilder`：线全是横线和直角，边框就够，而且不用知道窗口坐标。
+
+`board.json` 的形状：
+
+```
+{ v: 1, at, labels: { <终端>: { "wayne.said", "wayne.note" } },
+  lanes: [{ t, since, ended, app, cwd, where, state, msg, progress,
+            steps: [{ by: "you" | "agent" | "start", at, text,
+                      subs: [{ id, kind: "in" | "term", title, app, state, msg, progress, since, ended, subs: [...] }] }] }] }
+```
+
+### 一条靠时间的规则
+
+子 agent 挂在它启动时最新的那个决定下面。这是按时间归的，不是因果证明：agent 先记了一个不相干的决定再启动子 agent，子 agent 也会挂过去。
+
+### 试过不做
+
+- **解析 Claude Code 的会话文件（`~/.claude/projects/…/*.jsonl`）**。第一版原型这样做，能拿到人说的每句话和后台命令的起止。不做的原因：每种 agent 一个格式；用包装脚本启动的子 agent（`zsh run.sh A-git`）从命令里认不出来，只能猜；而 herdr-core 本来就知道子 agent。
+- **按「轮」切开、右边放一栏文字版决策记录**。用户看原型后去掉：要一张全局的图，决定也是图上的方块。
+- **把普通后台命令也画成方块**。用户关心的是子 agent。
+- **方块连方块**（原型和前两版）。在侧栏里每个方块都带边框，线只是把它们连起来，看着重。用户要 metro line / git graph，改成轨道和站，去掉边框。
+- **开成一个全屏标签，把所有 agent 的线都画上去**（2026-11-12 第一版）。用户装上后：全屏挡住和终端的交互；想看的是当前对话窗口对应的状态，不是所有的。之前说的「全局的观测面板」指的是不按轮切、看整段对话，不是看所有 agent。改成侧栏 + 只看当前窗格。
+- **让脚本自己发 OSC 7501 报告一条 record**。试了 11 种写法（`probe/board.mjs` C），herdr-core 一条都没认；只有查询 `ESC ]7501;? BEL` 有回答（`?:states=idle,working,done,blocked,error:kinds=permission,question,auth`）。格式没有公开文档，不再猜。
+
+### 测法
+
+- `test/board.test.mjs`：`records` 出现和消失、标签变成决定、`parent` 子终端和它的 `exit_code`、agent 退出后线结束、写文件和重启后读回、三条上限。
+- `test/board-layout.test.mjs`：按终端找线、主线（终端在上、最新的决定在上、没有宽度）、支线的分叉和每一段的颜色、嵌套的轨道和轨道上限、变矮和展开、计数。
+- `test/claude-hook.test.mjs`：hook 的装和卸不动别的设置、和别人共用一项时只删自己、不认识的写法不碰、写到一半失败旧文件还在、权限和软链接保留、标签值、Herdr 外面不做事。
+- `herdr-app check herdr-app/mods/wayne-board` 通过；用一份带示例数据的副本再 check 一次（画出四种方块的那条路径），也通过。
+- **没验证**：真窗口里画出来的样子（规则：不替用户点 live 窗口，也不在用户屏幕上另开一个 Herdr）。
+
+### 独立审查（2026-11-12）
+
+gpt-6.1-sol（`epi`，用 `hc run` 起成子 agent）审了两轮。第一轮 6 条：卸载会连别人的命令一起删、设置文件原地覆盖、不认识的 JSON 形状被改写、删旧决定时带走还在跑的子 agent、子 agent 历史没有上限、`missed` 整表重发不更新面板。第二轮确认这 6 条已修，又指出修法带来的 5 条：只在节流回调里看会漏掉同一瞬间的事件、删旧决定可能删掉最新的那个、改名替换放宽了文件权限、删掉的子 agent 没把下面的计数带上、软链接被换成普通文件。11 条都已修并各有测试。
+
+### 还没验证的
+
+- `Workflow` 启动的子 agent 是否也进 `records`。
+- 进程内的子 agent 再启动子 agent 时，`records` 里看不看得出父子（现在都平铺在主 agent 下面）。
+- agy、epi、droid、codex 的进程内子 agent 是否报 `records`。
 
 ## 地址和域名
 
@@ -238,7 +370,7 @@ herdr-app/   Herdr.app 里我们的界面；build 时打进 dist/，install 写�
 SKILL.md     给 agent 的用法；`--skill` 打印它，install 装进 ~/.agents/skills/wayne-herdr-mods
 test/        npm test：单测 + host.live.test.mjs（全链路，自己起临时中继 test/local-relay.mjs）
 dev/         需先起东西的冒烟与跑分：fake-desktop.mjs（假 Mac）、*-smoke.mjs（无头 iPhone）、bench.mjs
-probe/       herdr-core 行为探针：hc.mjs（分帧客户端）、sync.mjs、create.mjs、credit-window.mjs、wheel-batch.mjs
+probe/       herdr-core 行为探针：hc.mjs（分帧客户端）、sync.mjs、create.mjs、credit-window.mjs、wheel-batch.mjs、board.mjs（观测面板用到的三样事实）
 bench/       results.jsonl：每次跑分每条路径一行，带 commit（report.html 不提交）
 ios/         nsh 原生 Herdr iOS App（App.tsx + host/ Swift 宿主，见「原生 App（nsh）」）
 shell/ios/   原型：WKWebView 薄壳 + install.sh（已停）

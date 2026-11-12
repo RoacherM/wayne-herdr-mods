@@ -173,6 +173,8 @@ export function createTerminals({ coreOptions = {}, log = () => {}, onChange = (
     get: (address) => terminals.get(address),
     /** Live terminals as herdr-core reports them (argv included: for the host only). */
     raw: () => [...terminals.values()].filter((t) => t.state === 'live'),
+    /** Every terminal the core knows, finished ones too (the board needs how a sub-agent ended). */
+    every: () => [...terminals.values()],
     list: () => { const h = herdrNow(); return [...terminals.values()].filter((t) => t.state === 'live').map((t) => project(t, h)); },
     icons() {
       const out = {}, h = herdrNow();
