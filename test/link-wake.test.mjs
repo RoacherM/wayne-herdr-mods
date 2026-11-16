@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DIRECT_TIMEOUTS } from '../app/src/direct.js';
 import { Link } from '../app/src/link.js';
-import { newBoxKeys } from '../shared/e2e.js';
+import { desktopAccept, newBoxKeys } from '../shared/e2e.js';
 
 class FakeSocket {
   static all = [];
@@ -150,4 +150,135 @@ test('direct: silence after wake closes this one-use Link (no new socket; Duo ta
   assert.equal(link.status, 'offline');
   assert.deepEqual(statuses, ['offline']);
   assert.equal(made.length, 1, 'a direct Link never opens a second channel');
+});
+
+function macHandshake(ws, D) {
+  ws.frame('\u0000online');
+  const desk = desktopAccept(D, ws.sent.at(-1));
+  ws.frame(desk.welcome);
+  ws.frame(desk.cipher.seal({ type: 'ready', desktopName: 'Mac', deviceId: 'p1', paired: false }));
+  return desk;
+}
+
+test('observability: connected decomposes wsMs/roomMs/hsMs and distinguishes wake_asleep vs wake_closed vs wake_ok', async (t) => {
+  FakeSocket.all = [];
+  globalThis.WebSocket = FakeSocket;
+  const D = newBoxKeys();
+  const realNow = Date.now;
+  let clock = 1_000_000;
+  Date.now = () => clock;
+  try {
+    const link = new Link({
+      relay: 'https://relay.test', desktopId: 'd1', desktopKey: D.publicKey,
+      deviceKeys: newBoxKeys(), timeouts: { ping: 60_000, silent: 60_000, asleep: 30_000, wakePong: 4_000 },
+    });
+    t.after(() => link.close());
+    const connected = [], dropped = [], wakes = [], wakeOks = [];
+    link.addEventListener('connected', (e) => connected.push(e.detail));
+    link.addEventListener('dropped', (e) => dropped.push(e.detail));
+    link.addEventListener('wake', (e) => wakes.push(e.detail));
+    link.addEventListener('wake_ok', (e) => wakeOks.push(e.detail));
+
+    clock += 120; // ws open after 120 ms
+    FakeSocket.all[0].open();
+    clock += 45; // relay room online after 45 ms
+    FakeSocket.all[0].frame('\u0000online');
+    const desk = desktopAccept(D, FakeSocket.all[0].sent.at(-1));
+    clock += 85; // handshake + ready after 85 ms
+    FakeSocket.all[0].frame(desk.welcome);
+    FakeSocket.all[0].frame(desk.cipher.seal({ type: 'ready', desktopName: 'Mac', deviceId: 'p1', paired: false }));
+
+    assert.deepEqual(connected[0], { why: 'boot', ms: 250, wsMs: 120, roomMs: 45, hsMs: 85, attempt: 0 });
+
+    // Exact boundary (30 s === asleep) still pings rather than dropping; pong clears wakePingAt.
+    clock += 30_000;
+    link.wake();
+    assert.deepEqual(wakes.at(-1), { action: 'ping', idleMs: 30_000, rs: 1 });
+    clock += 32;
+    FakeSocket.all[0].frame('pong');
+    assert.deepEqual(wakeOks.at(-1), { rttMs: 32 });
+
+    // Long sleep (35 s > 30 s asleep) while socket STILL says OPEN (rs=1) → wake_asleep.
+    clock += 35_000;
+    link.wake();
+    assert.equal(wakes.at(-1).action, 'wake_asleep');
+    assert.deepEqual(dropped.at(-1), {
+      reason: 'wake_asleep', stage: 'ready', ready: true, upMs: 65_032, idleMs: 35_000, code: 0, rs: 1,
+    });
+
+    // Reconnect completes with why='wake_asleep'.
+    FakeSocket.all[1].open();
+    macHandshake(FakeSocket.all[1], D);
+    assert.equal(connected.at(-1).why, 'wake_asleep');
+
+    // Long sleep (40 s) where iOS ALREADY closed the socket (rs=3) → labeled wake_closed, NOT wake_asleep.
+    clock += 40_000;
+    FakeSocket.all[1].readyState = 3;
+    link.wake();
+    assert.equal(wakes.at(-1).action, 'wake_closed');
+    assert.equal(dropped.at(-1).reason, 'wake_closed');
+    assert.equal(dropped.at(-1).rs, 3);
+
+    // Drop while still CONNECTING (rs=0, stage='connect') vs OPEN before hello (rs=1, stage='online') vs no socket (rs=-1).
+    FakeSocket.all[2].onclose({ code: 1006 });
+    assert.deepEqual(dropped.at(-1), {
+      reason: 'ws_close', stage: 'connect', ready: false, upMs: null, idleMs: 0, code: 1006, rs: 0,
+    });
+    link.wake(); // no socket → action='connect', rs=-1
+    assert.deepEqual(wakes.at(-1), { action: 'connect', idleMs: 0, rs: -1 });
+    FakeSocket.all[3].open();
+    FakeSocket.all[3].onclose({ code: 1001 });
+    assert.equal(dropped.at(-1).stage, 'online');
+    assert.equal(dropped.at(-1).code, 1001);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test('observability: desktop restart / offline on same socket records drop upMs and resets connect marks', (t) => {
+  FakeSocket.all = [];
+  globalThis.WebSocket = FakeSocket;
+  const D = newBoxKeys();
+  const realNow = Date.now;
+  let clock = 2_000_000;
+  Date.now = () => clock;
+  try {
+    const link = new Link({
+      relay: 'https://relay.test', desktopId: 'd1', desktopKey: D.publicKey,
+      deviceKeys: newBoxKeys(), timeouts: { ping: 60_000, silent: 60_000 },
+    });
+    t.after(() => link.close());
+    const connected = [], dropped = [];
+    link.addEventListener('connected', (e) => connected.push(e.detail));
+    link.addEventListener('dropped', (e) => dropped.push(e.detail));
+
+    FakeSocket.all[0].open();
+    macHandshake(FakeSocket.all[0], D);
+    clock += 5_000;
+    FakeSocket.all[0].frame('\u0000offline');
+    assert.equal(dropped.at(-1).reason, 'desktop_offline');
+    assert.equal(dropped.at(-1).upMs, 5_000);
+
+    // Desktop stays away 60 s, then comes back: connect.ms measures only the new handshake, not the 60 s outage.
+    clock += 60_000;
+    FakeSocket.all[0].frame('\u0000online');
+    const desk2 = desktopAccept(D, FakeSocket.all[0].sent.at(-1));
+    clock += 70;
+    FakeSocket.all[0].frame(desk2.welcome);
+    FakeSocket.all[0].frame(desk2.cipher.seal({ type: 'ready', desktopName: 'Mac', deviceId: 'p1', paired: false }));
+    assert.deepEqual(connected.at(-1), { why: 'desktop_online', ms: 70, wsMs: 0, roomMs: 0, hsMs: 70, attempt: 0 });
+
+    // Direct \0online while already ready (desktop replaced socket without offline gap) → desktop_restart.
+    clock += 9_000;
+    FakeSocket.all[0].frame('\u0000online');
+    assert.equal(dropped.at(-1).reason, 'desktop_restart');
+    assert.equal(dropped.at(-1).upMs, 9_000);
+    const desk3 = desktopAccept(D, FakeSocket.all[0].sent.at(-1));
+    clock += 50;
+    FakeSocket.all[0].frame(desk3.welcome);
+    FakeSocket.all[0].frame(desk3.cipher.seal({ type: 'ready', desktopName: 'Mac', deviceId: 'p1', paired: false }));
+    assert.deepEqual(connected.at(-1), { why: 'desktop_online', ms: 50, wsMs: 0, roomMs: 0, hsMs: 50, attempt: 0 });
+  } finally {
+    Date.now = realNow;
+  }
 });

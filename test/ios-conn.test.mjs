@@ -3,7 +3,9 @@
 // wiring can be checked in Node. The fake runtime is reachable as globalThis.__nsh.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { resolve } from 'node:path';
 import { build } from 'esbuild';
+import { clean } from '../host/metrics.js';
 import { b64, desktopAccept, newBoxKeys } from '../shared/e2e.js';
 
 const FAKE_NSH = `
@@ -43,7 +45,7 @@ let loads = 0;
 /** A fresh copy of conn.ts and its fake nsh (module state is per copy). */
 async function loadConn() {
   bundled ??= (await build({
-    entryPoints: [new URL('../ios/src/conn.ts', import.meta.url).pathname],
+    entryPoints: [resolve('ios/src/conn.ts')],
     bundle: true, format: 'esm', platform: 'node', write: false, logLevel: 'silent',
     plugins: [{
       name: 'fake-nsh',
@@ -110,3 +112,77 @@ test('ios conn: linkEpoch moves with each ready, in the same batch as status (Te
   assert.equal(conn.linkEpoch(), 2);
   assert.deepEqual(seen.filter((x) => x.startsWith('ready')), ['ready#1', 'ready#2'], `never "ready" with the old epoch: ${seen.join(' ')}`);
 });
+
+test('ios conn: native metrics queue connect/open/echo/resume/drop and pass host clean()', async (t) => {
+  const D = newBoxKeys();
+  const { conn, nsh, ws, done } = await booted(D);
+  t.after(() => { for (const s of FakeSocket.all) s.onclose?.(); return done(); });
+
+  ws.onmessage({ data: '\u0000online' });
+  const desk = desktopAccept(D, ws.sent.at(-1));
+  ws.onmessage({ data: desk.welcome });
+  ws.onmessage({ data: desk.cipher.seal({ type: 'ready', desktopName: 'Mac', deviceId: 'p1', paired: false }) });
+
+  // Simulate opening a terminal, WebView ready, stream output arriving, and WebView drawn.
+  conn.termOpening('t1', false);
+  conn.termWebReady(95);
+  conn.termRpcOpened(210);
+  conn.termOutputArrived();
+  conn.termDrawn();
+
+  // Simulate typing into a quiet terminal after > 300 ms, then output + drawn (echo).
+  await new Promise((r) => setTimeout(r, 320));
+  conn.termTyped();
+  conn.termOutputArrived();
+  conn.termDrawn();
+
+  const answerMetricsPut = () => {
+    const frames = ws.sent.slice(1).map((f) => { try { return desk.cipher.open(f); } catch { return null; } }).filter(Boolean);
+    const collected = [];
+    for (const f of frames) {
+      if (f.m === 'metrics.put') {
+        collected.push(...f.p.events.map((e) => clean(e, f.p.ctx)));
+        ws.onmessage({ data: desk.cipher.seal({ id: f.id, ok: true, r: { kept: f.p.events.length } }) });
+      }
+    }
+    return collected;
+  };
+
+  // Entering background flushes immediately while socket is still open.
+  nsh.lifecycle.set('background');
+  const firstBatch = answerMetricsPut();
+  await new Promise((r) => setTimeout(r, 10));
+
+  // Returning to active wakes link, answers pong, and paints resume.
+  await new Promise((r) => setTimeout(r, 320)); // past wake() 300 ms debounce
+  nsh.lifecycle.set('active');
+  ws.onmessage({ data: 'pong' });
+  await new Promise((r) => setTimeout(r, 10));
+  conn.termOutputArrived();
+  conn.termDrawn();
+
+  // Drop socket, reconnect on the new socket, and flush the second batch (rtt, wake, resume, drop, connect).
+  ws.onclose({ code: 1006 });
+  await new Promise((r) => setTimeout(r, 750));
+  const ws2 = FakeSocket.all.at(-1);
+  ws2.open();
+  ws2.onmessage({ data: '\u0000online' });
+  const desk2 = desktopAccept(D, ws2.sent.at(-1));
+  ws2.onmessage({ data: desk2.welcome });
+  ws2.onmessage({ data: desk2.cipher.seal({ type: 'ready', desktopName: 'Mac', deviceId: 'p1', paired: false }) });
+
+  const flushDone = conn.flushMetrics();
+  const frames2 = ws2.sent.slice(1).map((f) => { try { return desk2.cipher.open(f); } catch { return null; } }).filter(Boolean);
+  const put2 = frames2.find((f) => f.m === 'metrics.put');
+  assert.ok(put2, 'second metrics.put RPC was sent after reconnect');
+  ws2.onmessage({ data: desk2.cipher.seal({ id: put2.id, ok: true, r: { kept: put2.p.events.length } }) });
+  await flushDone;
+
+  const cleaned = [...firstBatch, ...put2.p.events.map((e) => clean(e, put2.p.ctx))];
+  assert.equal(cleaned.every(Boolean), true, 'every native metric passes host clean()');
+  const kinds = new Set(cleaned.map((e) => e.ev));
+  for (const want of ['connect', 'link', 'op', 'open', 'echo', 'rtt', 'wake', 'resume', 'drop']) {
+    assert.ok(kinds.has(want), `expected ${want} in ${[...kinds].join(',')}`);
+  }
+});
+

@@ -441,9 +441,10 @@ docs/        issues/（待办队列）、native-app.html（I-004 的设计原型
 
 | 部分 | 在哪 | 做什么 |
 |---|---|---|
-| 手机自动记录 | `app/src/metrics.js` | 手机网页一直记下面的事件，每 15 秒、页面隐藏时，用 `metrics.put` 发给 Mac |
+| 手机自动记录 | `app/src/metrics.js`、`ios/src/metrics.ts` | 网页版与原生 iOS App 一直记下面的事件，连接就绪稳定后、前台每 15 秒、切入后台时，用 `metrics.put` 发给 Mac |
 | Mac 存储 | `host/metrics.js` | 每条一行 JSON，写进 `~/.config/wayne-herdr-mods/metrics/YYYY-MM-DD.jsonl`，保留 30 天 |
-| 报告页 | `host/metrics-report.js` | `wayne-herdr-mods metrics` 生成一个 HTML（不联网），按路径分开看中位数和慢的尾巴 |
+| 报告页 | `host/metrics-report.js` | `wayne-herdr-mods metrics` 生成一个 HTML（不联网），按路径分开看中位数、慢的尾巴、单次连接存活与断线原因 |
+| 对比统计 | `dev/conn-stats.mjs` | 只读汇总本机 `metrics/*.jsonl`、`ios-client.log`、宿主日志与 macOS `sshd` 系统日志，对照建连分段耗时与长连接存活 |
 | 模拟跑分 | `dev/bench.mjs` | 无头 Chrome 模拟 iPhone，连 `dev/fake-desktop.mjs`，按固定脚本操作，结果写进 `bench/results.jsonl` |
 
 术语：
@@ -464,10 +465,14 @@ docs/        issues/（待办队列）、native-app.html（I-004 的设计原型
 | `scroll` | `mode`、`ms`、`n`、`p95`、`long`、`steps`、`coast`、`lag`、`lagMax`、`answered`、`kb` | 一次滑动（加惯性）：帧间隔的 p95 和超过 50 ms 的帧数；全屏程序里每个滚轮步到「程序回应它的画面」画出来的延迟（见「滑动延迟」）。旧记录叫 `frames`，只有帧间隔 |
 | `macscroll` | `steps`、`coast`、`prog`、`progMax`、`kb`、`behind`、`ms` | Mac 自己记（`src: mac`）：一次滑动里写给程序的滚轮步、程序回应用时、程序输出多少、最多有多少字节在路上 |
 | `op` | `op`、`key` | 用了什么：按键栏的键（记键名）、粘贴、语音、图片、打开、返回 |
+| `connect` | `why`、`ms`、`wsMs`、`roomMs`、`hsMs`、`attempt` | 一次建连分段耗时（2026-11-11 补）：`wsMs`（WebSocket TCP+TLS+代理打开）、`roomMs`（中继房间 `\0online`）、`hsMs`（`hello` → `ready` 端到端握手）、`ms` 总耗时，`why` 记录本次重连由什么触发（`boot`、`wake_asleep`、`wake_closed`、`wake_pong`、`ws_close`、`desktop_online` 等） |
+| `drop` | `reason`、`stage`、`ready`、`upMs`、`idleMs`、`code`、`rs` | 一次连接断开（2026-11-11 补）：`upMs` 为连接就绪到断开的存活时长（未就绪为 `null`；越长越稳，单独汇总为 `uptime`，不放进「越大越慢」的 `MEASURES` 以免 `dev/bench.mjs` 把存活变长误判为延迟退化）；`wake_closed`（`rs > 1`，系统已关 socket）与 `wake_asleep`（`rs <= 1`，socket 仍标 OPEN 但因静默超过 30 秒被主动重连）分开记 |
+| `wake` | `action`、`idleMs`、`rs`、`rttMs` | 回到前台时 `Link.wake()` 的决策（2026-11-11 补）：`ping_ok`（未满 30 秒发 ping 收到回复，记 `rttMs`）、`ping_timeout`（4 秒未回触发 `wake_pong`）、`wake_asleep`、`wake_closed`、`connect`、`connecting` |
 
 规则：
 
-- Mac 按白名单检查每个字段（事件名、类型、字符串最长 40）。不在名单上的字段丢掉，类型不对的整条丢掉。一批最多 500 条。设备 id 只存前 8 位。
+- Mac 按白名单逐条检查每个字段（事件名、类型、字符串最长 40）。不在名单上的字段丢掉，类型不对或未知事件名的单条跳过，不影响同批其它事件。一批最多 500 条。设备 id 只存前 8 位。
+- 新旧混用兼容：新手机 + 旧 Mac 时，旧 Mac 跳过不认识的 `connect`/`drop`/`wake`，其余 `echo`/`open`/`resume`/`rtt`/`link`/`op` 照常落盘，不报错；旧手机 + 新 Mac 时，原有全部事件定义不变。
 - 手机连不上 Mac 时最多攒 400 条，旧的先丢。Mac 不认识 `metrics.put`（旧版本）时也只是攒着，不报错。
 - 页面版本：build 时写进 `__APP_V__`（`<commit>[+]·<build>`，`+` 表示有没提交的改动），每条记录带着，方便按版本对比。
 - 报告用 dataviz 的配色：直连蓝、中继橙，浅色和深色都过了校验；每条线有文字标签，不只靠颜色；每个数字都在表格里有。
@@ -1026,6 +1031,6 @@ probe 结束时 Mac 焦点停在 herdr-relay 工作区（因为 A 抢过焦点�
 - **闪退根因与导航栈不变量（2026-11-07 真机崩溃报告 `Herdr-2026-11-07-181536.ips` 实测定位）**：
   1. `NativeShell.xcframework`（0.1.3）的 `_nsh_app_set_error_handler`（偏移 `0x100201228`）存在 FFI use-after-free：设置 `app.onError` 时会在函数返回前立即调用 `ErrorHandlerBox` 的 drop 释放 32 字节闭包盒，却把悬垂指针留在 `[x22, #0x268]`，随后注册的第一个 `app.handle("haptic")` 复用同一块 32 字节堆内存，导致任何 JS 异常或 `callBudget` 超时触发 `MountSink::report_error` 时跳入 `haptic` 闭包并在 `NshHostReply.resolve(_:)+44` 发生 `EXC_BAD_ACCESS (0x10)`。修复：`ShellController.viewDidLoad()` 严禁设置 `app.onError`，并将 `app.limits` 提升为 `NshLimits(memoryMB: 512, stackKB: 8192, loadBudget: 30, callBudget: 30, maxNodes: 500_000)`；`FilesScreen` 退出清理统一使用 `nav.routes()`。
   2. **返回必回主页不变量（`openTerm`）**：`HomeScreen` 在 `NavStack` 栈底保持挂载，若前台激活消费通知或快速连点直接 `nav.push({ name: "term" })`，会产生 `[home, term(A), term(B)]` 导致从 `term(B)` 返回落到 `term(A)`。`openTerm(address)` 强制保持栈为 `[{ name: "home" }, { name: "term", address }]`，并由 `clearStreamListener(onStream)` 校验当前监听器引用，确保从任何终端页左滑返回永远直接回到主页。
-  3. **端到端完整日志（`herdr-ios.log` + `client.log`）**：iOS 宿主 `AppLogger` 将启动、异常、预览文件字节数与 JS `log.write` 持久化到 `<Application Support>/herdr-ios.log`（2 MB 自动轮转），同时手机端 `clientLog` 通过 `client.log` 实时同步到 Mac 端 `~/Library/Logs/wayne-herdr-mods.log` 与 `~/.config/wayne-herdr-mods/ios-client.log`（记录路由栈变化、每次 `files.list` / `files.open` / `files.slice` 的原始大小、传输字节数与耗时，以及终端页 `term.ready` 的耗时 `ms` 和格子 `fit`）。`clientLog` 判断连接用 `link.status`，不读 `status()` 信号：否则调用它的 `effect` 会订阅连接状态，一次重连让 `nav.routes` 连记 5 次（2026-11-07 修，`test/ios-conn.test.mjs`）。
+  3. **端到端完整日志（`herdr-ios.log` + `client.log`）**：iOS 宿主 `AppLogger` 将启动、异常、预览文件字节数与 JS `log.write` 持久化到 `<Application Support>/herdr-ios.log`（2 MB 自动轮转），同时手机端 `clientLog` 通过 `client.log` 实时同步到 Mac 端 `~/Library/Logs/wayne-herdr-mods.log` 与 `~/.config/wayne-herdr-mods/ios-client.log`（记录路由栈变化、每次 `files.list` / `files.open` / `files.slice` 的原始大小、传输字节数与耗时、终端页 `term.ready` 与首帧 `term.drawn` 分段耗时，以及 `link.connect` / `link.drop` / `link.wake` / `link.wake_ok` / `app.resume` 连接诊断；Mac 宿主同步记录 `[relay] online/offline` 与 `session.ready/close upMs=`）。`clientLog` 与 `ios/src/metrics.ts` 判断连接用 `link.status`，不读 `status()` 信号：否则调用它的 `effect` 会订阅连接状态，一次重连让 `nav.routes` 连记 5 次（2026-11-07 修，`test/ios-conn.test.mjs`）。
 
 验证：`test/files.test.mjs`（根目录收集、目录排序、`.git` 隐藏、`../` 与越界软链拦截、128 KB 文本截断与 `rawPreviewId` 分片读取、`sips` 图片压缩 + 分片重组、`ffmpeg` 6 帧故事板 + 480p MP4 转码与 `ftyp` 校验、文件大小日志断言）。

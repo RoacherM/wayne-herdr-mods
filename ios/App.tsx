@@ -6,8 +6,10 @@ import {
   activeTermAddress, addingMac, boot, cancelPair, clearStreamListener, clientLog,
   consumePendingNotificationTap, desktops, disableNotifications, enableNotifications,
   fetchPreviewDataUrl, forget, info, list, macStatuses, notify, notifyEnabled, notifyPermission,
-  openNativePreview, paired, pairWith, problem, refresh, refreshNotifyStatus, rpc, sas, sendImage,
-  linkEpoch, sendTestNotification, setStreamListener, status, switchDesktop, transcribeAudio, wake,
+  openNativePreview, paired, pairWith, problem, recordOp, refresh, refreshNotifyStatus, rpc, sas, sendImage,
+  linkEpoch, sendTestNotification, setStreamListener, status, switchDesktop,
+  termDrawn, termOpening, termOutputArrived, termRpcOpened, termTyped, termWebReady,
+  transcribeAudio, wake,
   type Saved, type Space, type Terminal,
 } from "./src/conn";
 import { PROG_ICONS } from "./src/prog-icons";
@@ -707,6 +709,7 @@ function TermScreen(props: { address: string }) {
   // Open once the page says {t:'ready', fit} (~300–450 ms on a phone for the 400 KB page), so
   // term.open carries the phone's grid. This only covers a page that never says it.
   const mountedAt = Date.now();
+  termOpening(address, false);
   let bootTimer: any = setTimeout(() => webReady.set(true), PAGE_READY_FALLBACK_MS);
 
   let field!: InputRef;
@@ -730,7 +733,9 @@ function TermScreen(props: { address: string }) {
     for (const e of effects) {
       if (e.type === "rpc" && e.m === "term.open") {
         const epoch = e.epoch;
-        rpc("term.open", e.p).then((r: any) => ses.send({ type: "opened", r, epoch }),
+        if (ses.state.opened) termOpening(address, true);
+        const openT0 = Date.now();
+        rpc("term.open", e.p).then((r: any) => { termRpcOpened(Date.now() - openT0); ses.send({ type: "opened", r, epoch }); },
           (err: any) => ses.send({ type: "openFailed", message: err?.message ?? String(err), epoch }));
       } else if (e.type === "rpc") rpc(e.m, e.p).catch(() => {});
       else if (e.type === "notify" && e.m === "term.fit") notify(e.m, e.p);
@@ -760,13 +765,16 @@ function TermScreen(props: { address: string }) {
 
   /** Typing: held by the session while the stream is down, and sent once it is back. */
   function out(d: string, after = 0, scrollLatest = true) {
-    if (scrollLatest) post({ t: "typing" });
+    if (scrollLatest) { post({ t: "typing" }); termTyped(); }
     session.send({ type: "input", m: "term.input", p: { d }, after });
   }
   const line = new LiveLine((d) => out(d));
   const sync = () => { burst.set(line.value); pending.set(line.pending); };
 
-  const onStream = (msg: any) => { session.send({ type: "stream", msg }); };
+  const onStream = (msg: any) => {
+    if (msg.ev === "out") termOutputArrived();
+    session.send({ type: "stream", msg });
+  };
 
   activeTermAddress.set(address);
   setStreamListener(onStream);
@@ -805,7 +813,9 @@ function TermScreen(props: { address: string }) {
     if (m.t === "ready") {
       clearTimeout(bootTimer);
       // How long the page takes on real phones: the data for PAGE_READY_FALLBACK_MS.
-      clientLog("info", "term.ready", { ms: Date.now() - mountedAt, fit: m.fit ?? null });
+      const webMs = Date.now() - mountedAt;
+      termWebReady(webMs);
+      clientLog("info", "term.ready", { ms: webMs, fit: m.fit ?? null });
       pageReady = true;
       if (m.fit) session.send({ type: "fit", fit: m.fit });
       for (const x of toPage.splice(0)) web.postMessage(x);
@@ -815,6 +825,7 @@ function TermScreen(props: { address: string }) {
     } else if (m.t === "ack" && sid() !== null) {
       notify("term.ack", { s: sid(), n: m.n });
     } else if (m.t === "drawn") {
+      termDrawn();
       clearLit();
       cursorHidden.set(Boolean(m.cursorHidden));
       appCursor.set(Boolean(m.appCursor));
@@ -850,6 +861,8 @@ function TermScreen(props: { address: string }) {
     tapHaptic();
     line.commit(); sync();
     post({ t: "typing" });
+    termTyped();
+    recordOp("key", klist.join("+"));
     session.send({ type: "input", m: "term.press", p: { keys: klist } });
   }
 

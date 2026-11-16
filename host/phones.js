@@ -48,6 +48,18 @@ const WHEEL_RE = /^(?:\x1b\[<6[45];\d{1,4};\d{1,4}M|\x1b\[M[`a][\x20-\xff]{2})$/
 const PRESS_MS = 3000;
 export const KEY_RE = /^(?:(?:ctrl|alt|shift|cmd|super|meta)\+)*(?:[a-z0-9]|enter|esc|escape|tab|backspace|space|delete|del|insert|home|end|pageup|pgup|pagedown|pgdn|up|down|left|right|f(?:[1-9]|1[0-2])|[-=[\]\\;',./`])$/i;
 
+function logPhoneReady(log, peer, device, paired) {
+  const devName = device?.name || device?.id || 'phone';
+  log(`wayne-herdr-mods: [phone:${devName}] session.ready cid=${peer.cid} mode=${paired ? 'pair' : 'resume'}`);
+}
+
+function logPhoneClose(log, peer, streams) {
+  if (!peer.readyAt) return;
+  const devName = peer.device?.name || peer.device?.id || 'phone';
+  const kick = peer.kickCode ? ` kick=${peer.kickCode}` : '';
+  log(`wayne-herdr-mods: [phone:${devName}] session.close cid=${peer.cid} upMs=${Date.now() - peer.readyAt} streams=${streams}${kick}`);
+}
+
 export function createPhones({ state, pairing, push, terminals, voice, files, metrics, link: getLink, rtc, log = () => {}, onChange = () => {} }) {
   const fileBrowser = files ?? (state?.dir ? createFiles({ dir: state.dir, terminals, log }) : null);
   const peers = new Map(); // cid → peer
@@ -69,7 +81,7 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
   const broadcast = (ev, payload) => { for (const peer of peers.values()) event(peer, ev, payload); };
 
   function open(cid) {
-    const peer = { cid, stage: 'hello', cipher: null, device: null, streams: new Map(), uploads: null, recognizing: false };
+    const peer = { cid, stage: 'hello', cipher: null, device: null, streams: new Map(), uploads: null, recognizing: false, readyAt: 0, kickCode: null };
     peers.set(cid, peer);
   }
 
@@ -77,12 +89,15 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
     const peer = peers.get(cid);
     if (!peer) return;
     peers.delete(cid);
+    const streams = peer.streams.size;
     for (const stream of [...peer.streams.values()]) stream.stop('dropped');
+    logPhoneClose(log, peer, streams);
     pairing.dropped(cid);
     if (peer.device) onChange();
   }
 
   function kick(peer, code, message) {
+    peer.kickCode = code;
     if (peer.cipher) send(peer, { type: 'error', code, message });
     else sendRaw(peer, JSON.stringify({ type: 'error', code, error: message }));
     setTimeout(() => getLink()?.close(peer.cid, code), 50);
@@ -93,9 +108,10 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
     if (!peer) return;
     if (typeof text === 'string' && text.startsWith('{"type":"hello"') && peer.stage !== 'hello') {
       if (peer.stage === 'pairing') pairing.dropped(cid); // ends the pending ask: 'denied', dialog clears
+      logPhoneClose(log, peer, peer.streams.size);
       for (const stream of [...peer.streams.values()]) stream.stop('rehandshake');
       peer.streams.clear();
-      Object.assign(peer, { stage: 'hello', cipher: null, early: null });
+      Object.assign(peer, { stage: 'hello', cipher: null, early: null, readyAt: 0, kickCode: null });
     }
     if (peer.stage === 'hello') {
       if (typeof text === 'string' && text[0] === 'E') return;
@@ -152,6 +168,8 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
     peer.device = device;
     peer.uploads = uploadsOf(device);
     peer.stage = 'ready';
+    peer.readyAt = Date.now();
+    logPhoneReady(log, peer, device, paired);
     await state.updateDevice(device.id, { lastSeen: Date.now() });
     if (!peers.has(peer.cid)) return;
     if (tell) await sendReady(peer, device, paired);

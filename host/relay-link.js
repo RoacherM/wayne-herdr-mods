@@ -8,6 +8,16 @@ import { relayAuthQuery } from '../shared/e2e.js';
 const PING_MS = 20_000;
 const DEAD_MS = 65_000;
 
+function logRelayOnline(log, t0, attempt) {
+  log(`wayne-herdr-mods: [relay] online ms=${Date.now() - t0} attempt=${attempt}`);
+}
+
+function logRelayOffline(log, openedAt, event) {
+  const up = openedAt ? ` upMs=${Date.now() - openedAt}` : '';
+  const reason = event.reason ? ` reason=${JSON.stringify(event.reason)}` : '';
+  log(`wayne-herdr-mods: [relay] offline code=${event.code}${reason}${up}`);
+}
+
 export function createRelayLink({ relayUrl, desktopId, signKeys, log = () => {}, onOpen, onData, onClose, onStatus = () => {} }) {
   const base = relayUrl.replace(/^http/, 'ws').replace(/\/$/, '');
   let ws;
@@ -33,6 +43,8 @@ export function createRelayLink({ relayUrl, desktopId, signKeys, log = () => {},
   function connect() {
     if (stopped) return;
     setStatus('connecting');
+    const t0 = Date.now();
+    let openedAt = 0;
     const url = `${base}/v1/desktop/${desktopId}?${relayAuthQuery(desktopId, signKeys)}`;
     let socket;
     try {
@@ -44,7 +56,8 @@ export function createRelayLink({ relayUrl, desktopId, signKeys, log = () => {},
     }
     ws = socket;
     socket.onopen = () => {
-      lastHeard = Date.now();
+      openedAt = lastHeard = Date.now();
+      logRelayOnline(log, t0, attempt);
       setStatus('online');
       // Don't reset the backoff immediately: a relay that accepts then instantly closes
       // (auth failed, replaced, rate limited) would otherwise spin at ~1s forever. Reset
@@ -78,6 +91,7 @@ export function createRelayLink({ relayUrl, desktopId, signKeys, log = () => {},
       if (ws !== socket) return;
       clearInterval(pingTimer);
       dropClients();
+      logRelayOffline(log, openedAt, event);
       if (event.code === 1008 || /auth failed/.test(event.reason ?? '')) log(`wayne-herdr-mods: 中继拒绝了连接：${event.reason}`);
       // Code 4000: the relay replaced us with a newer desktop socket holding the same key —
       // reconnecting would kick that one and ping-pong forever. Stay down until kicked

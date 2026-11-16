@@ -82,6 +82,12 @@ export async function openDirect(relay) {
   }
 }
 
+function forwardDiag(from, via, duo) {
+  for (const ev of ['connected', 'dropped', 'wake', 'wake_ok']) {
+    from.addEventListener(ev, (e) => duo.emit(ev, { ...e.detail, via }));
+  }
+}
+
 export class Duo extends EventTarget {
   /** @param {Link} relay  the relay Link; `direct: false` keeps everything on it */
   constructor(relay, { direct = supported() } = {}) {
@@ -101,6 +107,7 @@ export class Duo extends EventTarget {
     relay.addEventListener('ev', (e) => { if (this.active === relay) this.emit('ev', e.detail); });
     relay.addEventListener('fatal', (e) => this.emit('fatal', e.detail));
     relay.addEventListener('confirm', (e) => this.emit('confirm', e.detail));
+    forwardDiag(relay, 'relay', this);
   }
 
   emit(type, detail) { this.dispatchEvent(new CustomEvent(type, { detail })); }
@@ -139,6 +146,8 @@ export class Duo extends EventTarget {
     if (this.closed) { link.close(); return; }
     this.direct = link;
     this.since = Date.now();
+    if (link.lastConnected) this.emit('connected', { ...link.lastConnected, via: 'direct' });
+    forwardDiag(link, 'direct', this);
     link.addEventListener('ev', (e) => { if (this.active === link) this.emit('ev', e.detail); });
     link.addEventListener('status', () => { if (link.status !== 'ready') this.lost(link); });
     this.use(link);

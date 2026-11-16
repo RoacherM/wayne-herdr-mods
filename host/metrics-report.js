@@ -99,7 +99,21 @@ function show(name) {
     if (!s.n) continue;
     tb.append($('tr', {}, $('td', {}, l), $('td', {}, vl), $('td', { class: 'n' }, String(s.n)), $('td', { class: 'n' }, fmtK(key, s.p50)), $('td', { class: 'n' }, fmtK(key, s.p95)), $('td', { class: 'muted d' }, d)));
   }
+  for (const [via, vl] of VIA) {
+    const u = g.uptime?.[via];
+    if (!u?.n) continue;
+    tb.append($('tr', {}, $('td', {}, '单次连接存活'), $('td', {}, vl), $('td', { class: 'n' }, String(u.n)), $('td', { class: 'n' }, fmt(u.p50)), $('td', { class: 'n' }, fmt(u.p95)), $('td', { class: 'muted d' }, '连接就绪到断开持续的时长（越长越稳）')));
+  }
   body.append(tb);
+
+  const dropList = Object.entries(g.dropReasons ?? {}).sort((a, b) => b[1] - a[1]);
+  if (dropList.length) {
+    body.append($('h2', {}, '断线与唤醒原因'));
+    const dt = $('table', {}, $('tr', {}, $('th', {}, '类别'), $('th', {}, '原因'), $('th', { class: 'n' }, '次数')));
+    for (const [reason, n] of dropList) dt.append($('tr', {}, $('td', {}, 'drop'), $('td', {}, reason), $('td', { class: 'n' }, String(n))));
+    for (const [act, n] of Object.entries(g.wakeActions ?? {}).sort((a, b) => b[1] - a[1])) dt.append($('tr', {}, $('td', {}, 'wake'), $('td', {}, act), $('td', { class: 'n' }, String(n))));
+    body.append(dt);
+  }
 
   if (names.length > 1) {
     body.append($('h2', {}, '各来源对比（中位数 / p95）'));

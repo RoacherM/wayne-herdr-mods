@@ -8,6 +8,8 @@ import "./shim";
 import { batch, effect, host, lifecycle, signal, Storage } from "nsh";
 import { b64, boxKeysFromSecret, decodePairLink, newBoxKeys, unb64 } from "../../shared/e2e.js";
 import { Link } from "../../app/src/link.js";
+import { initIosMetrics, onAppLifecycle, resetIosMetrics, watchActiveLink } from "./metrics";
+export { flushMetrics, recordOp, termDrawn, termOpening, termOutputArrived, termRpcOpened, termTyped, termWebReady } from "./metrics";
 
 export type Terminal = {
   address: string; program?: string; app?: string; icon?: string; where?: string; cwd?: string;
@@ -471,6 +473,7 @@ function start(saved: Saved, pair?: { token: string; name: string }) {
     pair,
   });
   link = l;
+  watchActiveLink(l);
   console.log(`link: start ${pair ? "pairing" : "resume"} → ${saved.relay} desktop ${saved.desktopId}`);
   l.addEventListener("status", (e: any) => {
     if (link === l) {
@@ -618,6 +621,7 @@ export async function forget(desktopId?: string) {
       start(next);
     }
   } else {
+    resetIosMetrics();
     batch(() => { status.set("idle"); list.set({ terminals: [], layout: [] }); info.set(null); });
     await saveAll(null, []);
   }
@@ -632,8 +636,13 @@ export const wake = () => {
   link?.wake();
   for (const bg of bgLinks.values()) bg.link?.wake?.();
 };
+initIosMetrics({ log: clientLog, fg: () => lifecycle() === "active" });
 // On every screen (and with none): the sockets are checked as soon as the app is active again.
-effect(() => { if (lifecycle() === "active") wake(); });
+effect(() => {
+  const st = lifecycle();
+  if (st === "active") wake();
+  onAppLifecycle(st);
+});
 
 // ---- Low-bandwidth 63 KB (multiple of 3 bytes) slice streaming for File / Video / QuickLook preview
 const SLICE_ALIGNED_BYTES = 63 * 1024; // 64,512 bytes: divisible by 3 so base64 slices concatenate without padding

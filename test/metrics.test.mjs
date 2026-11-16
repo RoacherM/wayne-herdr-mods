@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { clean, createMetricsStore, quantile, summarize } from '../host/metrics.js';
 import { renderReport } from '../host/metrics-report.js';
+import { analyzeOurs, parseSshdLog } from '../dev/conn-stats.mjs';
 
 const T = new Date(2026, 10, 4, 12).getTime();
 const ctx = { src: 'phone', ver: 'abc·1', os: '18.6', browser: 'safari', standalone: true, w: 390, h: 844 };
@@ -94,4 +95,51 @@ test('the report page carries the data and cannot be broken out of', () => {
   assert.ok(html.startsWith('<!doctype html>'));
   assert.equal(html.match(/<\/script>/g).length, 1);
   assert.ok(html.includes('\\u003c/script>'));
+});
+
+test('connect, drop and wake records pass clean() and summarize uptime, dropReasons and wakeActions', () => {
+  const rows = [
+    clean({ t: T, ev: 'connect', via: 'relay', why: 'boot', ms: 340, wsMs: 140, roomMs: 60, hsMs: 140, attempt: 0 }, ctx),
+    clean({ t: T + 1, ev: 'wake', via: 'relay', action: 'ping_ok', idleMs: 12_000, rs: 1, rttMs: 42 }, ctx),
+    clean({ t: T + 2, ev: 'drop', via: 'relay', reason: 'wake_asleep', stage: 'ready', ready: true, upMs: 95_000, idleMs: 34_000, code: 0, rs: 1 }, ctx),
+    clean({ t: T + 3, ev: 'drop', via: 'relay', reason: 'wake_asleep', stage: 'ready', ready: true, upMs: 125_000, idleMs: 36_000, code: 0, rs: 1 }, ctx),
+    clean({ t: T + 4, ev: 'drop', via: 'relay', reason: 'step_connect', stage: 'connect', ready: false, upMs: 999, idleMs: 10_000, code: 0, rs: 0 }, ctx),
+    clean({ t: T + 5, ev: 'drop', via: 'direct', reason: 'silent', stage: 'ready', ready: true, upMs: 300_000, idleMs: 15_000, code: 0, rs: 1 }, ctx),
+  ];
+  assert.equal(rows.every(Boolean), true);
+  const s = summarize(rows);
+  const g = s.groups.phone;
+  assert.equal(g.measures['connect.ms'].all.relay.p50, 340);
+  assert.equal(g.measures['connect.wsMs'].all.relay.p50, 140);
+  assert.equal(g.measures['wake.rttMs'].all.relay.p50, 42);
+  assert.deepEqual(g.uptime.relay, { n: 2, p50: 95_000, p95: 125_000 });
+  assert.deepEqual(g.uptime.direct, { n: 1, p50: 300_000, p95: 300_000 });
+  assert.deepEqual(g.dropReasons, { wake_asleep: 2, step_connect: 1, silent: 1 });
+  assert.deepEqual(g.wakeActions, { ping_ok: 1 });
+  const html = renderReport(s);
+  assert.ok(html.includes('wake_asleep'));
+});
+
+test('conn-stats parses macOS sshd PAM sessions and counts asleepWhileOpen drops', () => {
+  const sshdText = [
+    '2026-11-11 12:33:29.476 E  sshd[27555:706541e] [com.apple.network.libinfo:si_destination_compare] send failed: Invalid argument',
+    '2026-11-11 12:33:31.068 Df sshd-session[27555:7065420] (libpam.2.dylib) in pam_sm_open_session(): Unable to retrieve the authenticator.',
+    '2026-11-11 12:38:32.999 Df sshd-session[27555:7065420] (libpam.2.dylib) in pam_sm_setcred(): pam_sm_setcred: ntlm user byronwayne',
+  ].join('\n');
+  const sshd = parseSshdLog(sshdText);
+  assert.equal(sshd.sessions, 1);
+  assert.equal(sshd.handshake.p50, 1592);
+  assert.equal(sshd.uptime.p50, 301_931);
+
+  const ours = analyzeOurs({
+    metricsRows: [
+      { t: T, ev: 'connect', via: 'relay', src: 'phone', why: 'boot', ms: 300, wsMs: 120, roomMs: 50, hsMs: 130, attempt: 0 },
+      { t: T + 1, ev: 'drop', via: 'relay', src: 'phone', reason: 'wake_asleep', stage: 'ready', ready: true, upMs: 60_000, idleMs: 32_000, code: 0, rs: 1 },
+    ],
+    clientLogs: [{ ts: new Date(T).toISOString(), event: 'term.ready', detail: { ms: 98 } }],
+    hostLog: { relayOnlineMs: [180], relayUpMs: [3_600_000], phoneUpMs: [] },
+  });
+  assert.equal(ours.drops.asleepWhileOpen, 1);
+  assert.equal(ours.uptime.p50, 60_000);
+  assert.equal(ours.termOpen.webviewBoot.p50, 98);
 });

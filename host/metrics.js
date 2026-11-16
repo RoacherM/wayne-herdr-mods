@@ -26,6 +26,9 @@ const FIELDS = {
   op: { op: 's', key: 's?' },
   kbd: { why: 's', f: 'b', act: 's', vh: 'n', vt: 'n', sc: 'n', ih: 'n', dh: 'n', sy: 'n', up: 'b', st: 'n', sb: 'n' }, // the keyboard page sees a change (keyboard-fit.js), to check it on a real phone
   voice: { kb: 'n', ms: 'n', muted: 'b', err: 's?' }, // one recording: size, length, mic muted at start, what failed (null: words came)
+  connect: { why: 's', ms: 'n', wsMs: 'n', roomMs: 'n', hsMs: 'n', attempt: 'n' },
+  drop: { reason: 's', stage: 's', ready: 'b', upMs: 'n?', idleMs: 'n', code: 'n', rs: 'n' },
+  wake: { action: 's', idleMs: 'n', rs: 'n', rttMs: 'n?' },
 };
 const CTX = { src: 's', ver: 's', os: 's', browser: 's', standalone: 'b', w: 'n', h: 'n' };
 
@@ -36,6 +39,11 @@ export const MEASURES = [
   ['open.ms', '打开终端', '点开一个终端到第一屏画出来'],
   ['resume.paint', '回到页面', '切回页面到终端重新画出来'],
   ['resume.ready', '回到页面后重连', '切回页面到连接恢复'],
+  ['connect.ms', '建连总耗时', '发起连接到握手就绪（含 WebSocket、中继房间与加密握手）'],
+  ['connect.wsMs', '建连：WebSocket', 'TCP + TLS + 代理到 WebSocket 打开'],
+  ['connect.roomMs', '建连：中继就绪', 'WebSocket 打开到中继通知电脑在线'],
+  ['connect.hsMs', '建连：加密握手', '发出 hello 到收到电脑 ready'],
+  ['wake.rttMs', '唤醒探测往返', '回前台未满 30 秒时发 ping 到收到回复'],
   ['rtt.ms', '往返', '手机发一批记录到 Mac 再收到回复（含连接里的排队）'],
   ['rtt.ice', '网络往返', '直连时 WebRTC 自己量的网络往返，不含我们的排队'],
   ['scroll.lag', '滑动到画面跟上', '全屏程序里手指动一行，到程序回应这一步的画面画出来（一次滑动的中位数）'],
@@ -143,6 +151,26 @@ function stats(values) {
 
 const valueOf = (row, key) => { const [ev, field] = key.split('.'); return row.ev === ev ? row[field] : undefined; };
 
+function countBy(rows, field) {
+  const out = {};
+  for (const r of rows) if (r[field]) out[r[field]] = (out[r[field]] || 0) + 1;
+  return out;
+}
+
+function summarizeStability(list) {
+  const dropRows = list.filter((r) => r.ev === 'drop');
+  const wakeRows = list.filter((r) => r.ev === 'wake');
+  const uptime = {};
+  for (const via of ['direct', 'relay']) {
+    uptime[via] = stats(dropRows.filter((r) => r.via === via && r.ready).map((r) => r.upMs));
+  }
+  return {
+    uptime,
+    dropReasons: countBy(dropRows, 'reason'),
+    wakeActions: countBy(wakeRows, 'action'),
+  };
+}
+
 /**
  * Rows → { groups: { [src]: group } }. A group: overall stats per measure and path, the same per
  * day, link changes per day, the key bar's use, and the latest rows (for the timeline).
@@ -178,6 +206,7 @@ export function summarize(rows) {
       ver: last.ver ?? '', device: [last.os && `iOS ${last.os}`, last.browser, last.standalone ? '主屏幕' : '', last.w && `${last.w}×${last.h}`].filter(Boolean).join(' · '),
       direct: list.filter((r) => r.via === 'direct').length / Math.max(1, list.filter((r) => r.via).length),
       measures, drops, keys, longShare,
+      ...summarizeStability(list),
       recent: list.slice(-300).reverse(),
     };
   }

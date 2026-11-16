@@ -140,6 +140,7 @@ export function createMetrics({ src = 'phone', version = '' } = {}) {
   function watch(l) {
     link = l;
     let last = l.status;
+    let wakePending = null;
     l.addEventListener('status', () => {
       if (l.status === last) return;
       last = l.status;
@@ -147,6 +148,24 @@ export function createMetrics({ src = 'phone', version = '' } = {}) {
       if (!resume) return;
       if (l.status !== 'ready') resume.ready = undefined; // the link found it was dead: wait for it again
       else if (resume.ready === undefined) resume.ready = ms(now() - resume.t0);
+    });
+    l.addEventListener('connected', (e) => mark('connect', e.detail));
+    l.addEventListener('dropped', (e) => {
+      if (wakePending && e.detail?.reason === 'wake_pong') {
+        mark('wake', { ...wakePending, action: 'ping_timeout', rttMs: null });
+        wakePending = null;
+      }
+      mark('drop', e.detail);
+    });
+    l.addEventListener('wake', (e) => {
+      const d = e.detail;
+      if (d?.action === 'ping') { wakePending = d; return; }
+      mark('wake', { ...d, rttMs: null });
+    });
+    l.addEventListener('wake_ok', (e) => {
+      if (!wakePending) return;
+      mark('wake', { ...wakePending, action: 'ping_ok', rttMs: e.detail.rttMs });
+      wakePending = null;
     });
   }
 
