@@ -1,9 +1,9 @@
 import "./src/shim";
-import { cleanup, Clipboard, computed, effect, host, Image, Keyboard, lifecycle, mount, Picker, Scroll, signal, Text, View, WebView } from "nsh";
+import { cleanup, Clipboard, computed, effect, host, Image, Keyboard, lifecycle, mount, Picker, Scroll, signal, Text, token, untracked, View, WebView } from "nsh";
 import type { InputRef, WebViewRef } from "nsh/types";
 import { Button, createNavStack, Input, NavPage, NavStack } from "nsh/base";
 import {
-  activeTermAddress, addingMac, boot, cancelPair, clearStreamListener, clientLog,
+  activeTermAddress, addingMac, boardSeq, boardTarget, boardTouchesTerminal, boot, cancelPair, clearStreamListener, clientLog,
   consumePendingNotificationTap, desktops, disableNotifications, enableNotifications,
   fetchPreviewDataUrl, forget, info, list, macStatuses, notify, notifyEnabled, notifyPermission,
   openNativePreview, paired, pairWith, problem, recordOp, refresh, refreshNotifyStatus, rpc, sas, sendImage,
@@ -12,14 +12,17 @@ import {
   transcribeAudio, wake,
   type Saved, type Space, type Terminal,
 } from "./src/conn";
+import { BoardSheet, type BoardSnapshot } from "./src/BoardSheet";
 import { PROG_ICONS } from "./src/prog-icons";
 import { TERM_HTML } from "./src/term-html";
+import { boardBadgeOf, computeStats } from "../shared/board.js";
 import { imageInput, LiveLine, PASTE_LF, pasteText } from "../app/src/live-line.js";
 import { agentKeys, combo, keyOfChar, MODS } from "../app/src/agent-keys.js";
 import { enqueue, termSession } from "../app/src/term-session.js";
 import { voiceHold } from "../app/src/voice-hold.js";
 import chevronDownIcon from "./assets/chevron-down.svg";
 import chevronIcon from "./assets/chevron.svg";
+import boardIcon from "./assets/board.svg";
 import docIosIcon from "./assets/doc-ios.png";
 import downIcon from "./assets/down.svg";
 import fileTextIcon from "./assets/file-text.svg";
@@ -659,7 +662,6 @@ function SettingsScreen() {
 }
 
 // ------------------------------------------------------------------ terminal ---------------
-const DARK = { bar: "#1c1c1e", tint: "#f2f2f7" };
 // Matches DESIGN.md「键盘栏的顺序」: Esc ← ↑ ↓ → ⏎ ⇧Tab ^C │ agent keys │ ^ ⌥ ⇧ │ Tab 粘贴 换行 1 2 3 y n ^D ^R ^L
 const KEYBAR_FRONT: [string, string][] = [
   ["Esc", "\x1b"], ["←", "left"], ["↑", "up"], ["↓", "down"], ["→", "right"], ["⏎", "\r"], ["⇧Tab", "\x1b[Z"], ["^C", "\x03"],
@@ -700,6 +702,19 @@ function TermScreen(props: { address: string }) {
   const mods = signal<string[]>([]);
   const litKey = signal("");
   const webReady = signal(false);
+  const boardOpen = signal(false);
+  const boardSnap = signal<BoardSnapshot | null>(null);
+  let boardReqId = 0;
+  async function loadBoard() {
+    if (status() !== "ready" || !info()?.board) return;
+    const rid = ++boardReqId;
+    try {
+      const r = await rpc("board.get", { address }, 8000);
+      if (rid === boardReqId) {
+        boardSnap.set({ lane: r?.lane ?? null, at: Number(r?.at) || Date.now(), fetchedAt: Date.now() });
+      }
+    } catch {}
+  }
   let litTimer: any = 0;
   let repeatDelay: any = 0;
   let repeatEvery: any = 0;
@@ -795,7 +810,24 @@ function TermScreen(props: { address: string }) {
     if (st === "active") { wake(); session.send({ type: "away", on: false }); }
     else if (st === "background") session.send({ type: "away", on: true });
   });
+  let seenBoardSeq = boardSeq();
+  effect(() => {
+    const ready = status() === "ready";
+    const hasBoard = Boolean(info()?.board);
+    void linkEpoch();
+    if (ready && hasBoard) loadBoard();
+    else if (ready && !hasBoard) boardSnap.set(null);
+  });
+  effect(() => {
+    const seq = boardSeq();
+    if (seq === seenBoardSeq) return;
+    seenBoardSeq = seq;
+    if (boardTouchesTerminal(boardTarget(), address, untracked(() => boardSnap())?.lane)) {
+      loadBoard();
+    }
+  });
   cleanup(() => {
+    boardReqId++;
     clientLog("info", "term.cleanup", { address, s: sid() });
     if (activeTermAddress() === address) activeTermAddress.set(null);
     clearTimeout(bootTimer);
@@ -1059,40 +1091,97 @@ function TermScreen(props: { address: string }) {
   });
 
   const voiceOk = computed(() => Boolean(info()?.voice) && host.available());
+  const boardSupported = computed(() => Boolean(info()?.board));
+  const boardBadge = computed(() => {
+    const lane = boardSnap()?.lane;
+    return boardBadgeOf(lane ? (lane.stats ?? computeStats(lane.agents, lane.events)) : null);
+  });
+  const boardTint = computed(() => {
+    const tone = boardBadge().tone;
+    return tone === "warn" ? token("term-warn") : tone === "accent" ? token("accent") : token("term-fg");
+  });
+  const boardIconTerm = computed<Terminal | null>(() => {
+    const laneApp = boardSnap()?.lane?.app;
+    const cur = term();
+    if (laneApp) return { ...(cur ?? { address, cols: 80, rows: 24 }), app: laneApp, icon: undefined };
+    return cur ?? null;
+  });
 
   return (
     <NavPage
       title={title()}
-      headerStyle={{ backgroundColor: DARK.bar, color: "#f2f2f7", tintColor: DARK.tint }}
+      headerVisible={false}
       statusBar={{ foreground: "light" }}
-      ios={{ headerRightSymbol: "folder" }}
-      headerTitle={
-        <View class="items-center gap-0.5" accessibilityLabel={title()}>
-          <ProgIcon t={term()} size={20} dark />
-          <Text class="text-[12px] text-[#8d8d93]" style={{ numberOfLines: 1 }}>{subtitle()}</Text>
-        </View>
-      }
-      headerRight={
-        <Button
-          onPress={() => {
-            tapHaptic();
-            openFiles({
-              name: "files",
-              rootId: `term:${address}`,
-              address,
-              path: "",
-              title: base(term()?.cwd) || title(),
-            });
-          }}
-          class="h-9 w-9 items-center justify-center rounded-full"
-          testID="term-files"
-          accessibilityLabel="文件树"
-        >
-          <Icon src={folderIcon} size={18} color="#f2f2f7" />
-        </Button>
-      }
     >
       <View class="flex-1 bg-[#0b0b0c] pb-[env(keyboard-inset-height)]">
+        <View class="border-b border-term-border bg-term-bar pt-[env(safe-area-inset-top)]">
+          <View class="h-11 flex-row items-center px-2">
+            <View class="w-[100px] flex-row items-center">
+              <Button
+                onPress={() => { tapHaptic(); nav.pop(); }}
+                class="h-11 max-w-[100px] flex-row items-center gap-0.5 pr-1 active:opacity-60"
+                testID="term-back"
+                accessibilityLabel="返回"
+              >
+                <View style={{ rotate: "180deg" }}>
+                  <Icon src={chevronIcon} size={20} class="tint-term-fg" />
+                </View>
+                <Text class="shrink text-base text-term-fg" style={{ numberOfLines: 1 }}>
+                  {paired()?.desktopName ?? info()?.desktopName ?? "Mac"}
+                </Text>
+              </Button>
+            </View>
+
+            <View class="flex-1 items-center justify-center gap-0.5 px-1" accessibilityLabel={title()}>
+              <ProgIcon t={term()} size={20} dark />
+              <Text class="w-full text-center text-xs text-term-muted" style={{ numberOfLines: 1 }}>{subtitle()}</Text>
+            </View>
+
+            <View class="w-[100px] flex-row items-center justify-end gap-1">
+              <If when={boardSupported()}>
+                <Button
+                  onPress={() => {
+                    tapHaptic();
+                    Keyboard.dismiss();
+                    boardOpen.set(true);
+                    loadBoard();
+                  }}
+                  hitSlop={4}
+                  class="h-9 min-w-9 flex-row items-center justify-center gap-1 rounded-full px-2 active:bg-term-press selected:bg-term-active"
+                  selected={boardOpen()}
+                  testID="term-board"
+                  accessibilityLabel="通信拓扑…"
+                >
+                  <Icon src={boardIcon} size={17} color={boardTint()} />
+                  <If when={boardBadge().count > 0}>
+                    <Text class="font-mono text-xs font-semibold" style={{ color: boardTint(), fontVariant: ["tabular-nums"] }}>
+                      {String(boardBadge().count)}
+                    </Text>
+                  </If>
+                </Button>
+              </If>
+              <Button
+                onPress={() => {
+                  tapHaptic();
+                  openFiles({
+                    name: "files",
+                    rootId: `term:${address}`,
+                    address,
+                    path: "",
+                    title: base(term()?.cwd) || title(),
+                  });
+                }}
+                hitSlop={4}
+                class="h-9 w-9 items-center justify-center rounded-full active:bg-term-press"
+                testID="term-files"
+                accessibilityLabel="文件树"
+              >
+                <Icon src={folderIcon} size={18} class="tint-term-fg" />
+              </Button>
+            </View>
+          </View>
+        </View>
+
         {/* Terminal stage + floating status bubble + scroll-to-latest button */}
         <View class="relative flex-1 bg-[#0b0b0c]">
           <WebView ref={web} html={TERM_HTML} style={{ flex: 1 }} scrollable={false} onMessage={(e) => fromPage(e.data)} testID="term-web" />
@@ -1221,6 +1310,13 @@ function TermScreen(props: { address: string }) {
           </View>
         </View>
       </View>
+      <BoardSheet
+        open={boardOpen()}
+        onOpenChange={(open) => boardOpen.set(open)}
+        address={address}
+        snapshot={boardSnap()}
+        renderIcon={() => <ProgIcon t={boardIconTerm()} size={16} dark />}
+      />
     </NavPage>
   );
 }

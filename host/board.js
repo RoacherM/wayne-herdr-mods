@@ -1,166 +1,416 @@
 /**
- * The observability board's memory (DESIGN.md「观测面板」).
+ * The observability board's topology memory (DESIGN.md「观测面板」).
  *
- * herdr-core says what is true now: which agents run, their sub-agents, their labels. It does not
- * keep what was. This module watches each change and keeps the history the board draws: for every
- * agent terminal a lane of decisions, and under each decision the sub-agents started after it.
+ * Fuses two local sources for each agent terminal on this Mac:
+ *   1. `herdr-core` runtime state (`status`, in-process `records`, `hc run` child `parent` tree) —
+ *      live running / `blocked` / failed states and child sub-terminals;
+ *   2. Local agent transcripts (`host/transcripts.js`: Claude Code, Antigravity, Codex, Pi/Epi) —
+ *      the causal communication graph (`spawn`, `message`, `return`).
  *
- * Everything comes from herdr-core's own facts, nothing is parsed out of an agent's files:
- *   - a sub-agent inside the agent's process: one entry in the terminal's `records` (OSC 7501);
- *   - a sub-agent in its own terminal (`hc run`): a terminal whose `parent` is the agent's address;
- *   - a decision: the terminal's label `wayne.said` (the person's words) or `wayne.note` (the agent's).
+ * Writes `~/.config/wayne-herdr-mods/board.json` (`v: 2`) atomically when the topology changes.
  */
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { computeStats, normalizeSubState, stripBoilerplateReply } from '../shared/board.js';
+import { programOf, SHELLS } from './terminals.js';
+import { createSessionReader, oneLine } from './transcripts.js';
 
-export const SAID = 'wayne.said', NOTE = 'wayne.note';
-const KEEP_ENDED_MS = 12 * 3600_000, MAX_LANES = 30, MAX_STEPS = 40, MAX_SUBS = 60;
+const KEEP_ENDED_MS = 12 * 3600_000;
+const MAX_EVENTS = 120;
+const MAX_AGENTS = 60;
+const VALID_KINDS = new Set(['spawn', 'message', 'return']);
+const FG_AGENT_MAP = {
+  agy: 'antigravity', antigravity: 'antigravity',
+  claude: 'claude', 'claude-code': 'claude-code',
+  codex: 'codex', epi: 'epi', pi: 'pi',
+  droid: 'droid', devin: 'devin',
+  dim: 'dim', dimcode: 'dim',
+  amp: 'amp', grok: 'grok', 'grok-build': 'grok',
+  cursor: 'cursor', 'cursor-agent': 'cursor',
+  opencode: 'opencode', copilot: 'copilot', 'github-copilot': 'copilot',
+  gemini: 'gemini', kimi: 'kimi', kiro: 'kiro', 'kiro-cli': 'kiro',
+  qwen: 'qwen', goose: 'goose', aider: 'aider', crush: 'crush', qoder: 'qoder', qodercli: 'qoder',
+};
 
-export const emptyBoard = () => ({ v: 1, lanes: [], labels: {} });
+export const emptyBoard = () => ({ v: 2, lanes: [] });
 
-/** `1794454931956|the words` → { at, text }; a bare value has no time of its own. */
-function stamped(value, now) {
-  const m = /^(\d{13})\|([\s\S]*)$/.exec(value);
-  return m ? { at: Number(m[1]), text: m[2] } : { at: now, text: value };
+function agentAppOf(t) {
+  const prog = programOf(t.foreground)?.toLowerCase() || null;
+  if (prog && SHELLS.has(prog)) return null;
+  if (t.status?.app) return t.status.app;
+  return prog ? (FG_AGENT_MAP[prog] || null) : null;
 }
 
-/** The part of a 7501 record the board shows. A terminal that has not reported yet counts as working. */
-const facts = (r) => ({ app: r?.app ?? null, state: r?.state ?? 'working', msg: r?.msg ?? null, progress: r?.progress ?? null });
-
-/** A child that never reported and has no template is a plain command (`hc run npm test`): not a sub-agent. */
-const isSubAgent = (k, parent) => k.parent === parent && k.state === 'live' && Boolean(k.status?.state || k.template);
-
-/** What a terminal runs under it right now: its records, and the agent terminals it started. */
-function subsNow(t, all) {
-  const inside = Object.entries(t.records ?? {}).map(([id, r]) => ({ id, kind: 'in', title: r.title || r.msg || id, ...facts(r) }));
-  const started = all.filter((k) => isSubAgent(k, t.address))
-    .map((k) => ({ id: k.address, kind: 'term', title: k.name || k.template || k.address, ...facts(k.status), app: k.status?.app ?? k.template ?? null, terminal: k }));
-  return [...inside, ...started];
+function isSubTerminal(t) {
+  if (t.status || t.template || agentAppOf(t)) return true;
+  return Boolean(t.records && Object.keys(t.records).length);
 }
 
-function end(sub, all, now) {
-  if (sub.ended) return;
-  sub.ended = now;
-  const t = sub.kind === 'term' ? all.find((k) => k.address === sub.id) : null;
-  sub.state = t ? (t.exit_code ? 'failed' : 'done') : sub.state === 'error' ? 'failed' : 'done';
-  for (const s of sub.subs) end(s, all, now);
+function recordName(id, r) {
+  return r.title || r.msg || r.app || id;
 }
 
-/** Bring one holder's sub-agents in line with what runs now. New ones go into `into`. */
-function sync(known, into, current, all, now) {
-  const live = new Map(current.map((c) => [c.id, c]));
-  const under = (sub, c) => { if (c.terminal) sync(sub.subs, sub.subs, subsNow(c.terminal, all), all, now); };
-  for (const sub of known.filter((x) => !x.ended)) {
-    const c = live.get(sub.id);
-    if (!c) { end(sub, all, now); continue; }
-    live.delete(sub.id);
-    Object.assign(sub, { title: c.title, app: c.app, state: c.state, msg: c.msg, progress: c.progress });
-    under(sub, c);
-  }
-  for (const c of live.values()) {
-    const sub = { id: c.id, kind: c.kind, title: c.title, app: c.app, state: c.state, msg: c.msg, progress: c.progress, since: now, ended: null, subs: [] };
-    into.push(sub);
-    under(sub, c);
-  }
-}
-
-const hasOpen = (subs) => subs.some((s) => !s.ended || hasOpen(s.subs));
-
-/** How a sub-agent and everything under it ended, as counts: what stays of it once it is dropped. */
-function outcome(sub) {
-  const n = { done: sub.dropped?.done ?? 0, failed: sub.dropped?.failed ?? 0 };
-  n[sub.state === 'failed' ? 'failed' : 'done']++;
-  for (const s of sub.subs) { const m = outcome(s); n.done += m.done; n.failed += m.failed; }
-  return n;
-}
-
-/**
- * Keep the board small while an agent runs for days. Per holder (a decision, or a sub-agent with
- * its own) at most MAX_SUBS: the oldest ended ones go and stay only as counts (`dropped`: how many
- * ended well and how many failed, their own sub-agents included). Per lane at most MAX_STEPS
- * decisions: the oldest go, but never the latest one (the next sub-agent hangs there) and never
- * one with a sub-agent still at work; when every one is like that, the lane stays over the limit.
- */
-function compact(holder) {
-  for (const s of holder.subs) compact(s);
-  for (let over = holder.subs.length - MAX_SUBS; over > 0; over--) {
-    const i = holder.subs.findIndex((s) => s.ended && !hasOpen(s.subs));
-    if (i < 0) return;
-    const [gone] = holder.subs.splice(i, 1), n = outcome(gone);
-    holder.dropped = { done: (holder.dropped?.done ?? 0) + n.done, failed: (holder.dropped?.failed ?? 0) + n.failed };
-  }
-}
-
-function trim(lane) {
-  for (const step of lane.steps) compact(step);
-  for (let over = lane.steps.length - MAX_STEPS; over > 0; over--) {
-    const i = lane.steps.findIndex((s, at) => at < lane.steps.length - 1 && !hasOpen(s.subs));
-    if (i < 0) return;
-    lane.steps.splice(i, 1);
-  }
-}
-
-/** A label is a decision once: the board remembers the last value it took from each terminal. */
-function takeLabels(board, lane, t, now) {
-  const seen = board.labels[t.address] ??= {};
-  for (const [key, by] of [[SAID, 'you'], [NOTE, 'agent']]) {
-    const value = t.labels?.[key];
-    if (!value || value === seen[key]) continue;
-    seen[key] = value;
-    lane.steps.push({ by, ...stamped(value, now), subs: [] });
-  }
-}
-
-/** The lane of an agent terminal, brought up to now. */
-function follow(board, t, all, now) {
-  let lane = board.lanes.find((l) => l.t === t.address && !l.ended);
-  if (!lane) board.lanes.push(lane = { t: t.address, since: now, ended: null, steps: [] });
-  Object.assign(lane, { ...facts(t.status), cwd: t.foreground?.cwd ?? t.cwd ?? null, where: t.labels?.where ?? null });
-  takeLabels(board, lane, t, now);
-  const current = subsNow(t, all);
-  // A sub-agent hangs under the latest decision; with none yet, under a plain "started" step.
-  if (!lane.steps.length && current.length) lane.steps.push({ by: 'start', at: lane.since, text: '', subs: [] });
-  sync(lane.steps.flatMap((s) => s.subs), lane.steps.at(-1)?.subs ?? [], current, all, now);
-  trim(lane);
-}
-
-/** An agent that is gone (back at the shell, or its terminal ended) ends its lane and everything under it. */
-function close(lane, all, now) {
-  Object.assign(lane, { ended: now, state: 'idle', msg: null });
-  for (const s of lane.steps.flatMap((x) => x.subs)) end(s, all, now);
-}
-
-/**
- * One step of the board: `terminals` is every terminal herdr-core knows (finished ones included).
- * Changes `board` in place and returns whether anything changed.
- */
-export function observe(board, terminals, now) {
-  const before = JSON.stringify(board);
-  const all = terminals.filter((t) => typeof t?.address === 'string' && !t.address.includes('/'));
-  const roots = all.filter((t) => t.state === 'live' && t.status?.state && !t.parent);
-  for (const t of roots) follow(board, t, all, now);
-  const running = new Set(roots.map((t) => t.address));
-  for (const lane of board.lanes) if (!lane.ended && !running.has(lane.t)) close(lane, all, now);
-  board.lanes = board.lanes.filter((l) => !l.ended || now - l.ended < KEEP_ENDED_MS).slice(-MAX_LANES);
-  const known = new Set(all.map((t) => t.address));
-  for (const address of Object.keys(board.labels)) if (!known.has(address)) delete board.labels[address];
-  return JSON.stringify(board) !== before;
-}
-
-/** The board on disk: `<dir>/board.json`, rewritten (whole, atomically) shortly after each change. */
-export function createBoard({ dir, log = () => {}, now = Date.now, delayMs = 300 }) {
-  const file = join(dir, 'board.json');
-  let board = emptyBoard(), timer;
-  try { const saved = JSON.parse(readFileSync(file, 'utf8')); if (saved?.v === 1 && Array.isArray(saved.lanes)) board = { ...emptyBoard(), ...saved }; } catch { /* first run, or a broken file: start empty */ }
-  const write = () => {
-    timer = undefined;
-    try { mkdirSync(dir, { recursive: true }); writeFileSync(`${file}.tmp`, JSON.stringify({ ...board, at: now() })); renameSync(`${file}.tmp`, file); }
-    catch (error) { log(`wayne-herdr-mods: 写观测面板失败：${error.message}`); }
-  };
+function toRecordItem(id, r, parentAgent, fallbackVia, now) {
+  const state = normalizeSubState(r.state, { failed: r.state === 'error' });
   return {
-    file,
-    board: () => board,
-    update(terminals) { if (observe(board, terminals, now()) && !timer) timer = setTimeout(write, delayMs); },
-    dispose() { if (timer) { clearTimeout(timer); write(); } },
+    id, terminal: null, parentAgent,
+    name: recordName(id, r),
+    via: r.app || fallbackVia,
+    model: null, state, msg: r.msg || null, start: now, end: null,
+  };
+}
+
+function termStartMs(t, now) {
+  return Number(t.created_ms) || Number(t.since) || now;
+}
+
+function toSubTermItem(k, parentAgent, now) {
+  const ended = k.state !== 'live';
+  const failed = (ended && Boolean(k.exit_code)) || k.status?.state === 'error';
+  const status = k.status || {};
+  return {
+    id: `hc:${k.address}`,
+    terminal: k.address,
+    parentAgent,
+    name: k.name || status.title || k.template || status.app || k.address,
+    via: status.app || k.template || 'hc',
+    model: null,
+    state: normalizeSubState(status.state, { ended, failed }),
+    msg: status.msg || null,
+    start: termStartMs(k, now),
+    end: ended ? (Number(k.finished_ms) || now) : null,
+  };
+}
+
+function collectRuntimeSubs(rootAddr, byParent, now) {
+  const out = [];
+  const walk = (parentAddr, parentAgentId) => {
+    for (const k of byParent.get(parentAddr) || []) {
+      if (!isSubTerminal(k)) continue;
+      const sub = toSubTermItem(k, parentAgentId, now);
+      out.push(sub);
+      for (const [rid, r] of Object.entries(k.records || {})) {
+        out.push(toRecordItem(`rec:${k.address}:${rid}`, r, sub.id, 'in-proc', now));
+      }
+      walk(k.address, sub.id);
+    }
+  };
+  walk(rootAddr, null);
+  return out;
+}
+
+function makeReturnEvent(id, from, to, at, status, detail) {
+  const clean = stripBoilerplateReply(detail);
+  return {
+    kind: 'return', id, at, from, to: to || 'main', status,
+    summary: oneLine(clean, 88),
+    detail: clean || null,
+  };
+}
+
+function matchesRuntimeAgent(a, rt) {
+  return a.id === rt.id
+    || Boolean(rt.terminal && a.terminal === rt.terminal)
+    || Boolean(a.agentId && rt.id === `rec:${a.agentId}`);
+}
+
+function updateMatchedRuntime(lane, match, rt) {
+  lane.rtMap[rt.id] = match;
+  if (rt.terminal) match.terminal = rt.terminal;
+  if (rt.msg !== undefined) match.msg = rt.msg || null;
+  if (rt.end && !match.end) {
+    match.end = rt.end;
+    match.state = rt.state;
+    lane.rtEvents.push(makeReturnEvent(`rt-ret-${rt.id}`, match.id, match.parentAgent, rt.end, rt.state, rt.msg));
+    return;
+  }
+  if (!match.end) match.state = rt.state;
+}
+
+function findMatchingAgent(lane, rt) {
+  return lane.agents.find((a) => matchesRuntimeAgent(a, rt)) || lane.rtMap[rt.id];
+}
+
+function syncRuntimeAgent(lane, rt) {
+  const match = findMatchingAgent(lane, rt);
+  if (match) { updateMatchedRuntime(lane, match, rt); return; }
+  const added = {
+    id: rt.id, name: rt.name, via: rt.via, model: rt.model,
+    terminal: rt.terminal, parentAgent: rt.parentAgent,
+    state: rt.state, start: rt.start, end: rt.end,
+    prompt: rt.msg, reply: null,
+  };
+  lane.rtMap[rt.id] = added;
+  lane.rtAgents.push(added);
+  lane.rtEvents.push({
+    kind: 'spawn', id: `rt-sp-${rt.id}`, at: rt.start,
+    from: rt.parentAgent || 'main', to: added.id,
+    title: added.name, detail: rt.msg, via: added.via, model: null,
+  });
+  if (rt.end) {
+    lane.rtEvents.push(makeReturnEvent(`rt-ret-${rt.id}`, added.id, added.parentAgent, rt.end, rt.state, rt.msg));
+  }
+}
+
+function isRuntimeId(id) {
+  return id.startsWith('rec:') || id.startsWith('hc:');
+}
+
+function closeGoneRuntime(lane, seenIds, now) {
+  for (const [id, agent] of Object.entries(lane.rtMap)) {
+    if (seenIds.has(id) || agent.end || !isRuntimeId(id)) continue;
+    agent.end = now;
+    agent.state = agent.state === 'failed' ? 'failed' : 'done';
+    lane.rtEvents.push(makeReturnEvent(`rt-ret-${id}-${now}`, agent.id, agent.parentAgent, now, agent.state, null));
+  }
+}
+
+function capAgents(allAgents) {
+  if (allAgents.length <= MAX_AGENTS) return allAgents;
+  const open = allAgents.filter((a) => !a.end);
+  const closed = allAgents.filter((a) => a.end).slice(-Math.max(0, MAX_AGENTS - open.length));
+  return [...open, ...closed].slice(-MAX_AGENTS);
+}
+
+function overlayRuntimeStates(txAgents, rtMap) {
+  const rtList = Object.values(rtMap);
+  for (const a of txAgents) {
+    if (!a.terminal) continue;
+    const rt = rtList.find((r) => !r.end && r.terminal === a.terminal);
+    if (!rt) continue;
+    a.state = rt.state;
+    a.msg = rt.msg || null;
+  }
+}
+
+function pickLaneActivity(state, msg, txActivity) {
+  return (state === 'working' ? (txActivity || msg) : (msg || txActivity)) || null;
+}
+
+function cleanAgentCopy(a) {
+  const reply = a.reply ? (stripBoilerplateReply(a.reply) || null) : null;
+  return { ...a, reply };
+}
+
+function filterRtEvents(rtEvents, txAgents, txEvents) {
+  const txReturned = new Set(txEvents.filter((e) => e.kind === 'return').map((e) => e.from));
+  return rtEvents.filter((e) => {
+    if (e.kind === 'spawn') return !txAgents.some((t) => matchesRuntimeAgent(t, { id: e.to, terminal: e.to.startsWith('hc:') ? e.to.slice(3) : null }));
+    if (e.kind === 'return') return !txReturned.has(e.from);
+    return true;
+  });
+}
+
+function assembleLane(lane, tx) {
+  const txAgents = (tx?.agents || []).map(cleanAgentCopy);
+  const txEvents = tx?.events || [];
+  const keptRt = lane.rtAgents.filter((rt) => !txAgents.some((t) => matchesRuntimeAgent(t, rt)));
+  overlayRuntimeStates(txAgents, lane.rtMap);
+  const allAgents = [...txAgents, ...keptRt];
+  allAgents.forEach((a, idx) => { a.colorIdx = idx % 8; });
+
+  const events = [...txEvents, ...filterRtEvents(lane.rtEvents, txAgents, txEvents)]
+    .filter((e) => VALID_KINDS.has(e.kind))
+    .sort((a, b) => a.at - b.at)
+    .slice(-MAX_EVENTS);
+  lane.sessionId = tx?.sessionId || lane.sessionId || null;
+  lane.model = tx?.model || lane.model || null;
+  lane.activity = pickLaneActivity(lane.state, lane.msg, tx?.activity);
+  lane.agents = capAgents(allAgents);
+  lane.events = events;
+  lane.stats = computeStats(allAgents, events);
+}
+
+function stripInternal(board) {
+  return {
+    v: 2,
+    lanes: board.lanes.map(({ rtMap: _m, rtAgents: _a, rtEvents: _e, ...pub }) => pub),
+  };
+}
+
+function hydrateLane(raw) {
+  const agents = raw.agents || [];
+  const events = (raw.events || []).filter((e) => VALID_KINDS.has(e.kind));
+  const rtAgents = agents.filter((a) => isRuntimeId(a.id));
+  return {
+    ...raw,
+    agents,
+    events,
+    stats: computeStats(agents, events),
+    rtMap: Object.fromEntries(rtAgents.map((a) => [a.id, a])),
+    rtAgents,
+    rtEvents: events.filter((e) => String(e.id).startsWith('rt-')),
+  };
+}
+
+function closeLane(lane, now) {
+  if (lane.ended) return;
+  lane.ended = now;
+  lane.state = lane.state === 'error' ? 'error' : 'idle';
+  for (const a of lane.agents) {
+    if (!a.end) { a.end = now; a.state = a.state === 'failed' ? 'failed' : 'done'; }
+  }
+  lane.stats = computeStats(lane.agents, lane.events);
+}
+
+function findOrCreateLane(board, addr, app, state, since, now) {
+  const existing = board.lanes.find((l) => l.t === addr && !l.ended);
+  if (existing) return existing;
+  const fresh = hydrateLane({
+    t: addr, app, since: Number(since) || now, ended: null,
+    state, msg: null, activity: null, cwd: null, where: null,
+  });
+  board.lanes.push(fresh);
+  return fresh;
+}
+
+function syncLaneMeta(lane, t) {
+  const fg = t.foreground || {};
+  const labels = t.labels || {};
+  const status = t.status || {};
+  const created = Number(t.created_ms);
+  if (created > 0 && created < lane.since) lane.since = created;
+  lane.cwd = fg.cwd || t.cwd || lane.cwd;
+  lane.where = labels.where || lane.where;
+  lane.msg = status.msg || null;
+  return status.state || null;
+}
+
+function readLaneTx(sessionReader, addr, t, app, cwd, since, now) {
+  if (!sessionReader) return null;
+  const pid = t.pid || (t.foreground ? t.foreground.pid : 0);
+  return sessionReader.read({ address: addr, pid, app, cwd, since }, now);
+}
+
+function updateRootLane(board, addr, t, app, byParent, now, sessionReader) {
+  const rawState = t.status ? t.status.state : null;
+  const lane = findOrCreateLane(board, addr, app, rawState || 'idle', t.created_ms ?? t.since, now);
+  const st = syncLaneMeta(lane, t);
+  const tx = readLaneTx(sessionReader, addr, t, app, lane.cwd, lane.since, now);
+  lane.state = st || (tx && tx.state) || 'idle';
+  lane.agents = tx && tx.agents ? tx.agents.map((a) => ({ ...a })) : [...lane.rtAgents];
+
+  const rootRecords = Object.entries(t.records || {}).map(([rid, r]) => toRecordItem(`rec:${rid}`, r, null, app, now));
+  const rtList = [...rootRecords, ...collectRuntimeSubs(addr, byParent, now)];
+  for (const rt of rtList) syncRuntimeAgent(lane, rt);
+  closeGoneRuntime(lane, new Set(rtList.map((r) => r.id)), now);
+  assembleLane(lane, tx);
+}
+
+function groupByParent(local) {
+  const byParent = new Map();
+  for (const t of local) {
+    if (!t.parent) continue;
+    const arr = byParent.get(t.parent) || [];
+    arr.push(t);
+    byParent.set(t.parent, arr);
+  }
+  return byParent;
+}
+
+function isLocalTerm(t) {
+  return typeof t?.address === 'string' && !t.address.includes('/');
+}
+
+/** Update `board` in place from `terminals` + optional `sessionReader`; returns true if changed. */
+export function observe(board, terminals, now = Date.now(), sessionReader = null) {
+  const before = JSON.stringify(stripInternal(board));
+  const local = terminals.filter(isLocalTerm);
+  const byParent = groupByParent(local);
+  const roots = new Map();
+  for (const t of local) {
+    if (t.state !== 'live' || t.parent) continue;
+    const app = agentAppOf(t);
+    if (app) roots.set(t.address, { t, app });
+  }
+
+  for (const lane of board.lanes) {
+    const cur = roots.get(lane.t);
+    if (!cur || cur.app !== lane.app) closeLane(lane, now);
+  }
+  for (const [addr, { t, app }] of roots) updateRootLane(board, addr, t, app, byParent, now, sessionReader);
+
+  board.lanes = board.lanes.filter((l) => !l.ended || now - l.ended <= KEEP_ENDED_MS);
+  board.v = 2;
+  return JSON.stringify(stripInternal(board)) !== before;
+}
+
+function loadSavedBoard(file, log) {
+  try {
+    if (!existsSync(file)) return emptyBoard();
+    const parsed = JSON.parse(readFileSync(file, 'utf8'));
+    if (parsed?.v === 2 && Array.isArray(parsed.lanes)) return { v: 2, lanes: parsed.lanes.map(hydrateLane) };
+  } catch (error) {
+    log(`wayne-herdr-mods: 观测面板历史损坏，从空开始：${error.message}`);
+  }
+  return emptyBoard();
+}
+
+function writeBoardAtomically(dir, file, state, at, log) {
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const tmp = `${file}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify({ ...stripInternal(state), at }, null, 0), { mode: 0o600 });
+    renameSync(tmp, file);
+  } catch (error) {
+    log(`wayne-herdr-mods: 写入 board.json 失败：${error.message}`);
+  }
+}
+
+function snapshotLaneMap(lanes) {
+  const m = new Map();
+  for (const l of lanes) m.set(l.t, JSON.stringify(l));
+  return m;
+}
+
+function diffChangedLane(prevByT, lanes) {
+  const nextByT = snapshotLaneMap(lanes);
+  const changed = new Set();
+  for (const [t, raw] of nextByT) if (prevByT.get(t) !== raw) changed.add(t);
+  for (const t of prevByT.keys()) if (!nextByT.has(t)) changed.add(t);
+  prevByT.clear();
+  for (const [t, raw] of nextByT) prevByT.set(t, raw);
+  return changed.size === 1 ? { t: [...changed][0] } : {};
+}
+
+/** Persistent board service writing `board.json` and polling active transcripts gently. */
+export function createBoard({ dir, log = () => {}, now = Date.now, delayMs = 200, pollMs = 2000, sessionReader = createSessionReader(), onChange = () => {} }) {
+  const file = join(dir, 'board.json');
+  const state = loadSavedBoard(file, log);
+  const prevByT = snapshotLaneMap(stripInternal(state).lanes);
+  let writeTimer = null;
+  let lastTerminals = [];
+  let at = now();
+
+  const flush = () => {
+    writeTimer = null;
+    const doc = stripInternal(state);
+    const info = diffChangedLane(prevByT, doc.lanes);
+    writeBoardAtomically(dir, file, state, at, log);
+    onChange(doc, info);
+  };
+
+  function update(terminals) {
+    lastTerminals = terminals;
+    const t = now();
+    if (!observe(state, terminals, t, sessionReader)) return;
+    at = t;
+    if (writeTimer) return;
+    writeTimer = setTimeout(flush, delayMs);
+    writeTimer.unref?.();
+  }
+
+  const pollTimer = pollMs > 0 ? setInterval(() => {
+    if (lastTerminals.length && state.lanes.some((l) => !l.ended)) update(lastTerminals);
+  }, pollMs) : null;
+  pollTimer?.unref?.();
+
+  return {
+    board: () => stripInternal(state),
+    update,
+    dispose() {
+      if (pollTimer) clearInterval(pollTimer);
+      if (writeTimer) { clearTimeout(writeTimer); flush(); }
+    },
   };
 }

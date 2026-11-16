@@ -8,7 +8,7 @@ await build({
   entryPoints: [new URL('./main.js', import.meta.url).pathname],
   outfile: new URL('../dist/wayne-herdr-mods.mjs', import.meta.url).pathname,
   define: { __HERDR_APP__: JSON.stringify(herdrApp), __SKILL__: JSON.stringify(readFileSync(new URL('../SKILL.md', import.meta.url), 'utf8')) },
-  bundle: true, platform: 'node', format: 'esm', target: 'node20', legalComments: 'none',
+  bundle: true, platform: 'node', format: 'esm', target: 'node20', external: ['node:sqlite'], legalComments: 'none',
   // web-push and qrcode are CommonJS and require() node builtins.
   banner: { js: "// wayne-herdr-mods bundle\nimport { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" },
 });

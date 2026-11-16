@@ -196,7 +196,7 @@ export function createTerminals({ coreOptions = {}, log = () => {}, onChange = (
 }
 
 const INTERPRETERS = /^(node|nodejs|python[0-9.]*|bun|deno|ruby|perl|php)$/;
-const SHELLS = new Set(['zsh', 'bash', 'fish', 'sh', 'dash', 'nu', 'pwsh', 'powershell', 'cmd', 'elvish', 'xonsh', 'tcsh', 'csh', 'ksh', 'ion']);
+export const SHELLS = new Set(['zsh', 'bash', 'fish', 'sh', 'dash', 'nu', 'pwsh', 'powershell', 'cmd', 'elvish', 'xonsh', 'tcsh', 'csh', 'ksh', 'ion']);
 const ALIASES = {
   'claude-code': 'claude', agy: 'antigravity', 'cursor-agent': 'cursor', 'github-copilot': 'copilot',
   'grok-build': 'grok', 'kiro-cli': 'kiro', qodercli: 'qoder', vi: 'vim', view: 'vim', helix: 'hx',

@@ -78,6 +78,7 @@ test('pair, list, stream, type, send, keys — through the relay', { timeout: 12
   assert.equal(ready.type, 'ready');
   assert.equal(ready.paired, true);
   assert.equal(ready.keys, true, 'this Mac takes keys by name (term.press)');
+  assert.equal(ready.board, true, 'this Mac serves single-lane topology (board.get)');
 
   // --- RPC plumbing
   let id = 0;
@@ -263,4 +264,26 @@ test('pair, list, stream, type, send, keys — through the relay', { timeout: 12
   const meta = JSON.parse(await readFile(join(dataDir, 'asks', kept[0]), 'utf8'));
   assert.equal(meta.msg, 'Pick one');
   assert.match((await readFile(join(dataDir, 'asks', kept[0].replace('.json', '.bin')))).toString(), /→ Yes/);
+
+  // --- board.get returns a live agent terminal's topology lane over the encrypted link
+  const agyTerm = await mac.call('terminal.run', {
+    argv: ['/bin/sh', '-c', `printf '\\033]7501;state=working:app=antigravity:msg=${b64s('Auditing')}\\033\\\\'; exec sleep 30`],
+    cwd: '/tmp',
+    labels: { where: 'test · agy' },
+    rm: true,
+  });
+  await until('board observes live antigravity lane', async () => {
+    ws2.send(c2.seal({ id: ++id, m: 'board.get', p: { address: agyTerm.address } }));
+    let rep;
+    do rep = c2.open(await next(ws2)); while (rep.id !== id);
+    return rep.ok && rep.r.lane?.state === 'working' ? rep.r.lane : null;
+  });
+  ws2.send(c2.seal({ id: ++id, m: 'board.get', p: { address: agyTerm.address } }));
+  let boardReply;
+  do boardReply = c2.open(await next(ws2)); while (boardReply.id !== id);
+  assert.equal(boardReply.ok, true);
+  assert.equal(boardReply.r.lane?.t, agyTerm.address);
+  assert.equal(boardReply.r.lane?.app, 'antigravity');
+  assert.equal(boardReply.r.lane?.state, 'working');
+  await mac.call('terminal.kill', { terminal: agyTerm.address }).catch(() => {});
 });

@@ -47,7 +47,7 @@ export async function startService({ relayUrl = process.env.WAYNE_HERDR_MODS_URL
   const samples = createAskSamples({ dir: state.dir, core: () => terminals.core(), log });
   // The observability board's memory (board.js). Offline, the terminal list is empty: that is not
   // "every agent ended", so the board only looks while the core is connected.
-  const board = createBoard({ dir: state.dir, log });
+  const board = createBoard({ dir: state.dir, log, onChange: (_doc, info) => phones?.broadcast('board', info || {}) });
   const watch = () => { if (terminals.state() === 'online') board.update(terminals.every()); };
   const terminals = createTerminals({
     coreOptions, log,
@@ -71,7 +71,7 @@ export async function startService({ relayUrl = process.env.WAYNE_HERDR_MODS_URL
     onData: (cid, data) => { phones.data(cid, data).catch((error) => log(`wayne-herdr-mods: ${error.stack ?? error.message}`)); },
     onClose: (cid) => phones.close(cid),
   });
-  phones = createPhones({ state, pairing, push, terminals, voice, files, metrics, link: () => links, rtc, log, onChange: changed });
+  phones = createPhones({ state, pairing, push, terminals, board, voice, files, metrics, link: () => links, rtc, log, onChange: changed });
   link = createRelayLink({
     relayUrl, desktopId, signKeys: state.signKeys, log,
     onOpen: (cid) => phones.open(cid),

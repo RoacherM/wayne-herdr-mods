@@ -32,6 +32,19 @@ export const info = signal<any>(null);
 export const activeTermAddress = signal<string | null>(null);
 /** +1 each time the link is ready on a new connection (with `status`, in one batch): streams on the old one are gone. */
 export const linkEpoch = signal(0);
+/** +1 each time the Mac pushes `{ ev: "board" }` (or foreground resumes on a live link) when topology changes. */
+export const boardSeq = signal(0);
+/** Optional terminal address carried by `{ ev: "board", t }`; `null` means unscoped (refresh any open terminal). */
+export const boardTarget = signal<string | null>(null);
+
+export function boardTouchesTerminal(
+  target: string | null | undefined,
+  address: string,
+  lane: { t?: string; agents?: { terminal?: string | null }[] } | null | undefined,
+): boolean {
+  if (!target || target === address || lane?.t === target) return true;
+  return Boolean(lane?.agents?.some((a) => a.terminal === target));
+}
 export const notifyPermission = signal<"prompt" | "granted" | "denied">("prompt");
 export const notifyEnabled = signal<boolean>(false);
 
@@ -123,21 +136,21 @@ console.error = (...args: any[]) => {
 
 const TRACKED_RPC = new Set([
   "files.roots", "files.list", "files.open", "files.slice", "files.panel",
-  "term.open", "term.close", "term.new", "voice.done", "image.put",
+  "term.open", "term.close", "term.new", "board.get", "voice.done", "image.put",
 ]);
 
+const RPC_SUMMARIZERS: Record<string, (p: any, res: any, ms: number) => Record<string, any> | null> = {
+  "board.get": (p, res, ms) => ({ address: p?.address, hasLane: Boolean(res?.lane), subs: res?.lane?.stats?.totalSubs ?? 0, ms }),
+  "files.open": (p, res, ms) => ({ rootId: p?.rootId, path: p?.path, kind: res?.kind, size: res?.size, total: res?.total ?? res?.rawTotal, truncated: res?.truncated, ms }),
+  "files.list": (p, res, ms) => ({ rootId: p?.rootId, path: p?.path, items: res?.items?.length ?? 0, ms }),
+  "files.slice": (p, res, ms) => ((p?.offset ?? 0) !== 0 && !res?.eof && ms <= 1000
+    ? null
+    : { previewId: p?.previewId, offset: p?.offset, len: res?.length, total: res?.total, eof: res?.eof, ms }),
+};
+
 function summarizeRpcResult(m: string, p: any, res: any, ms: number): Record<string, any> | null {
-  if (m === "files.open") {
-    return { rootId: p?.rootId, path: p?.path, kind: res?.kind, size: res?.size, total: res?.total ?? res?.rawTotal, truncated: res?.truncated, ms };
-  }
-  if (m === "files.list") {
-    return { rootId: p?.rootId, path: p?.path, items: res?.items?.length ?? 0, ms };
-  }
-  if (m === "files.slice") {
-    if ((p?.offset ?? 0) !== 0 && !res?.eof && ms <= 1000) return null;
-    return { previewId: p?.previewId, offset: p?.offset, len: res?.length, total: res?.total, eof: res?.eof, ms };
-  }
-  return { p, ms };
+  const fn = RPC_SUMMARIZERS[m];
+  return fn ? fn(p, res, ms) : { p, ms };
 }
 
 export const rpc = async (m: string, p: any = {}, ms?: number) => {
@@ -521,6 +534,8 @@ function start(saved: Saved, pair?: { token: string; name: string }) {
     if (msg.ev === "terminals") {
       clearTimeout(refreshTimer);
       refreshTimer = setTimeout(refresh, 150);
+    } else if (msg.ev === "board") {
+      batch(() => { boardTarget.set(typeof msg.t === "string" ? msg.t : null); boardSeq.set(boardSeq() + 1); });
     } else {
       onStream?.(msg);
     }
@@ -586,6 +601,8 @@ export async function switchDesktop(desktopId: string) {
     status.set("connecting");
     list.set({ terminals: [], layout: [] });
     info.set(null);
+    boardTarget.set(null);
+    boardSeq.set(0);
     problem.set("");
   });
   const all = upsertDesktop(target);
@@ -617,12 +634,12 @@ export async function forget(desktopId?: string) {
     const next = isCurrent ? rest[0] : (paired() ?? rest[0]);
     await saveAll(next, rest);
     if (isCurrent) {
-      batch(() => { status.set("connecting"); list.set({ terminals: [], layout: [] }); info.set(null); });
+      batch(() => { status.set("connecting"); list.set({ terminals: [], layout: [] }); info.set(null); boardTarget.set(null); boardSeq.set(0); });
       start(next);
     }
   } else {
     resetIosMetrics();
-    batch(() => { status.set("idle"); list.set({ terminals: [], layout: [] }); info.set(null); });
+    batch(() => { status.set("idle"); list.set({ terminals: [], layout: [] }); info.set(null); boardTarget.set(null); boardSeq.set(0); });
     await saveAll(null, []);
   }
 }
@@ -638,9 +655,18 @@ export const wake = () => {
 };
 initIosMetrics({ log: clientLog, fg: () => lifecycle() === "active" });
 // On every screen (and with none): the sockets are checked as soon as the app is active again.
+let wasInactive = false;
 effect(() => {
   const st = lifecycle();
-  if (st === "active") wake();
+  if (st === "active") {
+    wake();
+    if (wasInactive) {
+      wasInactive = false;
+      if (link?.status === "ready") batch(() => { boardTarget.set(null); boardSeq.set(boardSeq() + 1); });
+    }
+  } else {
+    wasInactive = true;
+  }
   onAppLifecycle(st);
 });
 

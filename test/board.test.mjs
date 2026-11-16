@@ -1,166 +1,257 @@
-// The observability board's memory (host/board.js): herdr-core's facts in, lanes of decisions and sub-agents out.
+// The observability board's topology memory (host/board.js): herdr-core + session transcripts -> v2 Metro topology.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createBoard, emptyBoard, observe, NOTE, SAID } from '../host/board.js';
+import { createBoard, emptyBoard, observe } from '../host/board.js';
 
-// A Claude Code terminal as herdr-core reports it (hc 0.1.20, t48 on 2026-11-12).
-const agent = (over = {}) => ({ address: 't48', state: 'live', parent: null, cwd: '/w/herdr-relay', labels: { where: 'herdr-relay / 1' }, status: { app: 'claude-code', state: 'working', msg: 'Reading files' }, records: {}, ...over });
-const subs = (lane) => lane.steps.flatMap((s) => s.subs);
-
-test('a sub-agent inside the process is a record: it starts when the record appears and ends when it goes', () => {
-  const board = emptyBoard();
-  observe(board, [agent()], 1000);
-  assert.equal(board.lanes.length, 1);
-  assert.deepEqual(board.lanes[0].steps, [], 'no decision and no sub-agent: nothing on the lane yet');
-
-  // The record exactly as the core sent it while a sub-agent ran.
-  const records = { afb1cb2a78e47d02c: { app: 'claude-code', state: 'working', title: 'Probe subagent status reporting' } };
-  assert.equal(observe(board, [agent({ records })], 2000), true);
-  const [sub] = subs(board.lanes[0]);
-  assert.deepEqual({ id: sub.id, kind: sub.kind, title: sub.title, state: sub.state, since: sub.since, ended: sub.ended }, { id: 'afb1cb2a78e47d02c', kind: 'in', title: 'Probe subagent status reporting', state: 'working', since: 2000, ended: null });
-  assert.equal(board.lanes[0].steps[0].by, 'start', 'with no decision yet it hangs under a plain start step');
-
-  assert.equal(observe(board, [agent({ records })], 2500), false, 'nothing new: no change, no write');
-
-  observe(board, [agent({ records: {} })], 3000);
-  assert.deepEqual({ state: sub.state, ended: sub.ended }, { state: 'done', ended: 3000 });
+const mainTerm = (over = {}) => ({
+  address: 't48',
+  state: 'live',
+  parent: null,
+  pid: 100,
+  cwd: '/w/herdr-relay',
+  labels: { where: 'herdr-relay / 1' },
+  status: { app: 'claude-code', state: 'working', msg: 'Editing' },
+  records: {},
+  ...over,
 });
 
-test('a label is a decision; sub-agents hang under the latest one', () => {
+test('fuses transcript spawn/message/return topology with live herdr-core status', () => {
   const board = emptyBoard();
-  observe(board, [agent({ labels: { [SAID]: '1794454000000|把指标统计做完' } })], 1000);
-  observe(board, [agent({ labels: { [SAID]: '1794454000000|把指标统计做完' }, records: { a: { state: 'working', title: 'explore' } } })], 2000);
-  observe(board, [agent({ labels: { [SAID]: '1794454000000|把指标统计做完', [NOTE]: '字段用 host 的名字' }, records: { a: { state: 'working', title: 'explore' } } })], 3000);
-  observe(board, [agent({ labels: { [SAID]: '1794454000000|把指标统计做完', [NOTE]: '字段用 host 的名字' }, records: { a: { state: 'working', title: 'explore' }, b: { state: 'blocked', title: 'review' } } })], 4000);
-  const lane = board.lanes[0];
-  assert.deepEqual(lane.steps.map((s) => [s.by, s.at, s.text, s.subs.map((x) => x.id)]), [
-    ['you', 1794454000000, '把指标统计做完', ['a']],
-    ['agent', 3000, '字段用 host 的名字', ['b']],
-  ]);
-  assert.equal(lane.steps[1].subs[0].state, 'blocked');
-  // The same label seen again is not a second decision.
-  observe(board, [agent({ labels: { [SAID]: '1794454000000|把指标统计做完', [NOTE]: '字段用 host 的名字' } })], 5000);
-  assert.equal(lane.steps.length, 2);
+  const fakeReader = {
+    read: () => ({
+      sessionId: 'sess-1',
+      model: 'fable-5-2',
+      agents: [
+        { id: 'sub-1', name: 'WebKit Audit', via: 'Explore', model: 'sonnet', state: 'done', start: 1100, end: 1800, prompt: 'Check leaks', reply: 'Found double-hop' },
+        { id: 'sub-2', name: 'Security Review', via: 'agy', model: 'pro', state: 'working', start: 1200, end: null, prompt: 'Audit phones.js', reply: null },
+      ],
+      events: [
+        { kind: 'spawn', id: 'sp1', at: 1100, from: 'main', to: 'sub-1', title: 'WebKit Audit', detail: 'Check leaks', via: 'Explore', model: 'sonnet' },
+        { kind: 'spawn', id: 'sp2', at: 1200, from: 'main', to: 'sub-2', title: 'Security Review', detail: 'Audit phones.js', via: 'agy', model: 'pro' },
+        { kind: 'message', id: 'm1', at: 1500, from: 'main', to: 'sub-2', summary: '重点看 RPC 白名单', detail: 'Focus on ALLOWED methods' },
+        { kind: 'return', id: 'r1', at: 1800, from: 'sub-1', to: 'main', status: 'done', summary: 'Found double-hop', detail: 'Found double-hop' },
+      ],
+    }),
+  };
+
+  assert.equal(observe(board, [mainTerm({ status: { app: 'antigravity', state: 'working', msg: 'Casual Greeting' } })], 2000, {
+    read: () => ({ ...fakeReader.read(), activity: 'Audit phones.js RPC whitelist' }),
+  }), true);
+  assert.equal(board.v, 2);
+  const [lane] = board.lanes;
+  assert.equal(lane.model, 'fable-5-2');
+  assert.equal(lane.activity, 'Audit phones.js RPC whitelist', 'live transcript step overrides static session title while working');
+  assert.deepEqual(lane.stats, { totalSubs: 2, running: 1, waiting: 0, blocked: 0, done: 1, failed: 0, stopped: 0, messages: 1 });
+  assert.equal(lane.agents.length, 2);
+  assert.deepEqual(lane.events.map((e) => e.kind), ['spawn', 'spawn', 'message', 'return']);
+  assert.equal(observe(board, [mainTerm({ status: { app: 'antigravity', state: 'working', msg: 'Casual Greeting' } })], 2100, {
+    read: () => ({ ...fakeReader.read(), activity: 'Audit phones.js RPC whitelist' }),
+  }), false, 'unchanged snapshot produces no redundant write');
+
+  observe(board, [mainTerm({ status: { app: 'antigravity', state: 'error', msg: 'Individual quota reached.' } })], 2200, {
+    read: () => ({ ...fakeReader.read(), activity: 'Audit phones.js RPC whitelist' }),
+  });
+  assert.equal(board.lanes[0].activity, 'Individual quota reached.', 'herdr-core error/blocked/done msg wins when not working');
 });
 
-test('a terminal started with hc run is a sub-agent of its parent, with its own sub-agents under it', () => {
+test('captures hc run child terminals and in-process records without relying on labels', () => {
   const board = emptyBoard();
-  const kid = { address: 't6d', state: 'live', parent: 't48', name: 'reviewer', template: 'reviewer', status: { app: 'pi', state: 'working' }, records: { r1: { state: 'working', title: 'bugs' } } };
-  const plain = { address: 't6e', state: 'live', parent: 't48', name: 'tests', status: null }; // `hc run npm test`
-  observe(board, [agent(), kid, plain], 1000);
-  const [sub] = subs(board.lanes[0]);
-  assert.deepEqual([sub.id, sub.kind, sub.title, sub.app], ['t6d', 'term', 'reviewer', 'pi']);
-  assert.deepEqual(sub.subs.map((x) => x.title), ['bugs']);
-  assert.equal(subs(board.lanes[0]).length, 1, 'a plain command is not a sub-agent');
-  assert.equal(board.lanes.length, 1, 'a child is not a lane of its own');
+  const kid = {
+    address: 't6d', state: 'live', parent: 't48', name: 'reviewer', template: 'reviewer',
+    status: { app: 'epi', state: 'blocked', msg: 'Allow bash?' }, records: {},
+  };
+  const plain = { address: 't6e', state: 'live', parent: 't48', name: 'npm test', status: null };
 
-  observe(board, [agent(), { ...kid, state: 'finished', status: null, records: {}, exit_code: 3 }], 2000);
-  assert.deepEqual([sub.state, sub.ended, sub.subs[0].ended], ['failed', 2000, 2000]);
+  observe(board, [
+    mainTerm({
+      labels: { 'wayne.note': 'ignored legacy label' },
+      records: { r1: { state: 'working', title: 'Explore layout' } },
+    }),
+    kid,
+    plain,
+  ], 1500);
+
+  const [lane] = board.lanes;
+  assert.equal(lane.agents.length, 2, 'plain non-agent shell child is excluded; reviewer + record included');
+  assert.equal(lane.events.some((e) => e.kind === 'note' || e.kind === 'prompt'), false, 'no note/prompt clutter');
+  const termSub = lane.agents.find((a) => a.terminal === 't6d');
+  assert.deepEqual([termSub.name, termSub.via, termSub.state], ['reviewer', 'epi', 'blocked']);
+  assert.equal(lane.stats.blocked, 1);
+
+  observe(board, [
+    mainTerm({ records: {} }),
+    { ...kid, state: 'finished', status: null, exit_code: 2 },
+  ], 2500);
+
+  assert.equal(lane.agents.find((a) => a.id === 'hc:t6d').state, 'failed');
+  assert.equal(lane.agents.find((a) => a.id === 'rec:r1').state, 'done');
+  const returns = lane.events.filter((e) => e.kind === 'return');
+  assert.equal(returns.length, 2);
+  assert.deepEqual(returns.map((e) => e.summary), ['', ''], 'no synthetic 已完成/执行失败 filler caption');
 });
 
-test('an agent that leaves its terminal ends the lane; the next one there starts a new lane', () => {
+test('links an hc child terminal onto a matching transcript subagent without duplicate rails', () => {
   const board = emptyBoard();
-  observe(board, [agent({ records: { a: { state: 'working', title: 'x' } } })], 1000);
-  observe(board, [agent({ status: null, records: {} })], 2000); // back at the shell: the core cleared the status
-  assert.deepEqual([board.lanes[0].ended, board.lanes[0].state, subs(board.lanes[0])[0].ended], [2000, 'idle', 2000]);
-  observe(board, [agent()], 3000);
-  assert.deepEqual(board.lanes.map((l) => [l.since, l.ended]), [[1000, 2000], [3000, null]]);
-  observe(board, [agent()], 3000 + 13 * 3600_000);
-  assert.equal(board.lanes.length, 1, 'a lane that ended more than 12 hours ago is dropped');
+  const reader = {
+    read: () => ({
+      sessionId: 's1',
+      model: 'pro',
+      agents: [{ id: 'bg-t6d', name: 'reviewer', via: 'hc', model: 'gpt-6.1', terminal: 't6d', state: 'working', start: 1000, end: null, prompt: 'review diff', reply: null }],
+      events: [{ kind: 'spawn', id: 'sp1', at: 1000, from: 'main', to: 'bg-t6d', title: 'reviewer', detail: 'review diff', via: 'hc' }],
+    }),
+  };
+  const kid = { address: 't6d', state: 'live', parent: 't48', name: 'reviewer', status: { app: 'epi', state: 'blocked', msg: 'Question' } };
+  observe(board, [mainTerm({ status: { app: 'antigravity', state: 'working' } }), kid], 1200, reader);
+  const [lane] = board.lanes;
+  assert.equal(lane.agents.length, 1, 'merged into a single subagent branch');
+  assert.equal(lane.agents[0].terminal, 't6d');
+  assert.equal(lane.agents[0].state, 'blocked', 'live hc blocked state wins');
 });
 
-test('the board is written whole to board.json after a change, and read back on the next start', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'board-'));
-  const a = createBoard({ dir, now: () => 1000, delayMs: 5 });
-  a.update([agent({ labels: { [NOTE]: '先交统计' } })]);
+test('persists board.json atomically, reloads v2 state, and drops lanes ended over 12 hours ago', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'board-v2-'));
+  let changes = 0;
+  const a = createBoard({ dir, now: () => 1000, delayMs: 5, pollMs: 0, onChange: () => { changes++; } });
+  a.update([mainTerm({ records: { r1: { state: 'working', title: 'Audit' } } })]);
   await new Promise((r) => setTimeout(r, 40));
+  assert.equal(changes, 1, 'onChange fires once after debounced flush');
+  a.dispose();
+
   const saved = JSON.parse(readFileSync(join(dir, 'board.json'), 'utf8'));
-  assert.equal(saved.lanes[0].steps[0].text, '先交统计');
-  assert.equal(saved.at, 1000);
-  const b = createBoard({ dir, now: () => 2000, delayMs: 5 });
-  assert.equal(b.board().lanes[0].steps[0].text, '先交统计');
-  b.update([agent({ labels: { [NOTE]: '先交统计' } })]);
-  assert.equal(b.board().lanes[0].steps.length, 1, 'the label it already took is not taken again after a restart');
+  assert.equal(saved.v, 2);
+  assert.equal(saved.lanes[0].agents[0].name, 'Audit');
+
+  const b = createBoard({ dir, now: () => 2000, delayMs: 5, pollMs: 0 });
+  assert.equal(b.board().lanes[0].agents[0].name, 'Audit');
+  b.update([mainTerm({ status: null, records: {} })]);
+  assert.equal(b.board().lanes[0].ended, 2000);
+  b.dispose();
+
+  const c = createBoard({ dir, now: () => 2000 + 13 * 3600_000, delayMs: 5, pollMs: 0 });
+  c.update([mainTerm()]);
+  assert.equal(c.board().lanes.length, 1, 'old ended lane pruned after 12h');
+  assert.equal(c.board().lanes[0].ended, null);
+  c.dispose();
 });
 
-test('a block still has a name and a state when the program said little', () => {
+test('tracks foreground-only local agents without OSC 7501 and closes lanes when foreground returns to shell', () => {
   const board = emptyBoard();
-  const kids = [
-    { address: 't7', state: 'live', parent: 't48', template: 'reviewer', status: null },        // started from a template, not reporting yet
-    { address: 't8', state: 'live', parent: 't48', status: { state: 'working' } },              // no name, no template
-  ];
-  observe(board, [agent({ foreground: { cwd: '/w/now' }, records: { r1: { state: 'working', msg: 'doing' }, r2: { state: 'error' } } }), ...kids], 1000);
-  const lane = board.lanes[0];
-  assert.equal(lane.cwd, '/w/now', 'where the agent is now, not where its terminal started');
-  assert.deepEqual(subs(lane).map((s) => [s.id, s.title, s.app, s.state]), [
-    ['r1', 'doing', null, 'working'],
-    ['r2', 'r2', null, 'error'],
-    ['t7', 'reviewer', 'reviewer', 'working'],
-    ['t8', 't8', null, 'working'],
-  ]);
-  observe(board, [agent({ records: { r1: { state: 'working', msg: 'doing' } } }), { ...kids[0], state: 'finished', exit_code: 0 }], 2000);
-  assert.deepEqual(subs(lane).map((s) => [s.id, s.state]), [['r1', 'working'], ['r2', 'failed'], ['t7', 'done'], ['t8', 'done']], 'a record that vanished in error failed; a terminal that is gone without an exit code ended');
-});
-
-test('a lane keeps its latest 40 decisions; terminals on other machines are left out', () => {
-  const board = emptyBoard();
-  for (let i = 0; i < 45; i++) observe(board, [agent({ labels: { [NOTE]: `决定 ${i}` } }), agent({ address: 'vps/t3' })], 1000 + i);
+  const droidTerm = {
+    address: 't70', state: 'live', parent: null, pid: 500, cwd: '/w/app',
+    foreground: { name: 'node', argv: ['node', '/Users/me/.local/bin/droid'], cwd: '/w/app', pid: 505 },
+    status: null, records: {}, labels: { where: 'app / 1' },
+  };
+  const reader = {
+    read: () => ({ sessionId: 'dr-1', model: 'claude-opus-5-5', state: 'working', activity: 'Simplify producer', agents: [], events: [] }),
+  };
+  observe(board, [droidTerm], 1000, reader);
   assert.equal(board.lanes.length, 1);
-  assert.deepEqual([board.lanes[0].steps.length, board.lanes[0].steps[0].text, board.lanes[0].steps.at(-1).text], [40, '决定 5', '决定 44']);
+  assert.deepEqual([board.lanes[0].app, board.lanes[0].model, board.lanes[0].state, board.lanes[0].activity], ['droid', 'claude-opus-5-5', 'working', 'Simplify producer']);
+
+  // Agent exits back to zsh, even if stale OSC status remained on the terminal
+  observe(board, [{
+    ...droidTerm,
+    foreground: { name: 'zsh', argv: ['-zsh'], cwd: '/w/app', pid: 500 },
+    status: { app: 'droid', state: 'done', msg: 'Bye' },
+  }], 2000, reader);
+  assert.equal(board.lanes[0].ended, 2000, 'shell in foreground closes the agent lane cleanly');
 });
 
-test('trimming old decisions never takes one whose sub-agent is still at work', () => {
+test('deduplicates Claude toolu_* (agentId) against herdr-core rec:<agentId>, propagates blocked msg, and splits 6-state stats', () => {
   const board = emptyBoard();
-  const records = { r: { state: 'working', title: 'long job' } };
-  observe(board, [agent({ labels: { [NOTE]: '决定 0' }, records })], 1000);
-  for (let i = 1; i <= 44; i++) observe(board, [agent({ labels: { [NOTE]: `决定 ${i}` }, records })], 1000 + i);
-  observe(board, [agent({ labels: { [NOTE]: '决定 44' }, records })], 2000);
-  const lane = board.lanes[0];
-  assert.equal(lane.steps.length, 40);
-  assert.deepEqual([lane.steps[0].text, lane.steps[0].subs.map((s) => [s.id, s.since])], ['决定 0', [['r', 1000]]], 'the running sub-agent keeps its decision and its start time');
-  assert.equal(subs(lane).length, 1, 'and is not added a second time');
+  let seenSince = null;
+  const reader = {
+    read: (term) => {
+      seenSince = term.since;
+      return {
+        sessionId: 'sess-6st',
+        model: 'opus-5-5',
+        agents: [
+          { id: 'toolu_01W9ft', agentId: 'a7806236', name: 'Fix I-016', via: 'general-purpose', state: 'working', activity: 'Run cargo test', start: 1100, end: null, prompt: 'Fix file safety', reply: null },
+          { id: 'swarm:verifier', name: 'verifier', via: 'swarm', state: 'waiting', start: 1150, end: null, prompt: 'Gatekeeper', reply: null },
+          { id: 'hc-rev', name: 'reviewer', via: 'hc', terminal: 't6d', state: 'working', start: 1200, end: null, prompt: 'Review diff', reply: null },
+          { id: 'swarm:cancelled', name: 'cancelled', via: 'swarm', state: 'stopped', start: 1250, end: 1400, prompt: 'Old slice', reply: null },
+          { id: 'cmd-fail', name: 'smoke', via: 'claude', state: 'failed', start: 1300, end: 1450, prompt: 'Run smoke', reply: 'exit 1' },
+          { id: 'sub-done', name: 'done-worker', via: 'Explore', state: 'done', start: 1350, end: 1500, prompt: 'Scan', reply: 'Clean' },
+        ],
+        events: [
+          { kind: 'spawn', id: 'sp-1', at: 1100, from: 'main', to: 'toolu_01W9ft', title: 'Fix I-016' },
+          { kind: 'message', id: 'm-1', at: 1420, from: 'sub-done', to: 'swarm:verifier', summary: 'Handoff' },
+        ],
+      };
+    },
+  };
+  const kidBlocked = {
+    address: 't6d', state: 'live', parent: 't48', name: 'reviewer',
+    status: { app: 'epi', state: 'blocked', msg: 'Allow bash: git diff?' },
+  };
+  // Tick 1: herdr-core record appears before transcript flushes -> creates rec:a7806236 runtime rail
+  observe(board, [mainTerm({ since: 950, records: { a7806236: { state: 'working', title: 'Fix I-016' } } })], 1000);
+  assert.equal(board.lanes[0].events.some((e) => e.id === 'rt-sp-rec:a7806236'), true);
+
+  // Tick 2: transcript flushes with toolu_01W9ft (agentId: a7806236) -> upgrades & deduplicates runtime rail + spawn
+  observe(board, [
+    mainTerm({
+      since: 950,
+      records: { a7806236: { state: 'working', title: 'Fix I-016' } },
+    }),
+    kidBlocked,
+  ], 1600, reader);
+
+  assert.equal(seenSince, 950, 'passes terminal/lane since timestamp into sessionReader.read');
+  const [lane] = board.lanes;
+  assert.equal(lane.agents.length, 6, 'herdr-core rec:a7806236 merged into toolu_01W9ft without duplicate rail');
+  assert.equal(lane.events.some((e) => e.id === 'rt-sp-rec:a7806236'), false, 'no duplicate synthetic spawn event for rec:<agentId>');
+
+  const fixSub = lane.agents.find((a) => a.id === 'toolu_01W9ft');
+  assert.equal(fixSub.agentId, 'a7806236');
+  assert.equal(fixSub.activity, 'Run cargo test');
+
+  const blockedSub = lane.agents.find((a) => a.terminal === 't6d');
+  assert.equal(blockedSub.state, 'blocked');
+  assert.equal(blockedSub.msg, 'Allow bash: git diff?', 'hc child blocked msg passthrough');
+
+  assert.deepEqual(lane.stats, {
+    totalSubs: 6,
+    running: 1,
+    waiting: 1,
+    blocked: 1,
+    done: 1,
+    failed: 1,
+    stopped: 1,
+    messages: 1,
+  });
 });
 
-test('an agent that runs for days keeps at most 60 sub-agents per decision and counts the rest', () => {
+test('uses herdr-core created_ms / finished_ms for root lane since and child hc sub-terminal timestamps', () => {
   const board = emptyBoard();
-  for (let i = 0; i < 100; i++) {
-    observe(board, [agent({ records: { [`r${i}`]: { state: 'working', title: `job ${i}` }, keep: { state: 'working', title: 'still running' } } })], 1000 + 2 * i);
-    observe(board, [agent({ records: { keep: { state: 'working', title: 'still running' } } })], 1001 + 2 * i);
-  }
-  const [step] = board.lanes[0].steps;
-  assert.deepEqual([step.subs.length, step.dropped], [60, { done: 41, failed: 0 }]);
-  assert.ok(step.subs.some((s) => s.id === 'keep' && !s.ended), 'the one at work stays');
-  assert.equal(step.subs.at(-1).id, 'r99', 'the latest ended ones stay');
-});
+  let seenSince = null;
+  const reader = {
+    read: (term) => {
+      seenSince = term.since;
+      return { sessionId: 's-cms', model: 'carbon-high', agents: [], events: [] };
+    },
+  };
+  const rootCreated = 1_794_797_000_000;
+  const kidCreated = 1_794_797_100_000;
+  const kidFinished = 1_794_797_400_000;
+  const now = 1_794_800_600_000;
 
-test('the latest decision is never trimmed away, even when every older one still has a sub-agent at work', () => {
-  const board = emptyBoard();
-  const records = {};
-  for (let i = 0; i < 40; i++) {
-    observe(board, [agent({ labels: { [NOTE]: `note ${i}` }, records: { ...records } })], 1000 + 2 * i);
-    records[`r${i}`] = { state: 'working', title: `job ${i}` };
-    observe(board, [agent({ labels: { [NOTE]: `note ${i}` }, records: { ...records } })], 1001 + 2 * i);
-  }
-  observe(board, [agent({ labels: { [NOTE]: 'note 40' }, records: { ...records } })], 2000);
-  observe(board, [agent({ labels: { [NOTE]: 'note 40' }, records: { ...records, r40: { state: 'working', title: 'job 40' } } })], 2001);
-  const steps = board.lanes[0].steps;
-  assert.deepEqual([steps.length, steps.at(-1).text, steps.at(-1).subs.map((s) => s.id)], [41, 'note 40', ['r40']], 'over the limit rather than a sub-agent under the wrong decision');
-});
+  const root = mainTerm({ address: 't70', created_ms: rootCreated, finished_ms: null });
+  delete root.since;
+  const finishedKid = {
+    address: 't73', state: 'finished', parent: 't70', name: 'worker-pane', template: 'worker',
+    created_ms: kidCreated, finished_ms: kidFinished, exit_code: 0, status: null, records: {},
+  };
 
-test('a dropped sub-agent leaves its count behind: itself, everything under it, and how each ended', () => {
-  const board = emptyBoard();
-  const kid = { address: 't9', state: 'live', parent: 't48', name: 'big', status: { state: 'working' }, records: {} };
-  for (let i = 0; i < 70; i++) { // a terminal sub-agent with 70 ended sub-agents of its own (10 of them already only counted)
-    observe(board, [agent(), { ...kid, records: { [`k${i}`]: { state: i % 7 ? 'working' : 'error' } } }], 1000 + i);
-    observe(board, [agent(), kid], 1000 + i);
-  }
-  observe(board, [agent()], 2000); // it ends
-  for (let i = 0; i < 60; i++) { observe(board, [agent({ records: { [`s${i}`]: { state: 'error' } } })], 3000 + i); observe(board, [agent()], 3000 + i); }
-  const [step] = board.lanes[0].steps;
-  assert.equal(step.subs.length, 60);
-  assert.deepEqual(step.dropped, { done: 1 + 60, failed: 10 }, 'the big one, its 60 that ended well and its 10 that failed');
-  assert.equal(step.subs.filter((s) => s.state === 'failed').length, 60);
+  observe(board, [root, finishedKid], now, reader);
+  const [lane] = board.lanes;
+  assert.equal(lane.since, rootCreated, 'lane.since uses herdr-core created_ms rather than now');
+  assert.equal(seenSince, rootCreated, 'sessionReader receives real created_ms so idle cwd sessions are not rejected');
+  const kidSub = lane.agents.find((a) => a.id === 'hc:t73');
+  assert.equal(kidSub.start, kidCreated);
+  assert.equal(kidSub.end, kidFinished);
 });

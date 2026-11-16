@@ -186,3 +186,79 @@ test('ios conn: native metrics queue connect/open/echo/resume/drop and pass host
   }
 });
 
+test('ios conn: { ev: "board" } increments boardSeq without leaking into onStream', async (t) => {
+  const D = newBoxKeys();
+  const { conn, ws, done } = await booted(D);
+  t.after(() => { ws.onclose?.(); return done(); });
+
+  ws.onmessage({ data: '\u0000online' });
+  const desk = desktopAccept(D, ws.sent.at(-1));
+  ws.onmessage({ data: desk.welcome });
+  ws.onmessage({ data: desk.cipher.seal({ type: 'ready', desktopName: 'Mac', deviceId: 'p1', paired: false, board: true }) });
+
+  const streamed = [];
+  conn.setStreamListener((m) => streamed.push(m));
+  assert.equal(conn.boardSeq(), 0);
+
+  ws.onmessage({ data: desk.cipher.seal({ ev: 'board' }) });
+  ws.onmessage({ data: desk.cipher.seal({ ev: 'out', s: 1, d: 'aGVsbG8=' }) });
+  assert.equal(conn.boardSeq(), 1);
+  assert.equal(conn.boardTarget(), null);
+  assert.equal(streamed.length, 1);
+  assert.equal(streamed[0].ev, 'out');
+});
+
+test('ios conn: scoped { ev: "board", t }, foreground resume refresh, and tracked board.get RPC', async (t) => {
+  const D = newBoxKeys();
+  const { conn, nsh, ws, done } = await booted(D);
+  t.after(() => { ws.onclose?.(); return done(); });
+
+  ws.onmessage({ data: '\u0000online' });
+  const desk = desktopAccept(D, ws.sent.at(-1));
+  ws.onmessage({ data: desk.welcome });
+  ws.onmessage({ data: desk.cipher.seal({ type: 'ready', desktopName: 'Mac', deviceId: 'p1', paired: false, board: true }) });
+
+  const parentLane = { t: 't48', agents: [{ id: 'hc:t6d', terminal: 't6d' }] };
+  const seen = [];
+  nsh.effect(() => { seen.push(`${conn.boardSeq()}:${conn.boardTarget() ?? '*'}`); });
+  assert.deepEqual(seen, ['0:*'], 'initial active boot does not bump boardSeq');
+
+  // Scoped push for t48: matches t48 and its child pane t6d, skips unrelated t99.
+  ws.onmessage({ data: desk.cipher.seal({ ev: 'board', t: 't48' }) });
+  assert.equal(conn.boardSeq(), 1);
+  assert.equal(conn.boardTarget(), 't48');
+  assert.equal(conn.boardTouchesTerminal(conn.boardTarget(), 't48', parentLane), true);
+  assert.equal(conn.boardTouchesTerminal(conn.boardTarget(), 't6d', parentLane), true);
+  assert.equal(conn.boardTouchesTerminal(conn.boardTarget(), 't99', { t: 't99', agents: [] }), false);
+  assert.equal(conn.boardTouchesTerminal(conn.boardTarget(), 't99', null), false);
+  assert.equal(conn.boardTouchesTerminal(null, 't99', null), true);
+
+  // Foreground resume while link is ready bumps boardSeq with unscoped null target in one batch.
+  await new Promise((r) => setTimeout(r, 320));
+  nsh.lifecycle.set('background');
+  nsh.lifecycle.set('active');
+  assert.equal(conn.boardSeq(), 2);
+  assert.equal(conn.boardTarget(), null);
+  assert.deepEqual(seen, ['0:*', '1:t48', '2:*']);
+
+  // board.get is in TRACKED_RPC and logs compact rpc.board.get telemetry.
+  let cursor = 1;
+  const drain = () => {
+    const out = [];
+    for (; cursor < ws.sent.length; cursor++) {
+      try { out.push(desk.cipher.open(ws.sent[cursor])); } catch {}
+    }
+    return out;
+  };
+  drain();
+  const getP = conn.rpc('board.get', { address: 't48' });
+  const req = drain().find((f) => f.m === 'board.get');
+  assert.ok(req, 'board.get RPC sent');
+  ws.onmessage({ data: desk.cipher.seal({ id: req.id, ok: true, r: { lane: { t: 't48', stats: { totalSubs: 3 } }, at: 123 } }) });
+  const got = await getP;
+  assert.equal(got.lane.t, 't48');
+  const rpcLog = drain().find((f) => f.m === 'client.log' && f.p?.event === 'rpc.board.get');
+  assert.ok(rpcLog, 'expected client.log notification for rpc.board.get');
+  assert.equal(rpcLog.p.detail.address, 't48');
+  assert.equal(rpcLog.p.detail.subs, 3);
+});

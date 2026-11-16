@@ -68,3 +68,183 @@ declare module "*/app/src/voice-hold.js" {
   export const step: (st: VoiceState, ev: { type: string }) => { state: VoiceState; fx: VoiceEffect[] };
   export const voiceHold: (run: (effects: VoiceEffect[], session: VoiceSession) => void) => VoiceSession;
 }
+declare module "*/shared/board.js" {
+  export type SubState = "working" | "waiting" | "blocked" | "done" | "failed" | "stopped";
+  export type BoardTone = "rail" | "working" | "accent" | "warn" | "ok" | "bad" | "fg" | "muted" | "neutral";
+  export type BoardStats = {
+    totalSubs: number;
+    running: number;
+    waiting?: number;
+    blocked: number;
+    done: number;
+    failed: number;
+    stopped?: number;
+    messages: number;
+  };
+  export type BoardBadge = {
+    kind: "blocked" | "running" | "none";
+    count: number;
+    tone: "warn" | "accent" | "neutral";
+  };
+  export type BoardAgent = {
+    id: string;
+    name: string;
+    via?: string | null;
+    model?: string | null;
+    terminal?: string | null;
+    parentAgent?: string | null;
+    agentId?: string | null;
+    state: SubState;
+    msg?: string | null;
+    activity?: string | null;
+    start?: number | null;
+    end?: number | null;
+    prompt?: string | null;
+    reply?: string | null;
+    colorIdx: number;
+  };
+  export type BoardEvent = {
+    kind: "spawn" | "message" | "return";
+    id: string;
+    at: number;
+    from: string;
+    to: string;
+    title?: string | null;
+    summary?: string | null;
+    detail?: string | null;
+    via?: string | null;
+    model?: string | null;
+    status?: string | null;
+  };
+  export type BoardLane = {
+    t: string;
+    app: string;
+    since: number;
+    ended: number | null;
+    state: string;
+    msg?: string | null;
+    activity?: string | null;
+    cwd?: string | null;
+    where?: string | null;
+    sessionId?: string | null;
+    model?: string | null;
+    agents: BoardAgent[];
+    events: BoardEvent[];
+    stats?: BoardStats;
+  };
+  export type BoardHeader = {
+    title: string;
+    address: string;
+    muted: boolean;
+    running: number;
+    blocked: number;
+    badge: BoardBadge;
+  };
+  export type MetroThru = {
+    rail: number;
+    x: number;
+    colorIdx: number;
+    state: string;
+    tone: BoardTone;
+    dashed: boolean;
+    part: "full" | "top" | "bottom";
+  };
+  export type MetroCurve = {
+    kind: "fork" | "merge";
+    from: number;
+    to: number;
+    x0: number;
+    x1: number;
+    colorIdx: number;
+    state: string;
+    tone: BoardTone;
+    dashed: boolean;
+  };
+  export type MetroBridge = {
+    from: number;
+    to: number;
+    x0: number;
+    x1: number;
+    tip: number;
+    dir: 1 | -1;
+    colorIdx: number;
+  };
+  export type MetroStation = {
+    shape: "spin" | "solid" | "ring";
+    colorIdx: number;
+    tone: BoardTone;
+  };
+  export type MetroHeadline =
+    | {
+        kind: "standard";
+        icon: "fork" | "merge" | "fail" | "stop" | null;
+        iconTone: BoardTone;
+        title: string;
+        titleTone: BoardTone;
+        right: string;
+        rightTone: BoardTone;
+        bold: boolean;
+      }
+    | {
+        kind: "message";
+        from: string;
+        to: string;
+        colorIdx: number;
+        right: string;
+      };
+  export type MetroRow = {
+    id: string;
+    kind: "main" | "spawn" | "message" | "return" | "live";
+    isTip: boolean;
+    event: BoardEvent | null;
+    agent: BoardAgent | null;
+    rail: number;
+    x: number;
+    dotY: number;
+    colorIdx: number;
+    y: number;
+    h: number;
+    expandable: boolean;
+    expanded: boolean;
+    thru: MetroThru[];
+    curves: MetroCurve[];
+    bridge: MetroBridge | null;
+    trunkTop: boolean;
+    trunkBottom: boolean;
+    station: MetroStation;
+    headline: MetroHeadline;
+    subline: { text: string; tone: BoardTone } | null;
+    detail: string | null;
+  };
+  export const SUB_STATES: readonly SubState[];
+  export const SIZE: {
+    pad: number;
+    railLeft: number;
+    railStep: number;
+    compactRailStep: number;
+    compactThreshold: number;
+    maxRails: number;
+    rowH: number;
+    subRowH: number;
+    detailLineH: number;
+    detailPad: number;
+    dotY: number;
+  };
+  export const railX: (rail: number, step?: number) => number;
+  export const hhmm: (ms: number) => string;
+  export const span: (ms: number) => string;
+  export const laneTitle: (lane: BoardLane | null | undefined) => string;
+  export const stripBoilerplateReply: (raw: string | null | undefined) => string;
+  export const normalizeSubState: (raw: string | null | undefined, flags?: { ended?: boolean; failed?: boolean; stopped?: boolean }) => SubState;
+  export const computeStats: (agents?: BoardAgent[], events?: BoardEvent[]) => BoardStats;
+  export const boardBadgeOf: (stats?: Partial<BoardStats> | null) => BoardBadge;
+  export const laneOf: (board: { lanes?: BoardLane[] } | null | undefined, address: string | null | undefined) => BoardLane | null;
+  export const layoutMetro: (lane: BoardLane | null | undefined, options?: { openIds?: Set<string>; now?: number }) => {
+    header: BoardHeader | null;
+    rows: MetroRow[];
+    maxRail: number;
+    railStep: number;
+    gutterW: number;
+    height: number;
+  };
+}

@@ -20,8 +20,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import QRCode from 'qrcode';
 import { controlCall, DEFAULT_RELAY, startService, VOICE_TEST, voiceWords } from './service.js';
-import { mergePrograms, readHerdrFiles } from './herdr-files.js';
-import { editSettingsFile, mergeHook, removeHook, said } from './claude-hook.js';
+import { readHerdrFiles, syncHerdrDir } from './herdr-files.js';
+import { editSettingsFile, removeHook, said } from './claude-hook.js';
 import { createMetricsStore, summarize } from './metrics.js';
 import { renderReport } from './metrics-report.js';
 import { defaultDataDir } from './state.js';
@@ -75,25 +75,7 @@ const herdrFiles = () => (typeof __HERDR_APP__ !== 'undefined' ? __HERDR_APP__ :
 function installMod() {
   const appDir = herdrHome();
   if (!existsSync(appDir)) return null; // no Herdr.app here
-  const files = herdrFiles();
-  // Only what changed: writing a mod's file reloads it in Herdr.app.
-  for (const [rel, text] of Object.entries(files)) {
-    if (rel === 'programs.json') continue; // merged below, never overwritten
-    const p = join(appDir, rel);
-    if (existsSync(p) && readFileSync(p, 'utf8') === text) continue;
-    mkdirSync(dirname(p), { recursive: true });
-    writeFileSync(p, text);
-  }
-  // programs.json is the user's file too: our keys go in, theirs stay (DESIGN.md「图标跟着 Herdr.app」).
-  if (files['programs.json']) {
-    const p = join(appDir, 'programs.json');
-    const current = existsSync(p) ? readFileSync(p, 'utf8') : null;
-    const merged = mergePrograms(current, JSON.parse(files['programs.json']));
-    if (merged !== null) writeFileSync(p, merged);
-    else if (current !== null) {
-      try { JSON.parse(current); } catch { console.error(`wayne-herdr-mods: ${p} is not valid JSON — left as is`); }
-    }
-  }
+  syncHerdrDir(appDir, herdrFiles(), (p) => console.error(`wayne-herdr-mods: ${p} is not valid JSON — left as is`));
   return appDir;
 }
 
@@ -205,10 +187,10 @@ async function install() {
     catch (error) { if (i >= 20) throw error; execFileSync('/bin/sleep', ['0.3']); }
   }
   const mod = installMod();
-  const hook = editClaudeSettings(mergeHook);
+  editClaudeSettings(removeHook);
   const herdr = mod ? `\n  Herdr  ${mod}（布局 main-preview；标签栏右上角的手机图标打开「手机」窗口）` : '';
   const old = moved.length ? `\n\n从 herdr-relay 搬过来：\n${moved.map((m) => `  ${m}`).join('\n')}` : '';
-  console.log(`已安装：\n  程序   ${target}\n  命令   ${binPath}\n  自启动 ${plistPath}\n  日志   ${logPath}${herdr}\n  Skill  ${skill}${hook ? `\n  Hook   ${hook}（Claude Code 的 UserPromptSubmit：把你说的话记到终端标签上，给观测面板用）` : ''}${old}\n\n配对：在 Herdr.app 里点标签栏右上角的手机图标。`);
+  console.log(`已安装：\n  程序   ${target}\n  命令   ${binPath}\n  自启动 ${plistPath}\n  日志   ${logPath}${herdr}\n  Skill  ${skill}${old}\n\n配对：在 Herdr.app 里点标签栏右上角的手机图标。`);
 }
 
 // ------------------------------------------------------------------ the old name --
