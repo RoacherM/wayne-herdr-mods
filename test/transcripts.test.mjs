@@ -1,11 +1,12 @@
 // Multi-agent local session transcript parsers & PID/cwd resolver (host/transcripts.js).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   createSessionReader,
+  defaultListOpenFilesAsync,
   parseAgySession,
   parseClaudeSession,
   parseCodexSession,
@@ -760,4 +761,149 @@ test('Codex agent_message (MESSAGE/FINAL_ANSWER) + SubAgentActivity completed an
   assert.equal(epi.agents[0].state, 'done');
   assert.match(epi.agents[0].reply ?? '', /pass 65/);
   assert.deepEqual(epi.events.map((e) => e.kind), ['spawn', 'return']);
+});
+
+test('createSessionReader uses stat-first caching to avoid re-reading unchanged bundles and still catches updates', (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'home-cache-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+
+  // 1. Antigravity bundle with swarm board
+  const agyId = '7a111111-2222-3333-4444-555555555555';
+  const agyLogDir = join(home, '.gemini/antigravity-cli/brain', agyId, '.system_generated/logs');
+  const agySwarmDir = join(home, '.gemini/antigravity-cli/brain', agyId, '.system_generated/swarm');
+  mkdirSync(agyLogDir, { recursive: true });
+  mkdirSync(agySwarmDir, { recursive: true });
+  const agyFile = join(agyLogDir, 'transcript.jsonl');
+  const boardFile = join(agySwarmDir, 'board.jsonl');
+  const membersFile = join(agySwarmDir, 'members.json');
+  writeFileSync(agyFile, lines(
+    { step_index: 0, type: 'USER_INPUT', created_at: '2026-11-20T01:00:00Z', content: '<USER_REQUEST>Perf check</USER_REQUEST>' },
+  ));
+  writeFileSync(membersFile, JSON.stringify({ members: { coordinator: { role: 'coordinator', applied_model: 'neon-high' } } }));
+  writeFileSync(boardFile, lines({ seq: 1, kind: 'brief', agent: 'coordinator', time: '2026-11-20T01:00:01Z', text: '@w1 inspect' }));
+
+  // 2. Claude bundle with subagent file
+  const claudeDir = join(home, '.claude/projects/-w-perf');
+  const claudeSid = 'cl-perf-1';
+  const claudeSubDir = join(claudeDir, claudeSid, 'subagents');
+  mkdirSync(claudeSubDir, { recursive: true });
+  const claudeFile = join(claudeDir, `${claudeSid}.jsonl`);
+  const subJsonl = join(claudeSubDir, 'agent-a1.jsonl');
+  const subMeta = join(claudeSubDir, 'agent-a1.meta.json');
+  writeFileSync(claudeFile, lines(
+    { type: 'user', sessionId: claudeSid, timestamp: '2026-11-20T01:00:00Z', message: { role: 'user', content: 'Audit perf' } },
+    { type: 'assistant', sessionId: claudeSid, timestamp: '2026-11-20T01:00:01Z', message: { role: 'assistant', model: 'claude-sonnet-4', content: [{ type: 'tool_use', id: 'tu1', name: 'Agent', input: { description: 'Sub', subagent_type: 'Explore', prompt: 'Go' } }] } },
+    { type: 'user', sessionId: claudeSid, timestamp: '2026-11-20T01:00:02Z', toolUseResult: { agentId: 'a1' }, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu1', content: 'Async agent launched' }] } },
+  ));
+  writeFileSync(subMeta, JSON.stringify({ toolUseId: 'tu1', finished: false }));
+  writeFileSync(subJsonl, lines({ type: 'assistant', timestamp: '2026-11-20T01:00:03Z', message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: '/w/a.js' } }] } }));
+
+  const reader = createSessionReader({
+    homeDir: home,
+    listProcs: () => [{ pid: 101, ppid: 100, comm: 'agy' }, { pid: 201, ppid: 200, comm: 'claude' }],
+    listOpenFiles: (pids) => ({
+      ...(pids.includes(101) ? { 101: [`${home}/.gemini/antigravity-cli/presence/${agyId}.lock`] } : {}),
+      ...(pids.includes(201) ? { 201: [claudeFile] } : {}),
+    }),
+  });
+
+  const agyTerm = { address: 't1', pid: 100, app: 'antigravity', cwd: '/w/perf', since: 1000 };
+  const clTerm = { address: 't2', pid: 200, app: 'claude', cwd: '/w/perf', since: 1000 };
+
+  const a1 = reader.read(agyTerm, 2000);
+  const c1 = reader.read(clTerm, 2000);
+  assert.equal(a1?.sessionId, agyId);
+  assert.equal(c1?.sessionId, claudeSid);
+  assert.equal(c1?.agents[0]?.activity, 'Read a.js');
+
+  // Make transcript files unreadable without modifying size/mtime: stat-first cache must hit without calling readFileSync
+  chmodSync(agyFile, 0o000);
+  chmodSync(claudeFile, 0o000);
+  t.after(() => {
+    try { chmodSync(agyFile, 0o600); } catch {}
+    try { chmodSync(claudeFile, 0o600); } catch {}
+  });
+  const a2 = reader.read(agyTerm, 3000);
+  const c2 = reader.read(clTerm, 3000);
+  assert.equal(a2, a1, 'unchanged agy bundle returns cached object without reading files');
+  assert.equal(c2, c1, 'unchanged claude bundle returns cached object without reading files');
+
+  // Restoring permissions and updating sidecar files invalidates cache cleanly
+  chmodSync(agyFile, 0o600);
+  chmodSync(claudeFile, 0o600);
+  writeFileSync(boardFile, lines(
+    { seq: 1, kind: 'brief', agent: 'coordinator', time: '2026-11-20T01:00:01Z', text: '@w1 inspect' },
+    { seq: 2, kind: 'post', agent: 'w1', time: '2026-11-20T01:00:10Z', text: '@coordinator [done] all clear' },
+  ));
+  writeFileSync(subMeta, JSON.stringify({ toolUseId: 'tu1', finished: true }));
+  writeFileSync(subJsonl, lines({ type: 'assistant', timestamp: '2026-11-20T01:00:08Z', message: { content: [{ type: 'text', text: 'Done auditing' }] } }));
+
+  const a3 = reader.read(agyTerm, 3500);
+  const c3 = reader.read(clTerm, 3500);
+  assert.equal(a3?.agents[0]?.state, 'done', 'swarm board update invalidates agy cache');
+  assert.equal(c3?.agents[0]?.state, 'done', 'subagent meta/jsonl update invalidates claude cache');
+  assert.equal(c3?.agents[0]?.reply, 'Done auditing');
+
+  // Updating swarm members.json while transcript.jsonl is unchanged also invalidates agyFastSig
+  writeFileSync(membersFile, JSON.stringify({
+    members: {
+      coordinator: { role: 'coordinator', applied_model: 'neon-high' },
+      w2: { role: 'worker', wake_mode: 'working', applied_model: 'carbon-high', brief: 'Verify cache' },
+    },
+  }));
+  const a4 = reader.read(agyTerm, 3600);
+  assert.equal(a4?.agents.some((x) => x.name === 'w2'), true, 'members.json update invalidates agyFastSig');
+});
+
+test('createSessionReader prepare and prepareAsync batch lsof into one call across terminals', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'home-batch-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+
+  const ids = [
+    '11111111-1111-1111-1111-111111111111',
+    '22222222-2222-2222-2222-222222222222',
+    '33333333-3333-3333-3333-333333333333',
+  ];
+  for (const id of ids) {
+    const dir = join(home, '.gemini/antigravity-cli/brain', id, '.system_generated/logs');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'transcript.jsonl'), lines({ step_index: 0, type: 'USER_INPUT', created_at: '2026-11-20T01:00:00Z', content: `<USER_REQUEST>${id}</USER_REQUEST>` }));
+  }
+
+  let lsofCalls = 0;
+  let asyncLsofCalls = 0;
+  const openMap = {
+    101: [`${home}/.gemini/antigravity-cli/presence/${ids[0]}.lock`],
+    201: [`${home}/.gemini/antigravity-cli/presence/${ids[1]}.lock`],
+    301: [`${home}/.gemini/antigravity-cli/presence/${ids[2]}.lock`],
+  };
+  const procs = [{ pid: 101, ppid: 100, comm: 'agy' }, { pid: 201, ppid: 200, comm: 'agy' }, { pid: 301, ppid: 300, comm: 'agy' }];
+  const terms = [
+    { address: 't1', pid: 100, app: 'antigravity', cwd: '/w/a', since: 1000 },
+    { address: 't2', pid: 200, app: 'antigravity', cwd: '/w/b', since: 1000 },
+    { address: 't3', pid: 300, app: 'antigravity', cwd: '/w/c', since: 1000 },
+  ];
+
+  const reader = createSessionReader({
+    homeDir: home,
+    listProcs: () => procs,
+    listOpenFiles: (pids) => { lsofCalls++; return Object.fromEntries(pids.map((p) => [p, openMap[p] || []])); },
+    listProcsAsync: async () => procs,
+    listOpenFilesAsync: async (pids) => { asyncLsofCalls++; return Object.fromEntries(pids.map((p) => [p, openMap[p] || []])); },
+  });
+
+  reader.prepare(terms, 2000);
+  assert.equal(lsofCalls, 1, 'sync prepare batches all 3 terminals into one lsof call');
+  assert.deepEqual(terms.map((tm) => reader.read(tm, 2000)?.sessionId), ids);
+  assert.equal(lsofCalls, 1, 'subsequent read() reuses prepared bindings');
+
+  // After 4s TTL, prepareAsync refreshes all 3 in one non-blocking call without touching sync lsof
+  await reader.prepareAsync(terms, 6500);
+  assert.equal(asyncLsofCalls, 1, 'prepareAsync batches all 3 terminals into one async lsof call');
+  assert.equal(lsofCalls, 1, 'prepareAsync never calls sync listOpenFiles');
+  assert.deepEqual(terms.map((tm) => reader.readBound(tm)?.sessionId), ids);
+
+  // Real defaultListOpenFilesAsync tolerates exit status 1 from vanished child PIDs
+  const realOpen = await defaultListOpenFilesAsync([process.pid, 99999999]);
+  assert.equal(Array.isArray(realOpen[process.pid]) && realOpen[process.pid].length > 0, true);
 });

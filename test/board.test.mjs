@@ -255,3 +255,93 @@ test('uses herdr-core created_ms / finished_ms for root lane since and child hc 
   assert.equal(kidSub.start, kidCreated);
   assert.equal(kidSub.end, kidFinished);
 });
+
+test('createBoard with polling uses non-blocking prepareAsync + readBound instead of sync discovery on update()', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'board-async-'));
+  let syncReadCalls = 0;
+  let asyncPrepareCalls = 0;
+  let bound = false;
+  let nowVal = 1000;
+  let resolveUpdated;
+  const updated = new Promise((r) => { resolveUpdated = r; });
+
+  const sessionReader = {
+    read: () => { syncReadCalls++; return null; },
+    readBound: () => (bound ? { sessionId: 'async-s1', model: 'neon-high', state: 'working', activity: 'Ready', agents: [], events: [] } : null),
+    needsPrepare: () => !bound,
+    prepareAsync: async () => {
+      asyncPrepareCalls++;
+      await Promise.resolve();
+      bound = true;
+    },
+  };
+
+  let changes = 0;
+  const svc = createBoard({
+    dir,
+    now: () => nowVal,
+    delayMs: 5,
+    pollMs: 2000,
+    sessionReader,
+    onChange: (doc) => {
+      changes++;
+      if (doc.lanes[0]?.sessionId === 'async-s1') resolveUpdated();
+    },
+  });
+  t.after(() => svc.dispose());
+
+  svc.update([mainTerm({ address: 't90', status: { app: 'antigravity', state: 'working', msg: 'Init' } })]);
+  assert.equal(syncReadCalls, 0, 'update() never falls back to blocking sync read() when prepareAsync is supported');
+  assert.equal(asyncPrepareCalls, 1, 'update() kicks off background prepareAsync');
+  await updated;
+  assert.equal(svc.board().lanes[0].sessionId, 'async-s1', 'async prepare updates lane once resolved');
+  assert.equal(svc.board().lanes[0].model, 'neon-high');
+  assert.equal(syncReadCalls, 0);
+  assert.ok(changes >= 1);
+
+  // Synchronous observe() also batches root terminals through sessionReader.prepare(), preserving earliest since
+  const prepared = [];
+  const syncBoard = emptyBoard();
+  observe(syncBoard, [
+    mainTerm({ address: 't91', pid: 111, created_ms: 900, cwd: '/w/a' }),
+    mainTerm({ address: 't92', pid: 0, foreground: { name: 'agy', pid: 222, cwd: '/w/b' }, created_ms: 950, cwd: null }),
+  ], 1500, {
+    prepare: (specs) => prepared.push(specs),
+    read: () => null,
+  });
+  observe(syncBoard, [
+    mainTerm({ address: 't91', pid: 111, created_ms: 800, cwd: null }),
+    mainTerm({ address: 't92', pid: 0, foreground: { name: 'agy', pid: 222 }, created_ms: 1200, cwd: null }),
+  ], 2000, {
+    prepare: (specs) => prepared.push(specs),
+    read: () => null,
+  });
+  assert.equal(prepared.length, 2);
+  assert.deepEqual(prepared[0].map((s) => [s.address, s.pid, s.cwd, s.since]), [['t91', 111, '/w/a', 900], ['t92', 222, '/w/b', 950]]);
+  assert.deepEqual(prepared[1].map((s) => [s.address, s.cwd, s.since]), [['t91', '/w/a', 800], ['t92', '/w/b', 950]]);
+
+  // Overlapping update while prepareAsync is in flight coalesces into one follow-up refresh
+  let releaseFirst;
+  let calls = 0;
+  let doneSecond;
+  const secondFinished = new Promise((r) => { doneSecond = r; });
+  const coalescingReader = {
+    read: () => null,
+    readBound: () => null,
+    needsPrepare: () => calls < 2,
+    prepareAsync: () => {
+      calls++;
+      if (calls === 1) return new Promise((r) => { releaseFirst = r; });
+      doneSecond();
+      return Promise.resolve();
+    },
+  };
+  const svc2 = createBoard({ dir: mkdtempSync(join(tmpdir(), 'board-coal-')), delayMs: 5, pollMs: 2000, sessionReader: coalescingReader });
+  t.after(() => svc2.dispose());
+  svc2.update([mainTerm({ address: 't93' })]);
+  svc2.update([mainTerm({ address: 't93', status: { app: 'claude-code', state: 'done' } })]);
+  assert.equal(calls, 1, 'second update while refreshing queues pendingRefresh instead of overlapping');
+  releaseFirst();
+  await secondFinished;
+  assert.equal(calls, 2, 'queued pendingRefresh runs once first prepareAsync finishes');
+});

@@ -257,7 +257,8 @@ test('pair, list, stream, type, send, keys — through the relay', { timeout: 12
 
   // --- a program asks: its screen is kept on the Mac (host/ask-samples.js), to teach the phone its menus
   const b64s = (x) => Buffer.from(x).toString('base64');
-  await mac.call('terminal.run', { argv: ['/bin/sh', '-c', `printf '\\033]7501;state=blocked:kind=question:app=epi:msg=${b64s('Pick one')}\\033\\\\'; printf ' → Yes\\n   No\\n\\n ↑↓ navigate  enter select\\n'; sleep 30`], cwd: '/tmp', labels: { where: 'test · ask' }, rm: true });
+  // Run under node (non-shell foreground) so terminals.js does not mistake `/bin/sh` for an exited agent under load.
+  await mac.call('terminal.run', { argv: [process.execPath, '-e', `process.stdout.write('\\x1b]7501;state=blocked:kind=question:app=epi:msg=${b64s('Pick one')}\\x1b\\\\ → Yes\\n   No\\n\\n ↑↓ navigate  enter select\\n'); setTimeout(() => {}, 30000)`], cwd: '/tmp', labels: { where: 'test · ask' }, rm: true });
   const kept = await until('the question is kept', async () => { const k = (await readdir(join(dataDir, 'asks')).catch(() => [])).filter((n) => n.endsWith('.json')); return k.length && k; });
   assert.equal(kept.length, 1);
   assert.match(kept[0], /-epi-question\.json$/);

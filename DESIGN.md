@@ -197,7 +197,7 @@ iPhone 上的 Herdr App（网页版已停，2026-11-09）──wss /v1/client/<i
 | 来源 | 拿什么（主 Agent + 子 Agent 拓扑） | 怎么定位与去重 |
 |---|---|---|
 | `herdr-core` 实时状态 | 主终端与 `parent` 子终端的 `status`（`working` / `blocked` / `done` / `error` 及 `blocked` 提问 `msg`）、前台进程名 `foreground`、`exit_code`、进程内 `records` | 宿主常驻订阅 `events.subscribe`；`hc` 子终端 `blocked` 时将 `status.msg` 透传到融合后的 `agent.msg` |
-| Antigravity (`agy` 1.5.6) | 主模型（`conversations/<uuid>.db` `gen_metadata` 字段 21 → Swarm `coordinator` → `settings.json` 兜底）与当前步骤；`invoke_subagent`、原生 Swarm（`swarm/{members.json,board.jsonl}` + 活跃成员 `transcript.jsonl` 实时 `agyToolLabel` `activity`：区分 `wake_mode === 'working'` 与 `waiting` 休眠待命，解析非 `brief` 跨轨 `@<target>` `message`，在 `swarm kill` 后保留已发 `[done]` 成员的 `done` 状态、完成时间与回复，主控本轮收尾且非 `monitor` 成员全部结束时自动收口未发帖休眠 `monitor` 为 `stopped`）、`send_message`、`SYSTEM_MESSAGE`、`run_command` 跨 CLI / `hc` 工人 | 终端进程树 `spawnSync('/usr/sbin/lsof', ['-Fn', ...])`（容忍短命子 PID 退出码 `1`）：优先匹配 `/antigravity-cli/presence/<uuid>.lock$`，`.db$` 加末尾边界并排除 `.system_generated/subagents/<uuid>.json` 子会话；每 `4000ms` 复核句柄（捕捉同进程 `/new`） |
+| Antigravity (`agy` 1.5.6) | 主模型（`conversations/<uuid>.db` `gen_metadata` 字段 21 → Swarm `coordinator` → `settings.json` 兜底）与当前步骤；`invoke_subagent`、原生 Swarm（`swarm/{members.json,board.jsonl}` + 活跃成员 `transcript.jsonl` 实时 `agyToolLabel` `activity`：区分 `wake_mode === 'working'` 与 `waiting` 休眠待命，解析非 `brief` 跨轨 `@<target>` `message`，在 `swarm kill` 后保留已发 `[done]` 成员的 `done` 状态、完成时间与回复，主控本轮收尾且非 `monitor` 成员全部结束时自动收口未发帖休眠 `monitor` 为 `stopped`）、`send_message`、`SYSTEM_MESSAGE`、`run_command` 跨 CLI / `hc` 工人 | 终端进程树批量单次 `/usr/sbin/lsof -Fn -p <all-pids>`（`prepare` 同步批处理 / `prepareAsync` 后台异步非阻塞，容忍短命子 PID 退出码 `1`）：优先匹配 `/antigravity-cli/presence/<uuid>.lock$`，`.db$` 加末尾边界并排除 `.system_generated/subagents/<uuid>.json` 子会话；每 `4000ms` 复核句柄（捕捉同进程 `/new`） |
 | Claude Code (`claude` 2.1.316) & Factory Droid (`droid`) | 最新会话模型与当前工具/回复（跳过无时间戳的 `api-request-blob`，`addAgent` 按 `id` 幂等）；`Agent` / `Task` / `Workflow`、Team `SendMessage` 与 `<teammate-message>`、`<task-notification>`（优先取 `<result>` 与 `subagents/agent-*.jsonl` 真实结论覆盖 `"Agent \"...\" finished"` 套话）、`subagents/agent-<aid>.meta.json` `finished` 精准完结判定与运行中实时 `activity`、`Bash` / `Execute` 跨 CLI / `hc` 命令 | Claude：`~/.claude/sessions/<pid>.json` → `lsof` → `~/.claude/projects/<slug>`（`cwd` 兜底拒绝早于 `lane.since - 5000` 的陈旧会话）；通过 `agentId` 与 `herdr-core` `rec:<agentId>` 合并消除重复支线 |
 | Codex (`codex`) | 会话模型与当前调用；`collaboration` 命名空间下的 `spawn_agent`、`send_message` / `send_input`、`close_agent`、`response_item` `agent_message`（`MESSAGE` 跨轨通信 / `FINAL_ANSWER` 最终结论）及 `SubAgentActivity` `completed`（自动剥离 `gAAAAAB...` Fernet 密文） | 终端进程树 `lsof` 打开的 `~/.codex/sessions/.../*.jsonl` |
 | Epi / Pi (`epi` / `pi`) | `model_change` 模型与当前工具/消息；`subagent` / `task` 工具调用、同步 `role: "toolResult"` 完成回包与异步 `subagent-notify` 通知 | `lsof` 打开路径 → `~/.epi/pi/sessions/<slug>` 与 `~/.pi/agent/sessions/<slug>`（受 `lane.since - 5000` 保护） |
@@ -240,7 +240,7 @@ iPhone 上的 Herdr App（网页版已停，2026-11-09）──wss /v1/client/<i
 
 ### 持久化与上限（`board.json` v2）
 
-宿主把融合后的拓扑原子写入 `~/.config/wayne-herdr-mods/board.json`（`v: 2`，活跃会话每 2 秒增量 `stat` 轮询一次转录文件，大小与 `mtime` 未变时零开销跳过解析）：
+宿主把融合后的拓扑原子写入 `~/.config/wayne-herdr-mods/board.json`（`v: 2`，2026-11-20 优化：活跃会话每 2 秒先以 `stat` 签名跳过未变动 bundle 的读盘/SQLite/解析，8 终端暖轮询从 `91.6ms` 降至 `0.5ms`；常驻服务下每 4 秒句柄复核通过 `prepareAsync` 合并成 1 次异步 `ps` + 1 次批量异步 `lsof`，事件循环零阻塞，替代旧版每 4 秒 8 次同步 `lsof` 造成 `679–1100ms` 卡顿）：
 
 - 结束超过 12 小时的 `lane` 自动清理；每条 `lane` 最多保留 60 个子 Agent（优先保留未结束的）与最近 120 条通信事件（加载旧 `board.json` 时自动过滤非 `spawn` / `message` / `return` 的遗留条目）。
 - GPUI 侧每秒读一次 `board.json`（活跃未结束 `lane` 每秒刷新耗时数字，已结束 `lane` 零重绘）；所有状态、统计与几何视图模型统一由 `shared/board.js` 计算。
@@ -270,7 +270,8 @@ iPhone 上的 Herdr App（网页版已停，2026-11-09）──wss /v1/client/<i
 
 ### 测法
 
-- `test/transcripts.test.mjs`：Claude Code 2.1.316（含跳过无时间戳 `api-request-blob`、`meta.finished` 判定、实时子会话 `activity`、真实结论覆盖通知套话、`~/.claude/sessions/<pid>.json`）、Antigravity 1.5.6（含 `presence/<uuid>.lock` 优先与子会话排除、原生 Swarm `members.json` + `board.jsonl` `working`/`waiting`、跨轨 `@target` 消息、`[done]` 跨 `kill` 保留、休眠 `monitor` 收口）、Codex（含 `agent_message` `MESSAGE`/`FINAL_ANSWER`、`SubAgentActivity` 与 Fernet 密文剥离）、Epi/Pi（同步 `toolResult` 与异步 `subagent-notify`）、Devin、Dim、Grok、Amp，以及 `lsof` 退出码 `1` 容错、4 秒句柄复核与 `since - 5000` 陈旧 `cwd` 过滤。
+- `test/transcripts.test.mjs`：Claude Code 2.1.316（含跳过无时间戳 `api-request-blob`、`meta.finished` 判定、实时子会话 `activity`、真实结论覆盖通知套话、`~/.claude/sessions/<pid>.json`）、Antigravity 1.5.6（含 `presence/<uuid>.lock` 优先与子会话排除、原生 Swarm `members.json` + `board.jsonl` `working`/`waiting`、跨轨 `@target` 消息、`[done]` 跨 `kill` 保留、休眠 `monitor` 收口）、Codex（含 `agent_message` `MESSAGE`/`FINAL_ANSWER`、`SubAgentActivity` 与 Fernet 密文剥离）、Epi/Pi（同步 `toolResult` 与异步 `subagent-notify`）、Devin、Dim、Grok、Amp，以及 `lsof` 退出码 `1` 容错、4 秒句柄复核、`since - 5000` 陈旧 `cwd` 过滤、stat-first 缓存命中与单次批量 `prepare`/`prepareAsync`。
+- `test/relay-link.test.mjs`：桌面中继连接在 `kick()` 并发重连时关闭旧 socket 并在 `onopen`/`onmessage`/`onclose` 校验 `ws !== socket` 防止自踢 `4000` 死锁、15 秒连接超时终止挂起握手、真实 `4000` 停连与 `kick()` 恢复、心跳超时重连。
 - `test/board.test.mjs`：转录拓扑与 `herdr-core` 实时状态融合、Claude `agentId` 与 `rec:<agentId>` 支线去重、`hc` 子终端 `blocked` `msg` 透传、6 态 `stats` 统计、原子落盘与 12 小时过期清理。
 - `test/board-layout.test.mjs`：`shared/board.js` 单尖端规则、6 轨防碰撞、主控协调环、`waiting` / `stopped` / `failed` / `done` 视图模型、跨轨方向箭头、展开态隐藏截断副标题与中日韩行高。
 - `test/herdr-files.test.mjs`：`readHerdrFiles()` 将 `mods/*/main.js` 打成自包含 ESM（内联 `shared/board.js`）并在 `syncHerdrDir` 时清理孤儿 `mods/wayne-board/layout.js`。
@@ -594,7 +595,7 @@ Claude Code 自己怎么回应（`probe/wheel-batch.mjs`：复制一个旧会话
 | 中继 + 直连 | `app/src/direct.js` `Duo` | `trying` / `direct` / `active` 共用一个 `timer` | 中继再次就绪会取消直连的退避 |
 | 宿主连接与配对 | `host/phones.js` `peer.stage` | 按 `cid` 判断，不按对象 | 配对确认中途重发 hello 会换 `cipher`/`pub`：已修（2026-11-09）——那次配对作废，新密钥不进信任表 |
 | 宿主流 / 打字 viewer / 重印 | `host/phones.js` `openStream` / `typer` / `reprint` | `stream.*` 字段、`parked` | `Core.release()` 已修（2026-11-09）：没注册的通道也发 CLOSE，见本节上面「松开 viewer」；`Core.call` 没有超时 |
-| herdr-core 连接 | `host/terminals.js`、`host/relay-link.js` | `core` / `ws` + 计时器 | 唤醒时两次 `connect()` 并发，漏一个 Core / 第二个 WebSocket |
+| herdr-core / 桌面中继连接 | `host/terminals.js`、`host/relay-link.js` | `core` / `ws` + 计时器 | `host/relay-link.js` 已修（2026-11-20，`test/relay-link.test.mjs`）：`connect()` 先拆掉旧 `ws`、`onopen`/`onmessage`/`onclose` 校验 `ws !== socket`（根治 2026-11-20 唤醒并发重连导致旧连接晚 6ms 连上后自踢 `code=4000` 永久离线的死锁），并补 15 秒连接超时消除 50–79 秒挂起；`host/terminals.js` 仍待补并发 `connect()` 守卫 |
 | 语音 | `ios/App.tsx`、`app/src/main.js`、`host/voice.js` | iOS：`app/src/voice-hold.js` 状态机；`held`、`peer.recognizing` | 原生 App：`voice.start` 回来前松手会录满 60 秒——已修（2026-11-09），见「语音输入」 |
 | 打字先等着 | `app/src/live-line.js` + 两边的 `held` | `value` / `typed` / `held` / `letGo` | 删到已发出的字里再提交，字会重复；`letGo` 带到下一个问题 |
 | 原生 App 配对 / 多台 Mac | `ios/src/conn.ts` | `status` / `sas` / `paired` / `addingMac` / `bgLinks` | Mac 拒绝后手机停在 SAS 页，不显示错误 |
@@ -641,7 +642,7 @@ node probe/image-paste.mjs [claude|codex|agy]   # 图片路径粘贴进 agent �
 | 转码 | Mac 用 ffmpeg 转成 ogg/opus 16 kHz 单声道：极速版文档列的格式里没有 webm，iOS 的 mp4 也不确定是否直收，统一转码最稳。 |
 | 识别 | 极速版：一次 POST 直接返回结果，没有提交再轮询。头：`X-Api-Key`（新版控制台的 Key）或 `X-Api-App-Key` + `X-Api-Access-Key`（旧版），`X-Api-Resource-Id: volc.bigasr.auc_turbo`，`X-Api-Request-Id`（UUID），`X-Api-Sequence: -1`。体：`audio.data`（base64）+ `audio.format`，`request.model_name: "bigmodel"`，`enable_itn`、`enable_punc`。结果状态在响应头 `X-Api-Status-Code`：`20000000` 成功，`20000003` 静音。 |
 | 热词 | 带上编程词和当前终端的项目名、文件名。具体字段（`request.context` 或 `corpus`）以真实请求为准，未验证。 |
-| 密钥 | 「手机」窗口的「语音输入」一节，或 `wayne-herdr-mods voice key`（从标准输入读入），都存进 macOS 钥匙串（`security add-generic-password`），不进 state.json、不进日志。窗口经 `ctl voice.set / voice.test / voice.off` 交给后台服务，`status` 只带 Key 末 4 位（`voice: "…32e5"`）。新 Key 下一次识别就生效；手机要重新连接才显示麦克风键。命令行 `voice key / off` 在后台服务运行时也走 `ctl`（Key 走 0600 的控制 socket），没运行时直接写钥匙串。
+| 密钥 | 「手机」窗口的「语音输入」一节，或 `wayne-herdr-mods voice key`（从标准输入读入），都存进 macOS 钥匙串（`security add-generic-password`），不进 state.json、不进日志。窗口经 `ctl voice.set / voice.test / voice.off` 交给后台服务，`status` 只带 Key 末 4 位（`voice: "…32e5"`），`voice.available()` 内存缓存 60 秒并在 `voice.set` / `voice.off` 立即刷新，避免每次手机握手拉起 `/usr/bin/security` 子进程（~22ms）。新 Key 下一次识别就生效；手机要重新连接才显示麦克风键。命令行 `voice key / off` 在后台服务运行时也走 `ctl`（Key 走 0600 的控制 socket），没运行时直接写钥匙串。 |
 - Key 出现在哪里（2026-11-06 独立审查后改）：`security` 从标准输入读 Key（`-w` 放最后，它问两遍，macOS 27.0 实测），不在它的参数里。工具失败时的报错只写工具名、退出码和它的 stderr，不写参数（Node 原本的报错带整条命令行，钥匙串锁着时会把 Key 显示在窗口里；`test/voice.test.mjs` 测这一条）。还剩一处：Herdr mod 的 `exec` 没有标准输入，mod 也不能写 `~/.config/wayne-herdr-mods/`（沙箱只给自己的目录，2026-11-06 用探针 mod 实测），所以窗口把 Key 放在 `wayne-herdr-mods ctl voice.set` 的参数里。这个进程活约 1 秒；这期间这台 Mac 上任何本地账户都能用 `ps` 看到（`/bin/ps` 是 setuid root），记录进程命令行的监控软件也会记下。单人用的 Mac 可以接受；介意的话用命令行 `voice key`，它从终端读 Key。
 - 状态只显示 Key 末 4 位；8 位以下的 Key 一位也不显示。「试一次」朗读固定的句子，20 秒内结束（mod 的 `exec` 最多等 30 秒）。没配 key 时 `ready` 里 `voice: false`，手机不显示麦克风键。 |
 | 结果 | `voice.done {id}` 返回文字，填进发送框，不自动发。 |

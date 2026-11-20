@@ -312,21 +312,53 @@ function isLocalTerm(t) {
   return typeof t?.address === 'string' && !t.address.includes('/');
 }
 
-/** Update `board` in place from `terminals` + optional `sessionReader`; returns true if changed. */
-export function observe(board, terminals, now = Date.now(), sessionReader = null) {
-  const before = JSON.stringify(stripInternal(board));
-  const local = terminals.filter(isLocalTerm);
-  const byParent = groupByParent(local);
+function collectRootTerms(local) {
   const roots = new Map();
   for (const t of local) {
     if (t.state !== 'live' || t.parent) continue;
     const app = agentAppOf(t);
     if (app) roots.set(t.address, { t, app });
   }
+  return roots;
+}
+
+function laneSinceOf(existing, t, now) {
+  const created = Number(t.created_ms);
+  if (!existing) return created || Number(t.since) || now;
+  return created > 0 && created < existing.since ? created : existing.since;
+}
+
+function buildRootSpec(board, addr, t, app, now) {
+  const existing = board.lanes.find((l) => l.t === addr && !l.ended);
+  const fg = t.foreground || {};
+  return {
+    address: addr,
+    pid: t.pid || fg.pid || 0,
+    app,
+    cwd: fg.cwd || t.cwd || existing?.cwd || null,
+    since: laneSinceOf(existing, t, now),
+  };
+}
+
+function rootSpecsFrom(board, roots, now) {
+  const specs = [];
+  for (const [addr, { t, app }] of roots) specs.push(buildRootSpec(board, addr, t, app, now));
+  return specs;
+}
+
+/** Update `board` in place from `terminals` + optional `sessionReader`; returns true if changed. */
+export function observe(board, terminals, now = Date.now(), sessionReader = null) {
+  const before = JSON.stringify(stripInternal(board));
+  const local = terminals.filter(isLocalTerm);
+  const byParent = groupByParent(local);
+  const roots = collectRootTerms(local);
 
   for (const lane of board.lanes) {
     const cur = roots.get(lane.t);
     if (!cur || cur.app !== lane.app) closeLane(lane, now);
+  }
+  if (typeof sessionReader?.prepare === 'function' && roots.size) {
+    sessionReader.prepare(rootSpecsFrom(board, roots, now), now);
   }
   for (const [addr, { t, app }] of roots) updateRootLane(board, addr, t, app, byParent, now, sessionReader);
 
@@ -378,9 +410,14 @@ export function createBoard({ dir, log = () => {}, now = Date.now, delayMs = 200
   const file = join(dir, 'board.json');
   const state = loadSavedBoard(file, log);
   const prevByT = snapshotLaneMap(stripInternal(state).lanes);
+  const useAsync = pollMs > 0 && typeof sessionReader?.prepareAsync === 'function' && typeof sessionReader?.readBound === 'function';
+  const activeReader = useAsync ? { read: (term) => sessionReader.readBound(term) } : sessionReader;
   let writeTimer = null;
   let lastTerminals = [];
   let at = now();
+  let refreshing = false;
+  let pendingRefresh = false;
+  let disposed = false;
 
   const flush = () => {
     writeTimer = null;
@@ -390,14 +427,35 @@ export function createBoard({ dir, log = () => {}, now = Date.now, delayMs = 200
     onChange(doc, info);
   };
 
-  function update(terminals) {
-    lastTerminals = terminals;
-    const t = now();
-    if (!observe(state, terminals, t, sessionReader)) return;
+  function applyUpdate(terminals, t) {
+    if (!observe(state, terminals, t, activeReader)) return;
     at = t;
     if (writeTimer) return;
     writeTimer = setTimeout(flush, delayMs);
     writeTimer.unref?.();
+  }
+
+  function kickRefresh(terminals, t) {
+    if (!useAsync || disposed) return;
+    const specs = rootSpecsFrom(state, collectRootTerms(terminals.filter(isLocalTerm)), t);
+    if (!specs.length || (typeof sessionReader.needsPrepare === 'function' && !sessionReader.needsPrepare(specs, t))) return;
+    if (refreshing) { pendingRefresh = true; return; }
+    refreshing = true;
+    Promise.resolve(sessionReader.prepareAsync(specs, t))
+      .catch((error) => log(`wayne-herdr-mods: 异步扫描会话句柄失败：${error?.message ?? error}`))
+      .finally(() => {
+        refreshing = false;
+        if (disposed) return;
+        applyUpdate(lastTerminals, now());
+        if (pendingRefresh) { pendingRefresh = false; kickRefresh(lastTerminals, now()); }
+      });
+  }
+
+  function update(terminals) {
+    lastTerminals = terminals;
+    const t = now();
+    applyUpdate(terminals, t);
+    kickRefresh(terminals, t);
   }
 
   const pollTimer = pollMs > 0 ? setInterval(() => {
@@ -409,6 +467,7 @@ export function createBoard({ dir, log = () => {}, now = Date.now, delayMs = 200
     board: () => stripInternal(state),
     update,
     dispose() {
+      disposed = true;
       if (pollTimer) clearInterval(pollTimer);
       if (writeTimer) { clearTimeout(writeTimer); flush(); }
     },

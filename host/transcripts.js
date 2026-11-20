@@ -5,7 +5,7 @@
  * Antigravity (agy), Claude Code, Codex, Epi / Pi, Factory Droid, Devin, Dim, Grok, and Amp,
  * extracting main-agent model / state / activity plus subagent `spawn`, `message`, and `return`.
  */
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
@@ -972,11 +972,22 @@ export function parseGrokSession(summaryJson, eventsJsonl = '', chatJsonl = '', 
 
 // ------------------------------------------------------------------ Discovery ----
 
+function parsePsOutput(out) {
+  return out.split('\n').map((l) => l.trim().split(/\s+/, 3)).filter((p) => p.length >= 3).map(([pid, ppid, comm]) => ({ pid: Number(pid), ppid: Number(ppid), comm }));
+}
+
 function defaultListProcs() {
   try {
-    const out = execFileSync('/bin/ps', ['-axo', 'pid=,ppid=,comm='], { encoding: 'utf8', timeout: 1500, stdio: ['ignore', 'pipe', 'ignore'] });
-    return out.split('\n').map((l) => l.trim().split(/\s+/, 3)).filter((p) => p.length >= 3).map(([pid, ppid, comm]) => ({ pid: Number(pid), ppid: Number(ppid), comm }));
+    return parsePsOutput(execFileSync('/bin/ps', ['-axo', 'pid=,ppid=,comm='], { encoding: 'utf8', timeout: 1500, stdio: ['ignore', 'pipe', 'ignore'] }));
   } catch { return []; }
+}
+
+function defaultListProcsAsync() {
+  return new Promise((resolve) => {
+    execFile('/bin/ps', ['-axo', 'pid=,ppid=,comm='], { encoding: 'utf8', timeout: 1500, maxBuffer: 8 << 20 }, (_err, stdout) => {
+      resolve(stdout ? parsePsOutput(stdout) : []);
+    });
+  });
 }
 
 function stepLsofLine(byPid, cur, line) {
@@ -998,6 +1009,15 @@ export function defaultListOpenFiles(pids) {
     const res = spawnSync('/usr/sbin/lsof', ['-Fn', '-p', pids.join(',')], { encoding: 'utf8', timeout: 1500, stdio: ['ignore', 'pipe', 'ignore'] });
     return res.stdout ? parseLsofOutput(res.stdout) : {};
   } catch { return {}; }
+}
+
+export function defaultListOpenFilesAsync(pids) {
+  if (!pids.length) return Promise.resolve({});
+  return new Promise((resolve) => {
+    execFile('/usr/sbin/lsof', ['-Fn', '-p', pids.join(',')], { encoding: 'utf8', timeout: 2500, maxBuffer: 16 << 20 }, (_err, stdout) => {
+      resolve(stdout ? parseLsofOutput(stdout) : {});
+    });
+  });
 }
 
 function descendants(rootPid, procs) {
@@ -1189,37 +1209,62 @@ function fallbackByCwd(app, cwd, treePids, homeDir, minMtime = 0) {
   return fn ? fn(cwd, homeDir, minMtime) : null;
 }
 
+function statSig(p) {
+  if (!existsSync(p)) return null;
+  try {
+    const st = statSync(p);
+    return `${st.size}:${Math.floor(st.mtimeMs)}`;
+  } catch {
+    return null;
+  }
+}
+
 function isClaudeSubDone(meta, st) {
   if (meta && typeof meta.finished === 'boolean') return meta.finished;
   if (meta && (meta.toolUseId || meta.spawnDepth != null)) return false;
   return Date.now() - st.mtimeMs > 4000;
 }
 
-function readClaudeBundle(file, defaultModel = null) {
-  const id = basename(file, '.jsonl');
-  const text = readFileSync(file, 'utf8');
+function statClaudeSubs(file) {
   const subDir = join(file.slice(0, -6), 'subagents');
-  if (!existsSync(subDir)) return { sig: '', parsed: parseClaudeSession(text, {}, id, defaultModel) };
-  const subFiles = {}, sigParts = [];
-  for (const f of readdirSync(subDir)) {
-    if (!f.startsWith('agent-') || !f.endsWith('.jsonl')) continue;
+  if (!existsSync(subDir)) return { sig: '', items: [] };
+  const names = readdirSync(subDir).filter((f) => f.startsWith('agent-') && f.endsWith('.jsonl')).sort();
+  const items = [], sigParts = [];
+  const now = Date.now();
+  for (const f of names) {
     const aid = f.slice(6, -6);
     const jf = join(subDir, f), st = statSync(jf);
     const mf = join(subDir, `agent-${aid}.meta.json`);
     const mst = existsSync(mf) ? statSync(mf) : null;
-    sigParts.push(`${aid}:${st.size}:${Math.floor(st.mtimeMs)}:${mst ? mst.size : 0}:${mst ? Math.floor(mst.mtimeMs) : 0}`);
+    const staleBit = !mst && now - st.mtimeMs > 4000 ? 1 : 0;
+    sigParts.push(`${aid}:${st.size}:${Math.floor(st.mtimeMs)}:${mst ? mst.size : 0}:${mst ? Math.floor(mst.mtimeMs) : 0}:${staleBit}`);
+    items.push({ aid, jf, st, mf, mst });
+  }
+  return { sig: sigParts.join(','), items };
+}
+
+function readClaudeBundle(file, defaultModel = null) {
+  const id = basename(file, '.jsonl');
+  const text = readFileSync(file, 'utf8');
+  const { sig, items } = statClaudeSubs(file);
+  if (!items.length) return { sig: '', parsed: parseClaudeSession(text, {}, id, defaultModel) };
+  const subFiles = {};
+  for (const { aid, jf, st, mf, mst } of items) {
     const meta = mst ? parseJsonObj(readFileSync(mf, 'utf8')) : null;
     subFiles[aid] = { meta, jsonl: readFileSync(jf, 'utf8'), done: isClaudeSubDone(meta, st) };
   }
-  return { sig: sigParts.join(','), parsed: parseClaudeSession(text, subFiles, id, defaultModel) };
+  return { sig, parsed: parseClaudeSession(text, subFiles, id, defaultModel) };
+}
+
+function droidSig(file) {
+  return `${statSig(`${file.slice(0, -6)}.settings.json`) ?? ''}|${statClaudeSubs(file).sig}`;
 }
 
 function readDroidBundle(file) {
   const sf = `${file.slice(0, -6)}.settings.json`;
   const settings = existsSync(sf) ? parseJsonObj(readFileSync(sf, 'utf8')) : {};
-  const sig = existsSync(sf) ? String(Math.floor(statSync(sf).mtimeMs)) : '';
   const claude = readClaudeBundle(file, settings.model || null);
-  return { sig: `${sig}|${claude.sig}`, parsed: claude.parsed };
+  return { sig: `${statSig(sf) ?? ''}|${claude.sig}`, parsed: claude.parsed };
 }
 
 function decodeProtoField21(buf) {
@@ -1254,50 +1299,89 @@ function readAgyModel(id, homeDir) {
   return existsSync(sf) ? parseJsonObj(readFileSync(sf, 'utf8')).model || null : null;
 }
 
-function readAgySwarmBundle(id, homeDir, sigParts) {
-  const swarmDir = join(homeDir, '.gemini', 'antigravity-cli', 'brain', id, '.system_generated', 'swarm');
-  if (!existsSync(swarmDir)) return null;
-  const mf = join(swarmDir, 'members.json'), bf = join(swarmDir, 'board.jsonl');
-  const members = existsSync(mf) ? (parseJsonObj(readFileSync(mf, 'utf8')).members || {}) : {};
-  const board = existsSync(bf) ? readFileSync(bf, 'utf8') : '';
-  if (existsSync(mf)) { const st = statSync(mf); sigParts.push(`sm:${st.size}:${Math.floor(st.mtimeMs)}`); }
-  if (existsSync(bf)) { const st = statSync(bf); sigParts.push(`sb:${st.size}:${Math.floor(st.mtimeMs)}`); }
-  const workerTranscripts = {};
+function agyPaths(id, homeDir) {
+  const base = join(homeDir, '.gemini', 'antigravity-cli');
+  const swarmDir = join(base, 'brain', id, '.system_generated', 'swarm');
+  return {
+    dbPath: join(base, 'conversations', `${id}.db`),
+    settingsPath: join(base, 'settings.json'),
+    swarmDir,
+    membersFile: join(swarmDir, 'members.json'),
+    boardFile: join(swarmDir, 'board.jsonl'),
+  };
+}
+
+function buildAgySig(paths, childIds, smSig, sbSig, swarmWorkers, homeDir) {
+  const parts = [`db:${statSig(paths.dbPath) ?? ''}`, `cfg:${statSig(paths.settingsPath) ?? ''}`];
+  for (const cid of childIds) {
+    const cs = statSig(agyTranscriptPath(homeDir, cid));
+    if (cs) parts.push(`${cid}:${cs}`);
+  }
+  if (smSig) parts.push(`sm:${smSig}`);
+  if (sbSig) parts.push(`sb:${sbSig}`);
+  for (const [name, cid] of swarmWorkers) {
+    const ws = statSig(agyTranscriptPath(homeDir, cid));
+    if (ws) parts.push(`sw:${name}:${ws}`);
+  }
+  return parts.join(',');
+}
+
+function agyFastSig(hit, baseSig, prev, homeDir) {
+  if (!prev || prev.baseSig !== baseSig || !prev.meta) return null;
+  const paths = agyPaths(hit.id, homeDir);
+  const smSig = statSig(paths.membersFile) ?? '';
+  if (smSig !== prev.meta.smSig) return null;
+  const sbSig = statSig(paths.boardFile) ?? '';
+  return buildAgySig(paths, prev.meta.childIds, smSig, sbSig, prev.meta.swarmWorkers, homeDir);
+}
+
+function readAgySwarmBundle(paths, homeDir) {
+  if (!existsSync(paths.swarmDir)) return { swarm: null, smSig: '', sbSig: '', swarmWorkers: [] };
+  const smSig = statSig(paths.membersFile) ?? '';
+  const sbSig = statSig(paths.boardFile) ?? '';
+  const members = smSig ? (parseJsonObj(readFileSync(paths.membersFile, 'utf8')).members || {}) : {};
+  const board = sbSig ? readFileSync(paths.boardFile, 'utf8') : '';
+  const workerTranscripts = {}, swarmWorkers = [];
   for (const [name, m] of Object.entries(members)) {
     if (name === 'coordinator' || m.role === 'coordinator' || !m.conversation_id) continue;
+    swarmWorkers.push([name, m.conversation_id]);
     const wf = agyTranscriptPath(homeDir, m.conversation_id);
-    if (!existsSync(wf)) continue;
-    sigParts.push(`sw:${name}:${statSync(wf).size}`);
-    workerTranscripts[name] = readFileSync(wf, 'utf8');
+    if (existsSync(wf)) workerTranscripts[name] = readFileSync(wf, 'utf8');
   }
-  return { members, board, workerTranscripts };
+  return { swarm: { members, board, workerTranscripts }, smSig, sbSig, swarmWorkers };
 }
 
 function readAgyBundle(file, id, homeDir) {
   const text = readFileSync(file, 'utf8');
-  const dbPath = join(homeDir, '.gemini', 'antigravity-cli', 'conversations', `${id}.db`);
-  const sigParts = [existsSync(dbPath) ? `db:${statSync(dbPath).size}` : ''];
-  const childIds = [...text.matchAll(/"conversationId":\s*"([0-9a-f-]{36})"/g)].map((m) => m[1]);
+  const paths = agyPaths(id, homeDir);
+  const childIds = [...text.matchAll(/"conversationId":\s*"([0-9a-f-]{36})"/g)].map((m) => m[1]).slice(0, 12);
   const childTranscripts = {};
-  for (const cid of childIds.slice(0, 12)) {
+  for (const cid of childIds) {
     const cf = agyTranscriptPath(homeDir, cid);
-    if (!existsSync(cf)) continue;
-    sigParts.push(`${cid}:${statSync(cf).size}`);
-    childTranscripts[cid] = readFileSync(cf, 'utf8');
+    if (existsSync(cf)) childTranscripts[cid] = readFileSync(cf, 'utf8');
   }
-  const swarm = readAgySwarmBundle(id, homeDir, sigParts);
+  const { swarm, smSig, sbSig, swarmWorkers } = readAgySwarmBundle(paths, homeDir);
   const model = readAgyModel(id, homeDir);
-  return { sig: sigParts.join(','), parsed: parseAgySession(text, { sessionId: id, model, childTranscripts, swarm }) };
+  const sig = buildAgySig(paths, childIds, smSig, sbSig, swarmWorkers, homeDir);
+  return {
+    sig,
+    meta: { childIds, smSig, swarmWorkers },
+    parsed: parseAgySession(text, { sessionId: id, model, childTranscripts, swarm }),
+  };
+}
+
+function grokSig(hit) {
+  const dir = hit.dir || dirname(hit.file);
+  return `${statSig(join(dir, 'events.jsonl')) ?? ''}:${statSig(join(dir, 'chat_history.jsonl')) ?? ''}`;
 }
 
 function readGrokBundle(hit) {
   const dir = hit.dir || dirname(hit.file);
   const ef = join(dir, 'events.jsonl'), cf = join(dir, 'chat_history.jsonl');
-  const sig = `${existsSync(ef) ? statSync(ef).size : 0}:${existsSync(cf) ? statSync(cf).size : 0}`;
   const sum = readFileSync(hit.file, 'utf8');
   const ev = existsSync(ef) ? readFileSync(ef, 'utf8') : '';
   const ch = existsSync(cf) ? readFileSync(cf, 'utf8') : '';
-  return { sig, parsed: parseGrokSession(sum, ev, ch, hit.id) };
+  return { sig: grokSig(hit), parsed: parseGrokSession(sum, ev, ch, hit.id) };
 }
 
 function findDimRow(db, pids, cwd) {
@@ -1331,35 +1415,42 @@ function applyDimLastMsg(ctx, sess, lastMsg) {
   setActivity(ctx, parsePartsText(lastMsg.parts) || sess.title, lastMsg.role === 'user' ? 'working' : 'done');
 }
 
+function dimSig(hit) {
+  return `${statSig(`${hit.file}-wal`) ?? ''}:${statSig(`${hit.file}-shm`) ?? ''}:${hit.cwd || ''}:${(hit.pids || []).join(',')}`;
+}
+
 function queryDimSession(db, hit) {
   const sess = findDimRow(db, hit.pids, hit.cwd);
-  if (!sess) return { sig: 'none', parsed: packCtx(makeCtx()) };
+  if (!sess) return { sig: dimSig(hit), parsed: packCtx(makeCtx()) };
   const st = db.prepare('SELECT selectedModelId FROM session_states WHERE sessionId = ?').get(sess.sessionId);
   const lastMsg = db.prepare('SELECT rowid, role, parts FROM messages WHERE sessionId = ? ORDER BY rowid DESC LIMIT 1').get(sess.sessionId);
   const ctx = makeCtx(sess.sessionId, st ? st.selectedModelId : null);
   applyDimLastMsg(ctx, sess, lastMsg);
   applyDimRelations(db, ctx, sess.sessionId);
-  return { sig: `${sess.sessionId}:${lastMsg ? lastMsg.rowid : 0}:${ctx.events.length}`, parsed: packCtx(ctx) };
+  return { sig: dimSig(hit), parsed: packCtx(ctx) };
 }
 
 function readDimBundle(hit) {
   const db = openSqliteRo(hit.file);
-  if (!db) return { sig: '0', parsed: packCtx(makeCtx()) };
+  if (!db) return { sig: dimSig(hit), parsed: packCtx(makeCtx()) };
   try { return queryDimSession(db, hit); }
-  catch { return { sig: 'err', parsed: packCtx(makeCtx()) }; }
+  catch { return { sig: dimSig(hit), parsed: packCtx(makeCtx()) }; }
   finally { try { db.close(); } catch {} }
+}
+
+function ampSig(hit, homeDir) {
+  return `${hit.cwd || ''}:${statSig(join(homeDir, '.local', 'share', 'amp', 'history.jsonl')) ?? ''}`;
 }
 
 function readAmpBundle(hit, homeDir) {
   const sess = parseJsonObj(readFileSync(hit.file, 'utf8'));
   const ctx = makeCtx('amp', sess.externalAgentModel || sess.pluginAgentModeKey);
   const hf = join(homeDir, '.local', 'share', 'amp', 'history.jsonl');
-  const hSize = existsSync(hf) ? statSync(hf).size : 0;
-  if (hSize > 0) {
+  if (existsSync(hf) && statSync(hf).size > 0) {
     const matched = parseJsonLines(readFileSync(hf, 'utf8')).filter((x) => !hit.cwd || x.cwd === hit.cwd);
     if (matched.length) setActivity(ctx, matched.at(-1).text);
   }
-  return { sig: `${hit.cwd || ''}:${hSize}`, parsed: packCtx(ctx) };
+  return { sig: ampSig(hit, homeDir), parsed: packCtx(ctx) };
 }
 
 function resolveOpenHit(treePids, procSnap, listOpenFiles, homeDir) {
@@ -1384,6 +1475,16 @@ const BUNDLE_READERS = {
   devin_cfg: (hit) => ({ sig: '', parsed: packCtx(makeCtx('devin', parseJsonObj(readFileSync(hit.file, 'utf8')).agent?.model)) }),
 };
 
+const BUNDLE_SIGS = {
+  claude: (hit) => statClaudeSubs(hit.file).sig,
+  droid: (hit) => droidSig(hit.file),
+  agy: (hit, baseSig, prev, homeDir) => agyFastSig(hit, baseSig, prev, homeDir),
+  grok: (hit) => grokSig(hit),
+  dim: (hit) => dimSig(hit),
+  amp: (hit, _baseSig, _prev, homeDir) => ampSig(hit, homeDir),
+  devin_cfg: () => '',
+};
+
 const RAW_PARSERS = {
   codex: (raw) => parseCodexSession(raw),
   pi: (raw) => parsePiSession(raw),
@@ -1393,16 +1494,25 @@ const RAW_PARSERS = {
 function parseHitBundle(hit, baseSig, prev, homeDir) {
   const bundleFn = BUNDLE_READERS[hit.kind];
   if (bundleFn) {
+    const fastSub = BUNDLE_SIGS[hit.kind]?.(hit, baseSig, prev, homeDir);
+    if (fastSub !== null && fastSub !== undefined) {
+      const fastFull = `${baseSig}|${fastSub}`;
+      if (prev && prev.fullSig === fastFull) return { fullSig: fastFull, meta: prev.meta ?? null, result: prev.result };
+    }
     const bundle = bundleFn(hit, homeDir);
     const fullSig = `${baseSig}|${bundle.sig}`;
-    if (prev && prev.fullSig === fullSig) return { fullSig, result: prev.result };
-    return { fullSig, result: bundle.parsed };
+    if (prev && prev.fullSig === fullSig) return { fullSig, meta: bundle.meta ?? prev.meta ?? null, result: prev.result };
+    return { fullSig, meta: bundle.meta ?? null, result: bundle.parsed };
   }
-  if (prev && prev.baseSig === baseSig) return { fullSig: baseSig, result: prev.result };
+  if (prev && prev.baseSig === baseSig) return { fullSig: baseSig, meta: null, result: prev.result };
   const raw = readFileSync(hit.file, 'utf8');
   const result = RAW_PARSERS[hit.kind](raw, hit.id);
   result.sessionId = result.sessionId || hit.id;
-  return { fullSig: baseSig, result };
+  return { fullSig: baseSig, meta: null, result };
+}
+
+function termBindKey(term) {
+  return `${term.pid || 0}|${term.app || ''}|${term.cwd || ''}`;
 }
 
 function isFreshBound(prev, key, now) {
@@ -1415,8 +1525,50 @@ function refreshProcSnap(state, now, listProcs) {
   }
 }
 
+async function refreshProcSnapAsync(state, now, listProcsAsync) {
+  if (now - state.procSnap.at > 2500) {
+    const procs = await listProcsAsync();
+    state.procSnap = { at: now, procs, openByPid: new Map() };
+  }
+}
+
+function staleTermsOf(state, terms, now) {
+  return terms.filter((term) => !isFreshBound(state.bound.get(term.address), termBindKey(term), now));
+}
+
+function planBatchBind(state, stale, homeDir) {
+  const entries = [];
+  const missingPids = new Set();
+  for (const term of stale) {
+    const key = termBindKey(term);
+    const treePids = descendants(term.pid, state.procSnap.procs);
+    const fastHit = treePids.length
+      ? (matchClaudePidSession(treePids, homeDir) || matchDevinLockSession(treePids, homeDir))
+      : null;
+    if (!fastHit) {
+      for (const p of treePids) if (!state.procSnap.openByPid.has(p)) missingPids.add(p);
+    }
+    entries.push({ term, key, treePids, fastHit });
+  }
+  return { entries, missingPids: [...missingPids] };
+}
+
+function recordOpenFiles(openByPid, pids, opened) {
+  for (const p of pids) openByPid.set(p, opened[p] || []);
+}
+
+function finishBatchBind(state, entries, now, homeDir) {
+  for (const { term, key, treePids, fastHit } of entries) {
+    const minMtime = Number(term.since) > 0 ? Number(term.since) - 5000 : 0;
+    const hit = fastHit
+      || (treePids.length ? matchOpenPath(treePids.flatMap((p) => state.procSnap.openByPid.get(p) || []), homeDir) : null)
+      || fallbackByCwd(term.app, term.cwd, treePids, homeDir, minMtime);
+    state.bound.set(term.address, { key, hit, checkedAt: now });
+  }
+}
+
 function resolveTermHit(state, term, now, deps) {
-  const key = `${term.pid || 0}|${term.app || ''}|${term.cwd || ''}`;
+  const key = termBindKey(term);
   const prev = state.bound.get(term.address);
   if (isFreshBound(prev, key, now)) return prev.hit;
   refreshProcSnap(state, now, deps.listProcs);
@@ -1439,7 +1591,7 @@ function readHitCached(cache, hit, homeDir) {
     const baseSig = `${st.size}:${Math.floor(st.mtimeMs)}`;
     const ck = cacheKeyOf(hit);
     const next = parseHitBundle(hit, baseSig, cache.get(ck), homeDir);
-    cache.set(ck, { baseSig, fullSig: next.fullSig, result: next.result });
+    cache.set(ck, { baseSig, fullSig: next.fullSig, meta: next.meta, result: next.result });
     return next.result;
   } catch {
     return null;
@@ -1447,12 +1599,50 @@ function readHitCached(cache, hit, homeDir) {
 }
 
 /** Cached, incremental session reader keyed by herdr-core terminal facts. */
-export function createSessionReader({ homeDir = homedir(), listProcs = defaultListProcs, listOpenFiles = defaultListOpenFiles } = {}) {
-  const state = { procSnap: { at: -Infinity, procs: [], openByPid: new Map() }, bound: new Map(), cache: new Map() };
-  const deps = { homeDir, listProcs, listOpenFiles };
+export function createSessionReader({
+  homeDir = homedir(),
+  listProcs = defaultListProcs,
+  listOpenFiles = defaultListOpenFiles,
+  listProcsAsync = defaultListProcsAsync,
+  listOpenFilesAsync = defaultListOpenFilesAsync,
+} = {}) {
+  const state = { procSnap: { at: -Infinity, procs: [], openByPid: new Map() }, bound: new Map(), cache: new Map(), inflight: null };
+  const deps = { homeDir, listProcs, listOpenFiles, listProcsAsync, listOpenFilesAsync };
+
+  function prepare(terms, now = Date.now()) {
+    const stale = staleTermsOf(state, terms, now);
+    if (!stale.length) return;
+    refreshProcSnap(state, now, deps.listProcs);
+    const { entries, missingPids } = planBatchBind(state, stale, homeDir);
+    if (missingPids.length) recordOpenFiles(state.procSnap.openByPid, missingPids, deps.listOpenFiles(missingPids));
+    finishBatchBind(state, entries, now, homeDir);
+  }
+
+  function prepareAsync(terms, now = Date.now()) {
+    const stale = staleTermsOf(state, terms, now);
+    if (!stale.length) return Promise.resolve();
+    if (state.inflight) return state.inflight;
+    state.inflight = (async () => {
+      await refreshProcSnapAsync(state, now, deps.listProcsAsync);
+      const { entries, missingPids } = planBatchBind(state, stale, homeDir);
+      if (missingPids.length) recordOpenFiles(state.procSnap.openByPid, missingPids, await deps.listOpenFilesAsync(missingPids));
+      finishBatchBind(state, entries, now, homeDir);
+    })().finally(() => { state.inflight = null; });
+    return state.inflight;
+  }
+
   return {
     read(term, now = Date.now()) {
       return readHitCached(state.cache, resolveTermHit(state, term, now, deps), homeDir);
     },
+    readBound(term) {
+      const prev = state.bound.get(term.address);
+      return prev ? readHitCached(state.cache, prev.hit, homeDir) : null;
+    },
+    needsPrepare(terms, now = Date.now()) {
+      return staleTermsOf(state, terms, now).length > 0;
+    },
+    prepare,
+    prepareAsync,
   };
 }

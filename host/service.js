@@ -58,8 +58,9 @@ export async function startService({ relayUrl = process.env.WAYNE_HERDR_MODS_URL
     onStatus: (change) => { notifier.onStatus(change); samples.onStatus(change); watch(); },
     onCore: () => { phones?.coreChanged(); changed(); watch(); },
   });
-  const voice = createVoice({ dir: state.dir, log, keys: voiceKeys });
-  let voiceShown = keyTail(await voiceKeys.read()); // what status shows of the key; read once, then on each change
+  const initialVoiceKey = await voiceKeys.read();
+  const voice = createVoice({ dir: state.dir, log, keys: voiceKeys, initialAvailable: Boolean(initialVoiceKey) });
+  let voiceShown = keyTail(initialVoiceKey); // what status shows of the key; read once, then on each change
   const files = createFiles({ dir: state.dir, terminals, log, syncApp: !coreOptions?.session && !process.env.HC_SESSION });
   const metrics = createMetricsStore({ dir: state.dir });
   // Two kinds of connection carry phones: through the relay, and direct (WebRTC, `rtc:<n>`).
@@ -112,11 +113,12 @@ export async function startService({ relayUrl = process.env.WAYNE_HERDR_MODS_URL
     'voice.set': async ({ key }) => {
       key = checkKey(key);
       await voiceKeys.save(key);
+      voice.setAvailable(true);
       voiceShown = keyTail(key);
       changed();
       return view();
     },
-    'voice.off': async () => { await voiceKeys.remove(); voiceShown = null; changed(); return view(); },
+    'voice.off': async () => { await voiceKeys.remove(); voice.setAvailable(false); voiceShown = null; changed(); return view(); },
     // The window's「试一次」: a fixed sentence (nothing from outside reaches `say`), done within 20 s, under the
     // 30 s a Herdr mod's exec waits.
     'voice.test': async () => {
@@ -202,10 +204,20 @@ export async function voiceWords(dir, cwd) {
 /** What `voice test` and the window's「试一次」read aloud. */
 export const VOICE_TEST = '帮我把 phones.js 里的重连逻辑改一下，然后跑一遍 npm test，失败了就告诉我';
 
+const VOICE_AVAIL_TTL_MS = 60_000;
+
 /** The Mac side of voice input: key from the keychain, hotwords from voiceWords(). */
-function createVoice({ dir, log, keys }) {
+function createVoice({ dir, log, keys, initialAvailable = null }) {
+  let cached = initialAvailable === null ? null : { value: Boolean(initialAvailable), at: Date.now() };
   return {
-    available: async () => Boolean(await keys.read()),
+    setAvailable(value) { cached = { value: Boolean(value), at: Date.now() }; },
+    async available() {
+      const now = Date.now();
+      if (cached && now - cached.at < VOICE_AVAIL_TTL_MS) return cached.value;
+      const value = Boolean(await keys.read());
+      cached = { value, at: now };
+      return value;
+    },
     async transcribe(bytes, { terminal } = {}) {
       const key = await keys.read();
       const wav = await toWav(bytes);
