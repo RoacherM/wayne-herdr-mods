@@ -455,8 +455,45 @@ function syncBackgroundLinks(activeId: string | undefined, all: Saved[]) {
   }
 }
 
+/**
+ * Coalesces overlapping async refreshes so at most one request is in flight at a time, collapsing
+ * any burst of triggers into a single trailing follow-up call.
+ */
+export function coalesceAsync(run: () => Promise<void>, canRetry: () => boolean = () => true) {
+  let inFlight = false;
+  let dirty = false;
+  let cancelled = false;
+  let current: Promise<void> | null = null;
+
+  const trigger = (): Promise<void> => {
+    if (cancelled) return Promise.resolve();
+    if (inFlight) {
+      dirty = true;
+      return current ?? Promise.resolve();
+    }
+    inFlight = true;
+    current = (async () => {
+      try {
+        await run();
+      } finally {
+        inFlight = false;
+        current = null;
+        const again = dirty && !cancelled && canRetry();
+        dirty = false;
+        if (again) trigger();
+      }
+    })();
+    return current;
+  };
+
+  return {
+    trigger,
+    cancel() { cancelled = true; },
+  };
+}
+
 let refreshTimer: any = null;
-export async function refresh() {
+const refreshLoader = coalesceAsync(async () => {
   try {
     const res = (await rpc("terminals.list")) as List;
     list.set(res);
@@ -464,8 +501,9 @@ export async function refresh() {
     if (cur && Array.isArray(res?.terminals)) {
       observeTerminals(cur.desktopId, cur.desktopName, res.terminals);
     }
-  } catch {}
-}
+  } catch { /* next terminals event or reconnect will refresh */ }
+}, () => link?.status === "ready");
+export const refresh = () => refreshLoader.trigger();
 
 function start(saved: Saved, pair?: { token: string; name: string }) {
   // Ensure no background link is open for the Mac becoming primary
@@ -510,9 +548,9 @@ function start(saved: Saved, pair?: { token: string; name: string }) {
     } else {
       syncBackgroundLinks(updated.desktopId, all);
     }
+    refresh();
     flushPendingLogs();
     clientLog("info", "link.ready", { desktopId: saved.desktopId, desktopName: updated.desktopName });
-    refresh();
   });
   l.addEventListener("fatal", async (e: any) => {
     if (link !== l) return;

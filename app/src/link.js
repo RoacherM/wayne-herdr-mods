@@ -291,7 +291,15 @@ export class Link extends EventTarget {
     else if (this.ws) this.drop(this.ws, { reason: `fatal:${code}` });
   }
 
-  send(value) { if (this.cipher && this.ws?.readyState === 1) this.ws.send(this.cipher.seal(value)); }
+  send(value) {
+    if (!this.cipher || this.ws?.readyState !== 1) return;
+    try {
+      this.ws.send(this.cipher.seal(value));
+    } catch {
+      // Cipher sendCounter already advanced: never leave this socket alive with a desynced nonce.
+      this.drop(this.ws, { reason: 'send_error' });
+    }
+  }
 
   /** Fire-and-forget (terminal input, credit): no reply, dropped while not ready. */
   notify(m, p = {}) { if (this.status === 'ready') this.send({ m, p }); }

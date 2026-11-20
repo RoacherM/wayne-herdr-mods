@@ -4,12 +4,12 @@ import type { InputRef, WebViewRef } from "nsh/types";
 import { Button, createNavStack, Input, NavPage, NavStack } from "nsh/base";
 import {
   activeTermAddress, addingMac, boardSeq, boardTarget, boardTouchesTerminal, boot, cancelPair, clearStreamListener, clientLog,
-  consumePendingNotificationTap, desktops, disableNotifications, enableNotifications,
+  coalesceAsync, consumePendingNotificationTap, desktops, disableNotifications, enableNotifications,
   fetchPreviewDataUrl, forget, info, list, macStatuses, notify, notifyEnabled, notifyPermission,
   openNativePreview, paired, pairWith, problem, recordOp, refresh, refreshNotifyStatus, rpc, sas, sendImage,
   linkEpoch, sendTestNotification, setStreamListener, status, switchDesktop,
   termDrawn, termOpening, termOutputArrived, termRpcOpened, termTyped, termWebReady,
-  transcribeAudio, wake,
+  transcribeAudio,
   type Saved, type Space, type Terminal,
 } from "./src/conn";
 import { BoardSheet, type BoardSnapshot } from "./src/BoardSheet";
@@ -381,7 +381,6 @@ function HomeScreen() {
 
   effect(() => {
     if (lifecycle() === "active") {
-      wake();
       refreshNotifyStatus();
       checkNotificationTap();
     }
@@ -705,16 +704,21 @@ function TermScreen(props: { address: string }) {
   const boardOpen = signal(false);
   const boardSnap = signal<BoardSnapshot | null>(null);
   let boardReqId = 0;
-  async function loadBoard() {
-    if (status() !== "ready" || !info()?.board) return;
+  const canLoadBoard = () => untracked(() => status() === "ready" && Boolean(info()?.board));
+  const boardLoader = coalesceAsync(async () => {
+    if (!canLoadBoard()) return;
     const rid = ++boardReqId;
     try {
       const r = await rpc("board.get", { address }, 8000);
       if (rid === boardReqId) {
         boardSnap.set({ lane: r?.lane ?? null, at: Number(r?.at) || Date.now(), fetchedAt: Date.now() });
       }
-    } catch {}
-  }
+    } catch { /* next board event or reconnect will refresh */ }
+  }, canLoadBoard);
+  const loadBoard = () => {
+    if (!canLoadBoard()) return;
+    boardLoader.trigger();
+  };
   let litTimer: any = 0;
   let repeatDelay: any = 0;
   let repeatEvery: any = 0;
@@ -807,7 +811,7 @@ function TermScreen(props: { address: string }) {
   effect(() => { line.hold(held()); sync(); });
   effect(() => {
     const st = lifecycle();
-    if (st === "active") { wake(); session.send({ type: "away", on: false }); }
+    if (st === "active") session.send({ type: "away", on: false });
     else if (st === "background") session.send({ type: "away", on: true });
   });
   let seenBoardSeq = boardSeq();
@@ -828,6 +832,7 @@ function TermScreen(props: { address: string }) {
   });
   cleanup(() => {
     boardReqId++;
+    boardLoader.cancel();
     clientLog("info", "term.cleanup", { address, s: sid() });
     if (activeTermAddress() === address) activeTermAddress.set(null);
     clearTimeout(bootTimer);

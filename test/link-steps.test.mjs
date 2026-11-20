@@ -90,3 +90,22 @@ test('F10: waiting for the SAS confirmation on the Mac has no deadline: a person
   first.frame(desk.cipher.seal({ type: 'ready', desktopName: 'Mac', deviceId: 'p1', paired: true }));
   assert.equal(link.status, 'ready');
 });
+
+test('ws.send() throwing after cipher.seal() drops the socket cleanly instead of leaving a poisoned counter', async (t) => {
+  const D = newBoxKeys();
+  const { link, first } = makeLink({ handshake: 60_000 }, { desktopKeys: D });
+  t.after(() => link.close());
+  const dropped = [];
+  link.addEventListener('dropped', (e) => dropped.push(e.detail.reason));
+
+  first.frame('\u0000online');
+  const desk = desktopAccept(D, first.sent.at(-1));
+  first.frame(desk.welcome);
+  first.frame(desk.cipher.seal({ type: 'ready', desktopName: 'Mac', deviceId: 'p1', paired: false }));
+  assert.equal(link.status, 'ready');
+
+  first.send = () => { throw new Error('WebSocket outbound queue is full'); };
+  link.notify('client.log', { event: 'burst' });
+  assert.equal(first.readyState, 3, 'socket is dropped instead of continuing with a desynced sendCounter');
+  assert.deepEqual(dropped, ['send_error']);
+});
