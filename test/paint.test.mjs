@@ -84,3 +84,28 @@ test('opened again under a full-screen program: the history stays (that repaint 
   assert.equal(u.buffer.active.type, 'alternate');
   assert.equal(count(u, /^h\d+$/), 20);
 });
+
+test('repaint merged with a program trailing SYNC_ON + clear keeps sync open (no blank flash)', () => {
+  // Real 15:35 log case: herdr-core PAINT merged in 4ms batch with agy starting SYNC_ON + ESC[H + ESC[2J
+  const merged = new Uint8Array([
+    ...repaint({ screen: ['old prompt'] }),
+    ...enc('\x1b[?2026h\x1b[H\x1b[2J'),
+  ]);
+  const [before, out] = atomic(merged);
+  assert.equal(before.length, 0);
+  const s = dec(out);
+  assert.ok(!s.endsWith(dec(SYNC_OFF)), 'must not append SYNC_OFF while program sync block is still open');
+
+  // If the program closed its own sync block inside the same chunk, atomic still ends with SYNC_OFF
+  const closed = new Uint8Array([
+    ...repaint({ screen: ['old prompt'] }),
+    ...enc('\x1b[?2026h\x1b[H\x1b[2Jnew prompt\x1b[?2026l'),
+  ]);
+  const [, outClosed] = atomic(closed);
+  assert.ok(dec(outClosed).endsWith(dec(SYNC_OFF)));
+
+  // Edge case: body starts right at index 0 with SYNC_ON (no prefix bytes)
+  const atZero = enc('\x18\x1b[!p\x1b[?2026l\x1b[?2026h');
+  const [, outZero] = atomic(atZero);
+  assert.ok(!dec(outZero).endsWith(dec(SYNC_OFF)), 'SYNC_ON at body index 0 must still keep sync open');
+});

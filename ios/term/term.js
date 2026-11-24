@@ -28,7 +28,8 @@ const CLEAR_J = enc('\x1b[J');
 const ALT_ON = enc('\x1b[?1049h');
 const ALT_OFF = enc('\x1b[?1049l');
 const SYNC_WATCH_MS = 250;
-const theme = { background: '#0b0b0c', foreground: '#e6e6e1', cursor: '#e6e6e1', selectionBackground: 'rgba(10, 132, 255, 0.35)' };
+const SYNC_UNLOCK_MS = 600;
+const theme = { background: '#080808', foreground: '#e6e6e1', cursor: '#e6e6e1', selectionBackground: 'rgba(59, 130, 246, 0.35)' };
 document.documentElement.style.background = theme.background;
 
 const viewport = document.getElementById('vp');
@@ -108,25 +109,36 @@ function bufferStats() {
 function abortSyncWatch(why) {
   if (!syncPending) return;
   clearTimeout(syncPending.timer);
+  clearTimeout(syncPending.unlockTimer);
   const p = syncPending;
   syncPending = null;
   diag('term.sync_abort', { why, from: p.from, to: p.to, waitMs: Math.round(performance.now() - p.t0) });
 }
 
 function armSyncWatch(from, to) {
-  if (syncPending) clearTimeout(syncPending.timer);
-  const entry = { t0: performance.now(), from, to, stuck: false, timer: 0 };
+  if (syncPending) {
+    clearTimeout(syncPending.timer);
+    clearTimeout(syncPending.unlockTimer);
+  }
+  const entry = { t0: performance.now(), from, to, stuck: false, timer: 0, unlockTimer: 0 };
   entry.timer = setTimeout(() => {
     if (syncPending !== entry) return;
     entry.stuck = true;
     diag('term.sync_stuck', { from, to, waitMs: Math.round(performance.now() - entry.t0), ...bufferStats() });
   }, SYNC_WATCH_MS);
+  entry.unlockTimer = setTimeout(() => {
+    if (syncPending !== entry) return;
+    syncPending = null;
+    xterm.write(SYNC_OFF);
+    diag('term.sync_unlock', { from, to, waitMs: Math.round(performance.now() - entry.t0), ...bufferStats() });
+  }, SYNC_UNLOCK_MS);
   syncPending = entry;
 }
 
 function finishSyncWatch(bytesLen, hasPaint, hasSyncOff, fresh) {
   if (!syncPending || (!hasPaint && !hasSyncOff)) return;
   clearTimeout(syncPending.timer);
+  clearTimeout(syncPending.unlockTimer);
   const p = syncPending;
   syncPending = null;
   diag('term.sync_done', {
@@ -510,6 +522,10 @@ window.addEventListener('message', (e) => {
     write(m.d, Boolean(m.fresh));
   } else if (m.t === 'size') {
     const from = `${cols}x${rows}`, to = `${m.cols}x${m.rows}`;
+    if (m.cols === cols && m.rows === rows) {
+      diag('term.size_noop', { from, to, sized });
+      return;
+    }
     expectFrame = 'size';
     diag('term.size', { from, to, sized, vpW: viewport.clientWidth, vpH: viewport.clientHeight });
     if (sized) {

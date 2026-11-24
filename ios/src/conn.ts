@@ -13,7 +13,8 @@ export { flushMetrics, recordOp, termDrawn, termOpening, termOutputArrived, term
 
 export type Terminal = {
   address: string; program?: string; app?: string; icon?: string; where?: string; cwd?: string;
-  state?: "blocked" | "working" | "done" | "idle" | "error"; kind?: string; msg?: string; cols: number; rows: number;
+  state?: "blocked" | "working" | "done" | "idle" | "error"; kind?: string; msg?: string;
+  statusMs?: number | null; cols: number; rows: number;
 };
 export type Space = { id: string; name?: string; folder?: string; tabs: { id: string; name?: string; terminals: string[] }[] };
 export type List = { core?: string; terminals: Terminal[]; layout: Space[]; icons?: Record<string, any> };

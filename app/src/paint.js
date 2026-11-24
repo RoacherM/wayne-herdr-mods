@@ -31,6 +31,15 @@ export function indexOf(hay, needle, from = 0, to = hay.length) {
   return -1;
 }
 
+function lastIndexOf(hay, needle) {
+  outer: for (let i = hay.length - needle.length; i >= 0; i--) {
+    if (hay[i] !== needle[0]) continue;
+    for (let j = 1; j < needle.length; j++) if (hay[i + j] !== needle[j]) continue outer;
+    return i;
+  }
+  return -1;
+}
+
 const concat = (parts) => {
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
   let at = 0;
@@ -51,6 +60,8 @@ export function atomic(bytes, { clearHistory = false } = {}) {
   const alt = c >= 0 && indexOf(body, ALT_ON, c + CLEARED.length, c + CLEARED.length + ALT_ON.length) === c + CLEARED.length;
   if (c >= 0 && !alt) parts.push(body.subarray(0, c), CLEAR_HISTORY, body.subarray(c));
   else parts.push(body);
-  parts.push(SYNC_OFF);
+  // If a program started its own synchronized update (ESC[?2026h ... ESC[2J) in the tail of the
+  // same batch without closing it yet, keep sync on so xterm does not paint the half-cleared screen.
+  if (lastIndexOf(body, SYNC_ON) <= lastIndexOf(body, SYNC_OFF)) parts.push(SYNC_OFF);
   return [bytes.subarray(0, at), concat(parts)];
 }

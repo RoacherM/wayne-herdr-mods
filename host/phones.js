@@ -35,7 +35,9 @@ const REPRINT_QUIET_MS = 100;
 const REPRINT_MAX_MS = 1000;
 const REPRINT_NOTE = 16 * 1024; // recorded from this size (a shell's `clear` is not)
 const CLEAR_SCROLLBACK = Buffer.from('\x1b[3J');
-const SCREEN_CLEARS = [Buffer.from('\x1b[2J'), Buffer.from('\x1b[H')];
+const CLEAR_SCREEN = Buffer.from('\x1b[2J');
+const SCREEN_CLEARS = [CLEAR_SCREEN, Buffer.from('\x1b[H'), Buffer.from('\x1b[?2026h')];
+const RESIZE_CLEAR_WINDOW_MS = 2000;
 const PAINT_BYTES = Buffer.from('\x18\x1b[!p\x1b[?2026l');
 const EMPTY = Buffer.alloc(0);
 // Wheel steps wait while more than this is on its way to the phone (sent, not yet drawn there), then
@@ -225,7 +227,7 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
     const t = terminals.get(address);
     if (!t || t.state !== 'live') throw new Error(`没有正在运行的终端 ${address}`);
     const id = nextStream++;
-    const stream = { id, address, core, device: peer.device?.id, channel: null, typer: null, fit, sized: false, cols: t.cols, rows: t.rows, out: [], outW: null, outTimer: null, awaitingPaint: 'open', lastLargeLogAt: 0, stopped: false };
+    const stream = { id, address, core, device: peer.device?.id, channel: null, typer: null, fit, sized: false, cols: t.cols, rows: t.rows, resizedAt: fit && lead ? Date.now() : null, out: [], outW: null, outTimer: null, awaitingPaint: 'open', lastLargeLogAt: 0, stopped: false };
     // Scrolling, as the Mac sees it (scroll-watch.js), to the same records as the phone's.
     const via = String(peer.cid).startsWith('rtc:') ? 'direct' : 'relay';
     stream.record = (e) => metrics?.put(peer.device, { ctx: { src: 'mac' }, events: [{ t: Date.now(), via, ...e }] }).catch(() => {});
@@ -314,12 +316,17 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
       },
       onResize: (cols, rows) => {
         if (stream.channel !== channel) return;
+        if (cols === stream.cols && rows === stream.rows) {
+          logStream(log, peer, 'stream.resize_noop', { s: id, addr: stream.address, grid: `${cols}x${rows}` });
+          return;
+        }
         const from = `${stream.cols}x${stream.rows}`;
         const rp = stream.reprint ? (stream.reprint.dropping ? 'drop' : 'hold') : 'no';
         if (stream.reprint && !stream.reprint.dropping) endReprint(peer, stream); // held bytes were for the old grid
         stream.flush(); // the bytes before it were drawn for the old size
         stream.cols = cols;
         stream.rows = rows;
+        stream.resizedAt = Date.now();
         stream.awaitingPaint = 'resize';
         logStream(log, peer, 'stream.resize', { s: id, addr: stream.address, from, to: `${cols}x${rows}`, reprint: rp });
         event(peer, 'size', { s: id, cols, rows });
@@ -356,9 +363,15 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
     let r = stream.reprint;
     if (!r) {
       if (!stream.sized) return false; // an older core: no fresh paint to rely on
-      const found = (tail.length ? Buffer.concat([tail, bytes]) : bytes).indexOf(CLEAR_SCROLLBACK);
+      const buf = tail.length ? Buffer.concat([tail, bytes]) : bytes;
+      let found = buf.indexOf(CLEAR_SCROLLBACK);
+      // Right after a resize, some agents clear the screen (ESC[2J) in a separate chunk before
+      // ESC[3J + full reprint; hold that clear too (never catching herdr-core's own PAINT).
+      if (found < 0 && stream.resizedAt !== null && Date.now() - stream.resizedAt <= RESIZE_CLEAR_WINDOW_MS && !buf.includes(PAINT_BYTES)) {
+        found = buf.indexOf(CLEAR_SCREEN);
+      }
       if (found < 0) return false;
-      // From the clear of the screen before it (ESC[H ESC[2J ESC[3J): the old screen stays until the end.
+      // From the clear of the screen before it (ESC[?2026h ESC[H ESC[2J ESC[3J): the old screen stays until the end.
       let at = Math.max(0, found - tail.length);
       for (const p of SCREEN_CLEARS) if (at >= p.length && bytes.subarray(at - p.length, at).equals(p)) at -= p.length;
       if (at > 0) { stream.outW ??= stream.watch.w; stream.out.push(bytes.subarray(0, at)); }

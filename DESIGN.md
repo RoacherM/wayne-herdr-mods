@@ -308,7 +308,12 @@ docs/        issues/（待办队列）、native-app.html（I-004 的设计原型
 | `agy` 1500 行对话，手机按 57x55 打开（真宿主 + 本地中继） | 645 KB，从头重印 | 61 KB，1 次 fresh，311 ms 收完 |
 | `test/host.live.test.mjs`：`clear` 后打印 2 万行 | 超时（没有 fresh） | 只收到结尾，不到 120 KB |
 
-单元测试：`test/paint.test.mjs`（无界面 xterm 实际执行字节：同步开关的位置；主屏、备用屏、程序在断线期间进出全屏，历史都不丢不重）。兼容：新手机页 + 旧宿主（没有 `sized`）回到旧做法；旧手机页 + 新宿主照常工作（忽略 `size`）。`ios/` 的 nsh 原型还是旧做法。
+单元测试：`test/paint.test.mjs`（无界面 xterm 实际执行字节：同步开关的位置；主屏、备用屏、程序在断线期间进出全屏，历史都不丢不重）、`test/stream-sync.test.mjs`（模拟 15:35 黑块日志场景）。兼容：新手机页 + 旧宿主（没有 `sized`）回到旧做法；旧手机页 + 新宿主照常工作（忽略 `size`）。
+
+**2026-11-24 黑块根因修复（真机日志 `07:35:40Z–07:35:54Z` `t93`）**：
+1. **同尺寸重复 `size` 导致 1 秒同步锁死**：`host/phones.js` `onResize` 在 `cols === stream.cols && rows === stream.rows` 时不再发重复 `size` 事件（记 `stream.resize_noop`）；`ios/term/term.js` 收到同尺寸 `size` 也不写 `SYNC_ON`，同时为真实尺寸变更增加 600 ms 安全解锁定时器（`term.sync_unlock`），防止 xterm 长时间锁死黑屏。
+2. **`atomic()` 误关程序自带同步块**：`app/src/paint.js` 仅在 `body` 末尾不存在未配对的 `ESC[?2026h` 时才追加 `SYNC_OFF`，避免 4 ms 合并批次把程序刚发出的 `ESC[?2026h ESC[H ESC[2J` 提前解锁画出全黑半屏。
+3. **缩放后独立的 `ESC[2J` 清屏透传**：`host/phones.js` `reprint()` 在缩放后 2000 ms 内除 `ESC[3J` 外也扣住独立的 `ESC[2J`（跳过 `herdr-core` 自带 `PAINT_BYTES`，并向前一并回退 `ESC[H` 与 `ESC[?2026h`），避免清屏帧先于 `ESC[3J` 大重印到达手机闪黑。
 
 没验证：真 iPhone + Cloudflare 中继（约 230 ms）上的手感；Safari 的 WebKit 里的同步输出（xterm 自己实现，不依赖浏览器，预计一样）。
 
@@ -590,6 +595,16 @@ node probe/image-paste.mjs [claude|codex|agy]   # 图片路径粘贴进 agent �
 >   6. **连接稳定与并发收敛（2026-11-20，nsh 0.4.0 `e626a8d`）**：
 >      - **根治 43% `kick=bad-frame` 断线重连**：实测 `nsh 0.4.0` 原生全局 `WebSocket.send()` 的 Rust 出站通道上限仅 8 条，第 9 条同步抛 `Error: WebSocket outbound queue is full`；此前 `ready` 后同时刷出 `pendingLogs` + `terminals.list` + `term.open` + `board.get` 超过 8 条，且 `app/src/link.js` 在 `ws.send()` 前已调用 `cipher.seal()` 推进 `sendCounter++`，`flushPendingLogs()` 吞错导致 nonce 永久错位，下一帧即被 Mac `kick=bad-frame`。现通过 `ios/src/ws-queue.ts`（由 `ios/src/shim.ts` 接管 `globalThis.WebSocket`）改用 `websocket` 模块的 `WebSocketConnection.write()` 严格单帧 FIFO 串行发送（队列上限 `MAX_QUEUED_FRAMES = 512`，超限主动断开重连）；同时 `app/src/link.js` 对 `ws.send()` 加 `try/catch`，发送异常立即 `drop(..., { reason: 'send_error' })`，防止残留错位密码器。协议不变，新旧混用完全兼容。
 >      - **消除冗余 RPC 与重连突发**：`ios/src/conn.ts` 抽纯 helper `coalesceAsync` 合并并发的 `refresh()`（`terminals.list`），同时在 `ready` 回调里将 `refresh()` 排在 `flushPendingLogs()` 之前；删去 `HomeScreen` / `TermScreen` 挂载时的重复 `wake()`（`conn.ts` 的全局 `lifecycle()` effect 已覆盖所有页面回前台唤醒）。测法：`test/ios-conn.test.mjs`、`test/link-steps.test.mjs`。
+>   7. **T3 Code 风格重构与 Liquid Glass 交互（2026-11-24，nsh 0.6.1，iOS 27）**：
+>      - **视觉体系**：参考用户实机 T3 Code iOS 风格，深色默认纯 OLED 黑（`#080808`）+ 无内分隔线圆角分组卡（`#161616`、`rounded-[22px]`）+ iOS 26/27 原生 Liquid Glass（`glassEffect: "regular"` + `backdropFilter: "blur(24px)"` 回退）+ 亮蓝激活色（`#3b82f6`）；全部颜色收口到 `ios/theme.json` 语义 token（TSX 零裸十六进制），支持设置页实时切换「跟随系统 / 深色 / 浅色」（`setColorScheme` + `Storage["herdr-appearance"]`）。
+>      - **信息架构与模块拆分**：`ios/src/ui/controls.tsx`（玻璃圆钮/胶囊、2 字母项目色块徽章、筛选胶囊、`nsh/base` `Switch` 与 `Sheet` 封装）、`ios/src/screens/PairScreen.tsx`（纯黑开屏扫码 + 玻璃粘贴胶囊 + 6 位核对码卡片）、`ios/src/screens/HomeShell.tsx`（底部悬浮 3-Tab 玻璃 Dock「会话 / 文件 / 设置」+ 会话页右侧圆形新建按钮、顶部连接状态与筛选胶囊、设置页无分隔线卡片 + 原生 `AlertDialog` 解绑确认）、`ios/src/screens/TermScreen.tsx`（左上圆形玻璃返回 + 双行标题 + 右上单个圆形玻璃「文件」按钮、去掉常驻键盘区改用底部单条悬浮玻璃输入胶囊「`+` 图片 / 直输终端 / `⌨ ⌄` 按需展开快捷键条 / 🎙 按住说话 / `↑` 发送」）、`ios/src/screens/FilesSheet.tsx`（72%/全屏可拖拽半屏文件抽屉 + 极简目录树 + 底部固定悬浮玻璃 `Search files` 搜索条）、`ios/src/screens/PreviewScreen.tsx`（只读代码/图片/音视频/QuickLook 预览）。
+>      - **动效清单（Motion Inventory）**：
+>        | 位置 | 触发 | 过渡 | 降动效行为 |
+>        |---|---|---|---|
+>        | `GlassCircle` / `FilterPill` / 发送钮 / 主胶囊钮 | 按下 | `transition-transform duration-150 active:scale-95` | 遵循系统 Reduced Motion |
+>        | `HomeShell` 底栏 Tab / `AppSwitch` / 语音录音钮 | 状态切换 | `transition-colors duration-150` + Switch 滑块 `transition-transform duration-150` | 遵循系统 Reduced Motion |
+>        | `BottomSheet`（`FilesSheet` 与各筛选抽屉） | 开关与拖拽停靠 | `nsh/base` `Sheet` 原生手势弹簧（`detents: [{ fraction: 0.72 }, "large"]`） | `nsh` 自动退化为即时切换 |
+>        | `NavStack`（首页 ↔ 终端页 ↔ 文件预览） | 推入/返回与左缘滑返 | UIKit 原生导航转场 | 遵循系统 Reduced Motion |
 >
 > 2026-11-06 的方向（已被上面替代）见 [docs/native-app.html](docs/native-app.html)（I-004）：
 > - 推送：设备一直「推送关」，因为手机页只在 Chrome 标签页里用（7 天 1790 条指标全是 `standalone: false`）。iOS 只给主屏幕 Web App 推送。先用主屏幕 Web App + 现有 Web Push（0 元）。
