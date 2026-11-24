@@ -68,3 +68,6 @@ declare module "*/app/src/voice-hold.js" {
   export const step: (st: VoiceState, ev: { type: string }) => { state: VoiceState; fx: VoiceEffect[] };
   export const voiceHold: (run: (effects: VoiceEffect[], session: VoiceSession) => void) => VoiceSession;
 }
+declare module "*/app/src/term-select.js" {
+  export const safeHttpUrl: (raw: unknown) => string | null;
+}

@@ -210,6 +210,25 @@ final class ShellController: UIViewController, QLPreviewControllerDataSource {
       reply.resolve(nil)
     }
 
+    app.handle("url.open") { args, reply in
+      let dict = args as? [String: Any] ?? [:]
+      let raw = (dict["url"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+      guard
+        let url = URL(string: raw),
+        let scheme = url.scheme?.lowercased(),
+        scheme == "http" || scheme == "https"
+      else {
+        reply.reject("无效链接")
+        return
+      }
+      DispatchQueue.main.async {
+        UIApplication.shared.open(url, options: [:]) { ok in
+          if ok { reply.resolve(["ok": true]) }
+          else { reply.reject("无法打开链接") }
+        }
+      }
+    }
+
     app.handle("log.write") { args, reply in
       let dict = args as? [String: Any] ?? [:]
       let level = (dict["level"] as? String ?? "INFO").uppercased()

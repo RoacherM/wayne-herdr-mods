@@ -16,6 +16,7 @@ import { PROG_ICONS } from "./src/prog-icons";
 import { TERM_HTML } from "./src/term-html";
 import { imageInput, LiveLine, PASTE_LF, pasteText } from "../app/src/live-line.js";
 import { agentKeys, combo, keyOfChar, MODS } from "../app/src/agent-keys.js";
+import { safeHttpUrl } from "../app/src/term-select.js";
 import { enqueue, termSession } from "../app/src/term-session.js";
 import { voiceHold } from "../app/src/voice-hold.js";
 import chevronDownIcon from "./assets/chevron-down.svg";
@@ -689,6 +690,7 @@ function TermScreen(props: { address: string }) {
   const litKey = signal("");
   const webReady = signal(false);
   let litTimer: any = 0;
+  let noticeTimer: any = 0;
   let repeatDelay: any = 0;
   let repeatEvery: any = 0;
   let didRepeat = false;
@@ -797,6 +799,7 @@ function TermScreen(props: { address: string }) {
     if (activeTermAddress() === address) activeTermAddress.set(null);
     clearTimeout(bootTimer);
     clearTimeout(litTimer);
+    clearTimeout(noticeTimer);
     stopRepeat();
     clearInterval(voiceTickTimer);
     clearTimeout(voiceLimitTimer);
@@ -835,6 +838,21 @@ function TermScreen(props: { address: string }) {
       else notify("term.coast", { s: sid(), d: m.d, v: m.v, cell: m.cell });
     } else if (m.t === "tap") {
       field.focus();
+    } else if (m.t === "haptic") {
+      tapHaptic();
+    } else if (m.t === "copy" && typeof m.text === "string" && m.text) {
+      tapHaptic();
+      Clipboard.writeText(m.text).then(() => {
+        clearTimeout(noticeTimer);
+        notice.set("已复制");
+        noticeTimer = setTimeout(() => { if (notice() === "已复制") notice.set(""); }, 1500);
+      }).catch(() => {});
+    } else if (m.t === "openUrl" && typeof m.url === "string") {
+      const safe = safeHttpUrl(m.url);
+      if (safe && host.available()) {
+        tapHaptic();
+        host.call("url.open", { url: safe }).catch((err: any) => notice.set(err?.message || "无法打开链接"));
+      }
     } else if (m.t === "diag" && typeof m.ev === "string") {
       const { t: _t, ev, ...rest } = m;
       clientLog("info", ev, { address, s: sid(), ...rest });

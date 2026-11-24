@@ -9,12 +9,14 @@
  *   page → app  {t:'ready', fit}   {t:'fit', fit}        {t:'ack', n}
  *               {t:'drawn', cursorHidden, appCursor}     {t:'atLatest', on}
  *               {t:'wheel', d}     {t:'coast', stop?, d?, v?, cell?}
- *               {t:'tap'}          {t:'log', m}          {t:'diag', ev, ...}
+ *               {t:'tap'}          {t:'openUrl', url}    {t:'copy', text}
+ *               {t:'haptic'}       {t:'log', m}          {t:'diag', ev, ...}
  */
 import { Terminal } from '@xterm/xterm';
 import { UnicodeGraphemesAddon } from '@xterm/addon-unicode-graphemes';
 import { touchScroll } from '../../app/src/touch-scroll.js';
 import { atomic, indexOf, SYNC_OFF, SYNC_ON } from '../../app/src/paint.js';
+import { linkAt, rangeLength, safeHttpUrl, selectionFromCells, wordRangeAt } from '../../app/src/term-select.js';
 import { textStyle } from '../../app/src/text-style.js';
 import { coastSteps } from '../../shared/coast.js';
 
@@ -26,7 +28,7 @@ const CLEAR_J = enc('\x1b[J');
 const ALT_ON = enc('\x1b[?1049h');
 const ALT_OFF = enc('\x1b[?1049l');
 const SYNC_WATCH_MS = 250;
-const theme = { background: '#0b0b0c', foreground: '#e6e6e1', cursor: '#e6e6e1', selectionBackground: '#3a3a36' };
+const theme = { background: '#0b0b0c', foreground: '#e6e6e1', cursor: '#e6e6e1', selectionBackground: 'rgba(10, 132, 255, 0.35)' };
 document.documentElement.style.background = theme.background;
 
 const viewport = document.getElementById('vp');
@@ -180,8 +182,9 @@ function layout() {
   const vpKey = `${w}x${hgt}`;
   const vpChanged = booted && lastVpKey && vpKey !== lastVpKey;
   if (booted && w > 0 && hgt > 0) lastVpKey = vpKey;
-  if (!follow.y) {
+  if (!follow.y || sel) {
     if (vpChanged) diag('term.viewport', { vpW: w, vpH: hgt, st: Math.round(viewport.scrollTop), hostH: host.scrollHeight, followY: false, cols, rows });
+    if (sel) renderSel();
     return;
   }
   const cell = cellNow();
@@ -206,15 +209,158 @@ function layout() {
   }
 }
 
+// ---- link tap & long-press text selection with iOS-style drag handles
+const selUi = document.getElementById('sel-ui');
+const selStartEl = document.getElementById('sel-s');
+const selEndEl = document.getElementById('sel-e');
+const selBarEl = document.getElementById('sel-bar');
+const selCopyBtn = document.getElementById('sel-copy');
+const selOpenBtn = document.getElementById('sel-open');
+
+let sel = null; // { start: { row, col }, end: { row, col }, url }
+let lpAnchor = null;
+let flashTimer = 0;
+
+function cellAtPoint(clientX, clientY) {
+  const cell = cellNow();
+  const screen = xterm.element?.querySelector('.xterm-screen');
+  if (!cell?.width || !cell?.height || !screen) return null;
+  const rect = screen.getBoundingClientRect();
+  const col = Math.max(0, Math.min(cols - 1, Math.floor((clientX - rect.left) / cell.width)));
+  const screenRow = Math.max(0, Math.min(rows - 1, Math.floor((clientY - rect.top) / cell.height)));
+  const b = xterm.buffer.active;
+  const absRow = Math.max(0, Math.min(b.length - 1, b.viewportY + screenRow));
+  return { col, absRow };
+}
+
+function clearSel() {
+  if (flashTimer) { clearTimeout(flashTimer); flashTimer = 0; }
+  lpAnchor = null;
+  if (!sel) return;
+  sel = null;
+  xterm.clearSelection();
+  if (selUi) selUi.style.display = 'none';
+}
+
+function placeHandle(el, x, y, cellH, edge) {
+  const visible = y + cellH > 0 && y < window.innerHeight && x >= -4 && x <= window.innerWidth + 4;
+  el.style.display = visible ? 'block' : 'none';
+  if (!visible) return;
+  const bar = el.firstElementChild;
+  const dot = el.lastElementChild;
+  const dotSz = 11;
+  const top = edge === 'start';
+  el.style.left = `${x}px`;
+  el.style.top = `${top ? y - dotSz - 4 : y - 4}px`;
+  el.style.height = `${cellH + dotSz + 14}px`;
+  bar.style.top = `${top ? dotSz + 4 : 4}px`;
+  bar.style.height = `${cellH}px`;
+  dot.style.top = `${top ? 4 : cellH + 4}px`;
+}
+
+function renderSel() {
+  if (!sel || !selUi) return;
+  const cell = cellNow();
+  const screen = xterm.element?.querySelector('.xterm-screen');
+  if (!cell?.width || !cell?.height || !screen) return;
+  const rect = screen.getBoundingClientRect();
+  const vpY = xterm.buffer.active.viewportY;
+  const sx = rect.left + sel.start.col * cell.width;
+  const sy = rect.top + (sel.start.row - vpY) * cell.height;
+  const ex = rect.left + sel.end.col * cell.width;
+  const ey = rect.top + (sel.end.row - vpY) * cell.height;
+
+  selUi.style.display = 'block';
+  placeHandle(selStartEl, sx, sy, cell.height, 'start');
+  placeHandle(selEndEl, ex, ey, cell.height, 'end');
+
+  const url = sel.url || safeHttpUrl(xterm.getSelection());
+  if (selOpenBtn) selOpenBtn.hidden = !url;
+  const midX = sel.start.row === sel.end.row ? (sx + ex) / 2 : Math.min(window.innerWidth - 20, Math.max(20, (sx + ex) / 2));
+  const barW = url ? 128 : 68;
+  const clampedX = Math.max(barW / 2 + 8, Math.min(window.innerWidth - barW / 2 - 8, midX));
+  const aboveY = sy - 50;
+  const belowY = ey + cell.height + 24;
+  const barY = aboveY >= 8 ? aboveY : Math.min(window.innerHeight - 44, Math.max(8, belowY));
+  selBarEl.style.left = `${clampedX}px`;
+  selBarEl.style.top = `${barY}px`;
+}
+
+function applySel(start, end, url = null) {
+  const len = rangeLength(cols, start, end);
+  if (len <= 0) { clearSel(); return; }
+  sel = { start, end, url };
+  xterm.select(start.col, start.row, len);
+  renderSel();
+}
+
+function dragScrollEdge(clientY) {
+  const cell = cellNow();
+  const h = cell?.height || 14;
+  if (clientY < 28) {
+    if (viewport.scrollTop > 0) viewport.scrollTop -= h;
+    else if (xterm.buffer.active.type === 'normal') xterm.scrollLines(-1);
+  } else if (clientY > window.innerHeight - 28) {
+    if (viewport.scrollTop + viewport.clientHeight < viewport.scrollHeight - 1) viewport.scrollTop += h;
+    else if (xterm.buffer.active.type === 'normal') xterm.scrollLines(1);
+  }
+}
+
+function bindHandle(el, edge) {
+  let anchor = null;
+  el?.addEventListener('touchstart', (e) => {
+    e.stopPropagation();
+    if (!sel || e.touches.length !== 1) return;
+    anchor = edge === 'start'
+      ? { row: sel.end.row, col: Math.max(0, sel.end.col - 1) }
+      : { row: sel.start.row, col: sel.start.col };
+  }, { passive: true });
+  el?.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!anchor || e.touches.length !== 1) return;
+    const t = e.touches[0];
+    dragScrollEdge(t.clientY);
+    const cellH = cellNow()?.height || 14;
+    const pt = cellAtPoint(t.clientX, t.clientY + (edge === 'start' ? cellH * 0.5 : -cellH * 0.5));
+    if (!pt) return;
+    const next = selectionFromCells(xterm.buffer.active, cols, anchor, { row: pt.absRow, col: pt.col });
+    applySel(next.start, next.end, null);
+  }, { passive: false });
+  const endDrag = (e) => { e.stopPropagation(); anchor = null; };
+  el?.addEventListener('touchend', endDrag, { passive: true });
+  el?.addEventListener('touchcancel', endDrag, { passive: true });
+}
+bindHandle(selStartEl, 'start');
+bindHandle(selEndEl, 'end');
+
+const stopBarTouch = (e) => e.stopPropagation();
+selBarEl?.addEventListener('touchstart', stopBarTouch, { passive: true });
+selBarEl?.addEventListener('touchend', stopBarTouch, { passive: true });
+selCopyBtn?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const text = xterm.getSelection();
+  clearSel();
+  if (text) post({ t: 'copy', text });
+});
+selOpenBtn?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const url = sel?.url || safeHttpUrl(xterm.getSelection());
+  clearSel();
+  if (url) post({ t: 'openUrl', url });
+});
+
 viewport.addEventListener('scroll', () => {
+  if (sel) renderSel();
   const cell = cellNow();
   if (!cell?.height || placing) return;
   if (Math.abs(viewport.scrollLeft - setLeft) > 1) follow.x = false;
   const y = atLatest(cell);
   if (y !== follow.y) { follow.y = y; showLatest(); }
 }, { passive: true });
-xterm.onScroll(showLatest);
+xterm.onScroll(() => { showLatest(); if (sel) renderSel(); });
 xterm.buffer.onBufferChange(() => {
+  clearSel();
   if (xterm.buffer.active.type !== 'alternate') setBack(0);
   diag('term.buffer_change', bufferStats());
   showLatest();
@@ -229,7 +375,39 @@ const wheelReport = (up) => {
 };
 
 const stopTouch = touchScroll(viewport, xterm, {
-  onTap: () => post({ t: 'tap' }),
+  onTap(pt) {
+    if (sel) { clearSel(); return; }
+    if (pt) {
+      const cell = cellAtPoint(pt.clientX, pt.clientY);
+      const link = cell ? linkAt(xterm, cell.col, cell.absRow) : null;
+      if (link) {
+        if (flashTimer) clearTimeout(flashTimer);
+        xterm.select(link.start.col, link.start.row, rangeLength(cols, link.start, link.end));
+        flashTimer = setTimeout(() => { flashTimer = 0; if (!sel) xterm.clearSelection(); }, 180);
+        post({ t: 'openUrl', url: link.url });
+        return;
+      }
+    }
+    post({ t: 'tap' });
+  },
+  onLongPress(pt) {
+    const cell = cellAtPoint(pt.clientX, pt.clientY);
+    if (!cell) return;
+    const hit = wordRangeAt(xterm, cell.col, cell.absRow);
+    if (!hit) return;
+    lpAnchor = { row: hit.start.row, col: hit.start.col };
+    post({ t: 'haptic' });
+    applySel(hit.start, hit.end, hit.url);
+  },
+  onLongPressMove(pt) {
+    if (!lpAnchor) return;
+    dragScrollEdge(pt.clientY);
+    const cell = cellAtPoint(pt.clientX, pt.clientY);
+    if (!cell) return;
+    const next = selectionFromCells(xterm.buffer.active, cols, lpAnchor, { row: cell.absRow, col: cell.col });
+    applySel(next.start, next.end, null);
+  },
+  onLongPressEnd() { lpAnchor = null; },
   remoteCoast(v, cell) {
     if (xterm.modes.mouseTrackingMode === 'none') return false;
     if (!v) { post({ t: 'coast', stop: true }); return true; }
@@ -264,6 +442,7 @@ xterm.onData((d) => {
 
 function resizeTo(c, r) {
   if (c === cols && r === rows) return;
+  clearSel();
   cols = c; rows = r;
   xterm.resize(cols, rows);
   layout();
@@ -318,6 +497,7 @@ function write(b64, fresh = false) {
 window.addEventListener('message', (e) => {
   let m; try { m = JSON.parse(e.data); } catch { return; }
   if (m.t === 'open') {
+    clearSel();
     abortSyncWatch('open');
     sized = Boolean(m.sized);
     expectFrame = 'open';
@@ -326,7 +506,7 @@ window.addEventListener('message', (e) => {
     else if (m.reopened) clearHistory = true;
     reportFit();
   } else if (m.t === 'out') {
-    if (m.fresh) clearHistory = true;
+    if (m.fresh) { clearSel(); clearHistory = true; }
     write(m.d, Boolean(m.fresh));
   } else if (m.t === 'size') {
     const from = `${cols}x${rows}`, to = `${m.cols}x${m.rows}`;
@@ -339,9 +519,11 @@ window.addEventListener('message', (e) => {
       resizeTo(m.cols, m.rows);
     }
   } else if (m.t === 'reset') {
+    clearSel();
     abortSyncWatch('reset');
     xterm.reset();
   } else if (m.t === 'typing' || m.t === 'toLatest') {
+    clearSel();
     toLatest();
   }
 });

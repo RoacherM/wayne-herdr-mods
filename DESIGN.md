@@ -445,6 +445,10 @@ Claude Code 自己怎么回应（`probe/wheel-batch.mjs`：复制一个旧会话
 
 **⏺ 画成字，不画成 emoji。** Claude Code 每条回复前的 ⏺（U+23FA）默认是文字样式，Ghostty 画成一格的圆点。iOS 没有带这个字的文字字体，WebKit 退到 Apple Color Emoji，画成蓝色按钮（真 iPhone 和 iOS 模拟器都能看到；Mac 上的 Chrome 有文字字体，看不出来）。手机写入 xterm 前，在 ⌨ ⏏ ⏭ ⏮ ⏯ ⏱ ⏲ ⏸ ⏹ ⏺ 后面补 VS15（U+FE0E，「按文字画」），已经带 VS15 / VS16 的不动（`app/src/text-style.js`，`test/text-style.test.mjs`）。xterm 仍算一格，`dev/flicker-smoke.mjs` 的 19 种宽度仍全对。
 
+**点击链接与长按选中文本（2026-11-24，`app/src/term-select.js`、`ios/term/term.js`、`ios/host/Sources/App.swift`）。**
+- 单击终端内的 OSC 8 超链接或普通/跨行折行的 `http://` / `https://` 链接：短高亮反馈后通过 Swift 宿主 `url.open`（`UIApplication.shared.open`）直接打开，不弹出键盘；JS 与 Swift 双端白名单仅允许 `http` / `https`，拒绝 `javascript:` / `file:` 等协议。
+- 长按（380 ms，震动反馈）任意非空文字或链接：按 xterm 缓冲区坐标选中该词或整条链接（长按后直接拖动可继续扩选），显示起止蓝点拖动手柄（拖近上下边缘自动滚动）与「复制」（选中链接时并列「打开」）操作条；选中期间暂停自动跟随滚底，点外部取消选中且不弹键盘，点「复制」写入系统剪贴板并在顶栏副标题闪示「已复制」。纯逻辑单测：`test/term-select.test.mjs`。
+
 首屏可能比 `term.open` 的回复先到。页面在拿到流编号前先把输出存起来，拿到后再放（「终端会话状态机」的 `early`）。
 
 ## 终端会话状态机（2026-11-09）

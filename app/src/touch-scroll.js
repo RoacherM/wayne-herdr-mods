@@ -23,11 +23,18 @@
 import { FRICTION_PER_MS, MIN_SPEED, WHEEL_FRICTION_PER_MS, coastSteps, stepsGoOn } from '../../shared/coast.js';
 
 const AXIS_PX = 8; // movement before we decide vertical or sideways
+const LONG_PRESS_MS = 380;
 
-export function touchScroll(viewport, xterm, { outer = true, onTap = null, remoteCoast = null } = {}) {
-  let start = null;         // { x, y, axis, stopped }
+export function touchScroll(
+  viewport,
+  xterm,
+  { outer = true, onTap = null, onLongPress = null, onLongPressMove = null, onLongPressEnd = null, remoteCoast = null } = {},
+) {
+  let start = null;         // { x, y, axis, stopped, longPressed }
+  let lpTimer = 0;
   let lastY = 0, lastT = 0, speed = 0, carry = 0, coast = 0;
   let remoteUntil = 0;      // a coast on the Mac runs until then (performance.now())
+  const clearLongPress = () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = 0; } };
 
   const cellHeight = () => xterm._core?._renderService?.dimensions?.css?.cell?.height || xterm.options.fontSize * 1.2;
 
@@ -50,6 +57,7 @@ export function touchScroll(viewport, xterm, { outer = true, onTap = null, remot
   }
 
   function stopCoast() {
+    clearLongPress();
     cancelAnimationFrame(coast); coast = 0;
     if (remoteUntil > performance.now()) remoteCoast?.(0);
     remoteUntil = 0;
@@ -60,16 +68,31 @@ export function touchScroll(viewport, xterm, { outer = true, onTap = null, remot
     stopCoast();
     if (e.touches.length !== 1) { start = null; return; }
     const t = e.touches[0];
-    start = { x: t.clientX, y: t.clientY, axis: null, stopped };
+    start = { x: t.clientX, y: t.clientY, axis: null, stopped, longPressed: false };
     lastY = t.clientY; lastT = e.timeStamp; speed = 0; carry = 0;
+    if (onLongPress && !stopped) {
+      const cur = start;
+      lpTimer = setTimeout(() => {
+        lpTimer = 0;
+        if (start !== cur || cur.axis) return;
+        cur.longPressed = true;
+        onLongPress({ clientX: cur.x, clientY: cur.y });
+      }, LONG_PRESS_MS);
+    }
   }, { passive: true });
 
   viewport.addEventListener('touchmove', (e) => {
-    if (!start || e.touches.length !== 1) return;
+    if (!start || e.touches.length !== 1) { clearLongPress(); return; }
     const t = e.touches[0];
+    if (start.longPressed) {
+      e.preventDefault();
+      onLongPressMove?.({ clientX: t.clientX, clientY: t.clientY });
+      return;
+    }
     if (!start.axis) {
       const dx = Math.abs(t.clientX - start.x), dy = Math.abs(t.clientY - start.y);
       if (Math.max(dx, dy) < AXIS_PX) return;
+      clearLongPress();
       start.axis = dy > dx ? 'y' : 'x';
       lastY = t.clientY; lastT = e.timeStamp;
     }
@@ -82,7 +105,13 @@ export function touchScroll(viewport, xterm, { outer = true, onTap = null, remot
   }, { passive: false });
 
   viewport.addEventListener('touchend', (e) => {
-    if (start && !start.axis && !start.stopped && e.touches.length === 0) onTap?.();
+    clearLongPress();
+    if (start?.longPressed) {
+      start = null;
+      onLongPressEnd?.();
+      return;
+    }
+    if (start && !start.axis && !start.stopped && e.touches.length === 0) onTap?.({ clientX: start.x, clientY: start.y });
     if (!start || start.axis !== 'y') { start = null; return; }
     start = null;
     if (e.timeStamp - lastT > 80 || Math.abs(speed) < MIN_SPEED * 4) return; // finger rested before lifting
@@ -108,7 +137,7 @@ export function touchScroll(viewport, xterm, { outer = true, onTap = null, remot
     };
     coast = requestAnimationFrame(step);
   });
-  viewport.addEventListener('touchcancel', () => { start = null; });
+  viewport.addEventListener('touchcancel', () => { clearLongPress(); start = null; });
 
   return stopCoast;
 }
