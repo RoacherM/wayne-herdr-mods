@@ -226,6 +226,21 @@ iPhone 上的 Herdr App（网页版已停，2026-11-09）──wss /v1/client/<i
 
 真机：2026-11-03 在 iPhone 上的 **Chrome** 里打通，首页显示「已直连」。iPhone 上的 Chrome 也用 WebKit 引擎（苹果要求，欧盟以外），WebRTC 和 Safari 是同一套，所以 Safari 很可能也行，但没直接试过。蜂窝网络下能不能打通也没试过。
 
+### 局域网直连（原生 App，2026-11-24）
+
+原生 App（QuickJS）无 `RTCPeerConnection`，此前全部流量走海外 Cloudflare 中继（实测高峰期吞吐低至 ~7 KB/s，单次 `term.open` 含双份 400 行历史可达 145–183 KB，造成 5–28 秒排队卡顿）。
+
+- **架构（`host/lan-link.js` + `ios/src/lan-duo.ts`）**：
+  1. Mac 宿主启动零依赖本地 RFC 6455 WebSocket 服务（`0.0.0.0:0` 随机端口，`/v1/lan`，开启 `TCP_NODELAY`，最多 16 路连接，未认证连接 10 秒超时且满载时绝不驱逐已认证手机，过滤回环与 `.0`/`.255` 虚拟网段并优先 `en0`/`en1` Wi-Fi IP），连接 id 为 `lan:<n>`。
+  2. Mac 在已加密的 `ready` 帧里附带可选字段 `lan: ["ws://<ip>:<port>/v1/lan", ...]`；手机端同时把最近可用的 `lan` 缓存到 `Storage["herdr-relay"]`，冷启动时与中继并行竞速，同局域网下毫秒级直连。
+  3. 每条局域网连接在 `host/phones.js` 上运行**完全相同的 X25519 + XSalsa20-Poly1305 端到端加密握手与已配对设备认证**，不开放明文通道、不绕过白名单。
+  4. `LanDuo` 维护「局域网直连 + 中继热备」双通道：直连就绪后立刻切换并通知中继 `link.idle`；走出 Wi-Fi（切 5G）直连断开时毫秒级无缝退回中继，并在回到前台或退避周期后自动重试局域网直连。
+  5. iOS 宿主（`ios/host/project.yml`）声明 `NSAppTransportSecurity.NSAllowsLocalNetworking = true`（公网仍强制 HTTPS/WSS）与 `NSLocalNetworkUsageDescription`。
+- **协议兼容**：
+  - **旧手机 + 新宿主**：忽略 `ready.lan`，照常走中继。
+  - **新手机 + 旧宿主**：无 `ready.lan`，照常走中继。
+- **同步减负（同时加速中继/5G 场景）**：`host/phones.js` 将首屏历史 `HISTORY_LINES` 从 400 行收敛至 150 行（首屏流量降约 62%）；`reprint()` 在首次捕获后立即清掉 `stream.resizedAt`，避免缩放重印结束后正常 `agy` 的 `ESC[2J` 帧被误扣 1 秒；`ios/term/term.js` 停发每 500 ms 一次的常规 `reason: "sync"` 日志，不再与终端字节争抢上行通道。
+
 ## 安全
 
 - 配对过的手机能往终端打字，权限等于这台 Mac 的 shell。所以必须配对确认，设备可以单独移除，状态文件权限 0600（`~/.config/wayne-herdr-mods/state.json`）。

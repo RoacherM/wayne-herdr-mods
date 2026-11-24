@@ -14,6 +14,7 @@ import { createAskSamples } from './ask-samples.js';
 import { createFiles } from './files.js';
 import { createNotifier } from './notify.js';
 import { createPairing } from './pairing.js';
+import { createLanLink } from './lan-link.js';
 import { createMetricsStore } from './metrics.js';
 import { createPhones } from './phones.js';
 import { createPush } from './push.js';
@@ -55,8 +56,14 @@ export async function startService({ relayUrl = process.env.WAYNE_HERDR_MODS_URL
   let voiceShown = keyTail(initialVoiceKey); // what status shows of the key; read once, then on each change
   const files = createFiles({ dir: state.dir, terminals, log });
   const metrics = createMetricsStore({ dir: state.dir });
-  // Two kinds of connection carry phones: through the relay, and direct (WebRTC, `rtc:<n>`).
-  const via = (cid) => (String(cid).startsWith('rtc:') ? rtc : link);
+  // Three kinds of connection carry phones: relay, WebRTC (`rtc:<n>`), and local LAN (`lan:<n>`).
+  let lan = null;
+  const via = (cid) => {
+    const s = String(cid);
+    if (s.startsWith('lan:') && lan) return lan;
+    if (s.startsWith('rtc:')) return rtc;
+    return link;
+  };
   const links = { send: (cid, data) => via(cid).send(cid, data), close: (cid, reason) => via(cid).close(cid, reason) };
   const rtc = createRtcLink({
     log,
@@ -64,7 +71,18 @@ export async function startService({ relayUrl = process.env.WAYNE_HERDR_MODS_URL
     onData: (cid, data) => { phones.data(cid, data).catch((error) => log(`wayne-herdr-mods: ${error.stack ?? error.message}`)); },
     onClose: (cid) => phones.close(cid),
   });
-  phones = createPhones({ state, pairing, push, terminals, voice, files, metrics, link: () => links, rtc, log, onChange: changed });
+  try {
+    lan = await createLanLink({
+      log,
+      onOpen: (cid) => phones?.open(cid),
+      onData: (cid, data) => { phones?.data(cid, data).catch((error) => log(`wayne-herdr-mods: ${error.stack ?? error.message}`)); },
+      onClose: (cid) => phones?.close(cid),
+      isAuthed: (cid) => phones?.isReady(cid) ?? false,
+    });
+  } catch (error) {
+    log(`wayne-herdr-mods: [lan] 监听失败（已退回中继）：${error.message}`);
+  }
+  phones = createPhones({ state, pairing, push, terminals, voice, files, metrics, link: () => links, rtc, lan, log, onChange: changed });
   link = createRelayLink({
     relayUrl, desktopId, signKeys: state.signKeys, log,
     onOpen: (cid) => phones.open(cid),
@@ -78,7 +96,7 @@ export async function startService({ relayUrl = process.env.WAYNE_HERDR_MODS_URL
     desktopId,
     relayUrl,
     relay: link.status(),
-    direct: rtc.count(),
+    direct: rtc.count() + (lan?.count() ?? 0),
     core: terminals.state(),
     terminals: terminals.list().length,
     pairing: pairing.view(),
@@ -168,6 +186,7 @@ export async function startService({ relayUrl = process.env.WAYNE_HERDR_MODS_URL
       clearInterval(wakeTimer);
       link.dispose();
       rtc.dispose();
+      lan?.dispose();
       terminals.dispose();
       server.close();
       await rm(sockPath, { force: true });

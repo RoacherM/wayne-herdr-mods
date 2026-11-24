@@ -34,8 +34,10 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
         INFOPLIST_KEY_NSMicrophoneUsageDescription: 按住说话时录音，转成文字输入到终端。
         INFOPLIST_KEY_NSCameraUsageDescription: 扫描 Mac 上的配对二维码。
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: 连接同一局域网下的 Mac，加速终端同步。
     info:
       path: Sources/Info.plist
       properties:
         CADisableMinimumFrameDurationOnPhone: true     # 120 Hz on ProMotion iPhones
         UIApplicationSceneManifest: { UIApplicationSupportsMultipleScenes: false }
+        NSAppTransportSecurity: { NSAllowsLocalNetworking: true }

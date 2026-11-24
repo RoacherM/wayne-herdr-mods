@@ -8,7 +8,7 @@ declare module "*/shared/e2e.js" {
 }
 declare module "*/app/src/link.js" {
   export class Link extends EventTarget {
-    constructor(options: { relay: string; desktopId: string; desktopKey: string; deviceKeys: { publicKey: Uint8Array; secretKey: Uint8Array }; pair?: { token: string; name: string }; timeouts?: object });
+    constructor(options: { relay?: string; desktopId?: string; desktopKey: string | Uint8Array; deviceKeys: { publicKey: Uint8Array; secretKey: Uint8Array }; pair?: { token: string; name: string }; timeouts?: object; socket?: () => any });
     status: string;
     info: any;
     rpc(m: string, p?: object, timeoutMs?: number): Promise<any>;

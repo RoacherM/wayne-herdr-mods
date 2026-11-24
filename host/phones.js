@@ -26,7 +26,7 @@ import { createUploads } from './uploads.js';
 import { MAX_BYTES as MAX_VOICE_BYTES } from './voice.js';
 
 const MAX_STREAMS = 4; // per phone
-const HISTORY_LINES = 400; // scrollback sent with the first paint
+const HISTORY_LINES = 150; // scrollback sent with the first paint (keeps relay opens snappy)
 const OUT_MERGE_MS = 4; // terminal output merged this long into one message
 // A program printing its whole history again (reprint()): up to this, sent as it is; beyond, the
 // view attaches again for a fresh paint once the program has been quiet this long (at most MAX).
@@ -74,7 +74,7 @@ function logStream(log, peer, ev, fields) {
   log(`wayne-herdr-mods: [phone:${devName}] ${ev} ${kv}`);
 }
 
-export function createPhones({ state, pairing, push, terminals, voice, files, metrics, link: getLink, rtc, log = () => {}, onChange = () => {} }) {
+export function createPhones({ state, pairing, push, terminals, voice, files, metrics, link: getLink, rtc, lan, log = () => {}, onChange = () => {} }) {
   const fileBrowser = files ?? (state?.dir ? createFiles({ dir: state.dir, terminals, log }) : null);
   const peers = new Map(); // cid → peer
   let nextStream = 1;
@@ -197,6 +197,7 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
       type: 'ready', paired, deviceId: device.id, deviceName: device.name, desktopName: state.desktopName,
       vapidPublicKey: push.publicKey, hasPush: Boolean(device.push), voice: voiceOn,
       keys: true, // term.press: keys by name (DESIGN.md「每个 agent 的快捷键」)
+      ...(lan ? { lan: lan.endpoints() } : {}),
     });
   }
 
@@ -229,7 +230,7 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
     const id = nextStream++;
     const stream = { id, address, core, device: peer.device?.id, channel: null, typer: null, fit, sized: false, cols: t.cols, rows: t.rows, resizedAt: fit && lead ? Date.now() : null, out: [], outW: null, outTimer: null, awaitingPaint: 'open', lastLargeLogAt: 0, stopped: false };
     // Scrolling, as the Mac sees it (scroll-watch.js), to the same records as the phone's.
-    const via = String(peer.cid).startsWith('rtc:') ? 'direct' : 'relay';
+    const via = /^(?:rtc|lan):/.test(String(peer.cid)) ? 'direct' : 'relay';
     stream.record = (e) => metrics?.put(peer.device, { ctx: { src: 'mac' }, events: [{ t: Date.now(), via, ...e }] }).catch(() => {});
     stream.watch = scrollWatch({ record: stream.record });
     stream.flush = () => {
@@ -366,11 +367,12 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
       const buf = tail.length ? Buffer.concat([tail, bytes]) : bytes;
       let found = buf.indexOf(CLEAR_SCROLLBACK);
       // Right after a resize, some agents clear the screen (ESC[2J) in a separate chunk before
-      // ESC[3J + full reprint; hold that clear too (never catching herdr-core's own PAINT).
+      // ESC[3J + full reprint; hold that clear once (never catching herdr-core's own PAINT).
       if (found < 0 && stream.resizedAt !== null && Date.now() - stream.resizedAt <= RESIZE_CLEAR_WINDOW_MS && !buf.includes(PAINT_BYTES)) {
         found = buf.indexOf(CLEAR_SCREEN);
       }
       if (found < 0) return false;
+      stream.resizedAt = null;
       // From the clear of the screen before it (ESC[?2026h ESC[H ESC[2J ESC[3J): the old screen stays until the end.
       let at = Math.max(0, found - tail.length);
       for (const p of SCREEN_CLEARS) if (at >= p.length && bytes.subarray(at - p.length, at).equals(p)) at -= p.length;
@@ -416,6 +418,7 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
     } catch {}
     if (stream.stopped) { if (reply) stream.core.release(reply.channel); return; }
     stream.reprint = null;
+    stream.resizedAt = null;
     if (!reply) { stream.stop('closed'); return; } // the terminal is gone: the phone opens it again or says so
     stream.channel = reply.channel;
     stream.sized = reply.resize_notifications === true;
@@ -794,6 +797,7 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
 
   return {
     open, close, data, broadcast, online, coreChanged, revoke,
+    isReady: (cid) => peers.get(cid)?.stage === 'ready',
     connected: () => [...peers.values()].filter((peer) => peer.stage === 'ready').map((peer) => ({ deviceId: peer.device.id, streams: [...peer.streams.values()].map((s) => s.address) })),
   };
 }

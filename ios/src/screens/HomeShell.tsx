@@ -1,7 +1,7 @@
 import { computed, effect, lifecycle, safeArea, Scroll, signal, Text, View } from "nsh";
 import { AlertDialog, Button, Input, NavPage } from "nsh/base";
 import {
-  addingMac, consumePendingNotificationTap, desktops, disableNotifications, enableNotifications,
+  addingMac, connVia, consumePendingNotificationTap, desktops, disableNotifications, enableNotifications,
   forget, info, list, macStatuses, notifyEnabled, notifyPermission, paired, problem, refresh,
   refreshNotifyStatus, rpc, sendTestNotification, status, switchDesktop,
   type Saved, type Space, type Terminal,
@@ -435,11 +435,11 @@ export function HomeShell(props: {
                     testID="settings-appearance"
                   />
                 ) : null}
-                {matchSetting("中继 服务 地址") ? (
+                {matchSetting("中继 直连 通道") ? (
                   <SettingsRow
                     icon={globeIcon}
-                    label="中继服务"
-                    value={(paired()?.relay ?? "—").replace(/^https?:\/\//, "")}
+                    label="连接通道"
+                    value={connVia() === "direct" ? "局域网直连" : (paired()?.relay ?? "中继").replace(/^https?:\/\//, "")}
                     showChevron={false}
                   />
                 ) : null}

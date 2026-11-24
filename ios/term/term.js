@@ -154,12 +154,11 @@ function inspectFrame(bytes, fresh, hasPaint) {
   const hasAlt = indexOf(bytes, ALT_ON) >= 0 ? 'alt_on' : (indexOf(bytes, ALT_OFF) >= 0 ? 'alt_off' : '');
   const stateReason = expectFrame || (fresh ? 'fresh' : hasPaint ? 'paint' : hasClear ? 'clear' : hasAlt);
   if (stateReason) return { reason: stateReason, hasClear, hasSyncOn, hasSyncOff };
-  const routine = hasSyncOn || hasSyncOff ? 'sync' : (bytes.length >= 4096 ? 'large' : '');
-  if (routine) {
+  if (bytes.length >= 32768) {
     const now = performance.now();
     if (now - lastRoutineFrameAt >= ROUTINE_FRAME_MIN_MS) {
       lastRoutineFrameAt = now;
-      return { reason: routine, hasClear, hasSyncOn, hasSyncOff };
+      return { reason: 'large', hasClear, hasSyncOn, hasSyncOff };
     }
   }
   return { reason: '', hasClear, hasSyncOn, hasSyncOff };

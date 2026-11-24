@@ -464,3 +464,52 @@ test('ios ws-queue: QueuedWebSocket serializes bursts, reads messages, and handl
   await tick();
   assert.deepEqual(reClose, { code: 1006, reason: 'eof reset' });
 });
+
+test('ios conn: LanDuo promotes LAN direct socket, idles relay, and falls back on LAN drop', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const D = newBoxKeys();
+  const { conn, ws: relayWs, done } = await booted(D);
+  t.after(() => { for (const s of FakeSocket.all) s.onclose?.(); return done(); });
+
+  relayWs.onmessage({ data: '\u0000online' });
+  const relayDesk = desktopAccept(D, relayWs.sent.at(-1));
+  relayWs.onmessage({ data: relayDesk.welcome });
+  relayWs.onmessage({
+    data: relayDesk.cipher.seal({
+      type: 'ready',
+      desktopName: 'Mac',
+      deviceId: 'p1',
+      paired: false,
+      lan: ['ws://192.168.1.9:54321/v1/lan'],
+    }),
+  });
+  await Promise.resolve();
+  assert.equal(conn.connVia(), 'relay');
+
+  // LanDuo schedules LAN probe 100ms after relay ready
+  t.mock.timers.tick(120);
+  const lanWs = FakeSocket.all.find((s) => s.url === 'ws://192.168.1.9:54321/v1/lan');
+  assert.ok(lanWs, 'LanDuo dialed advertised LAN endpoint');
+
+  // Complete E2E handshake directly on LAN socket (no \0online relay frame)
+  lanWs.open();
+  const lanDesk = desktopAccept(D, lanWs.sent.at(-1));
+  lanWs.onmessage({ data: lanDesk.welcome });
+  lanWs.onmessage({
+    data: lanDesk.cipher.seal({ type: 'ready', desktopName: 'Mac', deviceId: 'p1', paired: false }),
+  });
+  for (let i = 0; i < 6; i++) await Promise.resolve();
+
+  assert.equal(conn.connVia(), 'direct', 'connVia promoted to direct LAN');
+  const relayPlain = relayWs.sent
+    .slice(1)
+    .map((f) => { try { return relayDesk.cipher.open(f); } catch { return null; } })
+    .filter(Boolean);
+  assert.ok(relayPlain.some((m) => m.m === 'link.idle'), 'relay notified link.idle when LAN took over');
+
+  // LAN drops (walking onto 5G) -> instantaneously falls back to warm relay
+  lanWs.onclose({ code: 1006, reason: 'network' });
+  await Promise.resolve();
+  assert.equal(conn.connVia(), 'relay', 'fell back to relay immediately on LAN drop');
+  assert.equal(conn.status(), 'ready', 'warm relay stayed ready');
+});

@@ -36,7 +36,7 @@ let resumeState: { t0: number; away: number; ready?: number; armed: boolean; tim
 let hiddenAt: number | null = null;
 
 function mark(ev: string, data: Record<string, any> = {}) {
-  queue.push({ t: Date.now(), ev, via: "relay", ...data });
+  queue.push({ t: Date.now(), ev, via: activeLink?.via === "direct" ? "direct" : "relay", ...data });
   if (queue.length > KEEP) queue.splice(0, queue.length - KEEP);
 }
 

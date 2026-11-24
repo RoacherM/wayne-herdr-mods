@@ -8,6 +8,7 @@ import "./shim";
 import { batch, effect, host, lifecycle, signal, Storage } from "nsh";
 import { b64, boxKeysFromSecret, decodePairLink, newBoxKeys, unb64 } from "../../shared/e2e.js";
 import { Link } from "../../app/src/link.js";
+import { LanDuo } from "./lan-duo";
 import { initIosMetrics, onAppLifecycle, resetIosMetrics, watchActiveLink } from "./metrics";
 export { flushMetrics, recordOp, termDrawn, termOpening, termOutputArrived, termRpcOpened, termTyped, termWebReady } from "./metrics";
 
@@ -18,10 +19,11 @@ export type Terminal = {
 };
 export type Space = { id: string; name?: string; folder?: string; tabs: { id: string; name?: string; terminals: string[] }[] };
 export type List = { core?: string; terminals: Terminal[]; layout: Space[]; icons?: Record<string, any> };
-export type Saved = { relay: string; desktopId: string; desktopKey: string; desktopName?: string; deviceSecret: string; pairedAt?: number };
+export type Saved = { relay: string; desktopId: string; desktopKey: string; desktopName?: string; deviceSecret: string; pairedAt?: number; lan?: string[] };
 
 const KEY = "herdr-relay";
 export const status = signal<string>("idle"); // idle | connecting | offline | ready | error
+export const connVia = signal<"direct" | "relay">("relay");
 export const macStatuses = signal<Record<string, string>>({}); // desktopId -> status
 export const problem = signal<string>("");
 export const sas = signal<string>("");
@@ -507,21 +509,38 @@ function start(saved: Saved, pair?: { token: string; name: string }) {
   link?.close();
   problem.set("");
   sas.set("");
-  const l = new Link({
+  connVia.set("relay");
+  const relayLink = new Link({
     relay: saved.relay,
     desktopId: saved.desktopId,
     desktopKey: saved.desktopKey,
     deviceKeys: boxKeysFromSecret(unb64(saved.deviceSecret)),
     pair,
   });
+  const l = pair
+    ? relayLink
+    : new LanDuo(relayLink, {
+        cachedLan: saved.lan,
+        onLanUrls(urls) {
+          const cur = paired();
+          if (!cur || cur.desktopId !== saved.desktopId) return;
+          const next = { ...cur, lan: urls };
+          saveAll(next, upsertDesktop(next)).catch(() => {});
+        },
+      });
   link = l;
   watchActiveLink(l);
   console.log(`link: start ${pair ? "pairing" : "resume"} → ${saved.relay} desktop ${saved.desktopId}`);
   l.addEventListener("status", (e: any) => {
     if (link === l) {
-      batch(() => { status.set(e.detail.status); if (e.detail.status === "ready") linkEpoch.set(linkEpoch() + 1); });
-      if (e.detail.status === "ready" || e.detail.status === "connecting") problem.set("");
-      setMacStatus(saved.desktopId, e.detail.status);
+      const nextStatus = e.detail?.status ?? l.status;
+      batch(() => {
+        status.set(nextStatus);
+        connVia.set((l as any).via === "direct" ? "direct" : "relay");
+        if (nextStatus === "ready") linkEpoch.set(linkEpoch() + 1);
+      });
+      if (nextStatus === "ready" || nextStatus === "connecting") problem.set("");
+      setMacStatus(saved.desktopId, nextStatus);
     }
   });
   l.addEventListener("confirm", (e: any) => {
@@ -530,18 +549,35 @@ function start(saved: Saved, pair?: { token: string; name: string }) {
   l.addEventListener("ready", async (e: any) => {
     if (link !== l) return;
     const r = e.detail;
+    const via = (l as any).via === "direct" ? "direct" : "relay";
     setMacStatus(saved.desktopId, "ready");
-    batch(() => { info.set(r); sas.set(""); problem.set(""); addingMac.set(false); });
-    const updated: Saved = { ...saved, desktopName: r.desktopName || saved.desktopName, pairedAt: saved.pairedAt ?? Date.now() };
+    batch(() => {
+      connVia.set(via);
+      info.set(r);
+      sas.set("");
+      problem.set("");
+      addingMac.set(false);
+    });
+    const lanList = Array.isArray(r.lan) ? r.lan : saved.lan;
+    const updated: Saved = {
+      ...saved,
+      desktopName: r.desktopName || saved.desktopName,
+      pairedAt: saved.pairedAt ?? Date.now(),
+      ...(lanList?.length ? { lan: lanList } : { lan: undefined }),
+    };
     const all = upsertDesktop(updated);
-    if (pair || saved.desktopName !== r.desktopName || !paired()) {
+    if (pair || saved.desktopName !== r.desktopName || !paired() || JSON.stringify(saved.lan ?? []) !== JSON.stringify(lanList ?? [])) {
       await saveAll(updated, all);
     } else {
       syncBackgroundLinks(updated.desktopId, all);
     }
     refresh();
     flushPendingLogs();
-    clientLog("info", "link.ready", { desktopId: saved.desktopId, desktopName: updated.desktopName });
+    clientLog("info", "link.ready", { desktopId: saved.desktopId, desktopName: updated.desktopName, via });
+    // After pairing succeeds on plain relayLink, upgrade to LanDuo right away if Mac advertised LAN.
+    if (pair && lanList?.length) {
+      start(updated);
+    }
   });
   l.addEventListener("fatal", async (e: any) => {
     if (link !== l) return;

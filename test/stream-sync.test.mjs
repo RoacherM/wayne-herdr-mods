@@ -121,4 +121,11 @@ test('post-resize ESC[2J clear before ESC[3J reprint is held instead of flushing
   // Dropped and reattached for fresh paint — never forwarded the blank ESC[2J frame
   assert.equal(getAttachCalls(), beforeReattach + 1, 'reprint should reattach view channel for fresh paint');
   assert.equal(rx.filter((m) => m.ev === 'out').length, 0, 'dropped reprint must not leak blank ESC[2J frame');
+
+  // After endReprint finishes, normal agent ESC[2J screen redraws must flush immediately (not held 1000ms)
+  const freshViewCh = [...handlers.keys()].at(-1);
+  const freshView = handlers.get(freshViewCh);
+  freshView.onData(Buffer.from('\x1b[?2026h\x1b[H\x1b[2Jlive redraw\x1b[?2026l'));
+  t.mock.timers.tick(10);
+  assert.equal(rx.filter((m) => m.ev === 'out').length, 1, 'post-reprint normal ESC[2J redraw must not be held');
 });
