@@ -61,8 +61,6 @@ test('roots, list, path sandboxing, text/image/video open and 64KB slice streami
     assert.equal(byTermRoot.rootName, 'workspace');
     assert.equal(byTermRoot.items.length, 2);
     assert.ok(byTermRoot.marks && typeof byTermRoot.marks === 'object');
-    const panelRes = await files.panel({ rootId: 'term:t1', address: 't1', open: true });
-    assert.equal(panelRes.ok, true);
 
     // 2. Directory listing (folders first, hides .git, .DS_Store, and outside symlinks)
     const rootList = await files.list({ rootId: 'term:t1', path: '' });

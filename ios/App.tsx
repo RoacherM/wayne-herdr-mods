@@ -22,15 +22,12 @@ import chevronDownIcon from "./assets/chevron-down.svg";
 import chevronIcon from "./assets/chevron.svg";
 import docIosIcon from "./assets/doc-ios.png";
 import downIcon from "./assets/down.svg";
-import fileTextIcon from "./assets/file-text.svg";
 import folderIosIcon from "./assets/folder-ios.png";
-import folderWhiteIcon from "./assets/folder-white.png";
 import folderIcon from "./assets/folder.svg";
 import gearIcon from "./assets/gear.svg";
 import herdrIcon from "./assets/herdr-icon.png";
 import kbdIcon from "./assets/kbd.svg";
 import photoIosIcon from "./assets/photo-ios.png";
-import photoIcon from "./assets/photo.svg";
 import plusIcon from "./assets/plus.svg";
 import scanIcon from "./assets/scan.svg";
 import spinnerIcon from "./assets/spinner.svg";
@@ -680,20 +677,13 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 function TermScreen(props: { address: string }) {
   const address = props.address;
   const term = computed(() => list().terminals.find((t) => t.address === address));
-  const blocked = computed(() => term()?.state === "blocked");
-  const cursorHidden = signal(true);
   const appCursor = signal(false);
-  const letGo = signal(false);
-  const held = computed(() => blocked() && cursorHidden() && !letGo());
   const atLatest = signal(true);
   const notice = signal("");
   const burst = signal("");
-  const pending = signal("");
-  const composing = signal("");
   const focused = signal(false);
   const uploading = signal("");
   const voiceState = signal<"" | "rec" | "busy">("");
-  const voiceLevel = signal(0);
   const voiceLeftSec = signal(60);
   const mods = signal<string[]>([]);
   const litKey = signal("");
@@ -702,13 +692,16 @@ function TermScreen(props: { address: string }) {
   let repeatDelay: any = 0;
   let repeatEvery: any = 0;
   let didRepeat = false;
-  let voiceMeterTimer: any = 0;
+  let voiceTickTimer: any = 0;
   let voiceLimitTimer: any = 0;
   // Open once the page says {t:'ready', fit} (~300–450 ms on a phone for the 400 KB page), so
   // term.open carries the phone's grid. This only covers a page that never says it.
   const mountedAt = Date.now();
   termOpening(address, false);
-  let bootTimer: any = setTimeout(() => webReady.set(true), PAGE_READY_FALLBACK_MS);
+  let bootTimer: any = setTimeout(() => {
+    clientLog("warn", "term.ready_timeout", { address, ms: PAGE_READY_FALLBACK_MS });
+    webReady.set(true);
+  }, PAGE_READY_FALLBACK_MS);
 
   let field!: InputRef;
   let web!: WebViewRef;
@@ -736,7 +729,10 @@ function TermScreen(props: { address: string }) {
         rpc("term.open", e.p).then((r: any) => { termRpcOpened(Date.now() - openT0); ses.send({ type: "opened", r, epoch }); },
           (err: any) => ses.send({ type: "openFailed", message: err?.message ?? String(err), epoch }));
       } else if (e.type === "rpc") rpc(e.m, e.p).catch(() => {});
-      else if (e.type === "notify" && e.m === "term.fit") notify(e.m, e.p);
+      else if (e.type === "notify" && e.m === "term.fit") {
+        clientLog("info", "term.fit_tx", { address, s: e.p?.s, fit: e.p?.fit ?? null });
+        notify(e.m, e.p);
+      }
       else if (e.type === "notify") typed(e);
       else if (e.type === "view") post(e.msg.t === "out" ? { t: "out", d: e.msg.d, fresh: e.msg.fresh } : e.msg);
       else if (e.type === "notice") notice.set(e.text);
@@ -767,10 +763,12 @@ function TermScreen(props: { address: string }) {
     session.send({ type: "input", m: "term.input", p: { d }, after });
   }
   const line = new LiveLine((d) => out(d));
-  const sync = () => { burst.set(line.value); pending.set(line.pending); };
+  const sync = () => { burst.set(line.value); };
 
   const onStream = (msg: any) => {
     if (msg.ev === "out") termOutputArrived();
+    else if (msg.ev === "size") clientLog("info", "term.size_ev", { address, s: msg.s, cols: msg.cols, rows: msg.rows });
+    else if (msg.ev === "closed") clientLog("info", "term.closed_ev", { address, s: msg.s, reason: msg.reason ?? null, exitCode: msg.exitCode ?? null });
     session.send({ type: "stream", msg });
   };
 
@@ -786,12 +784,13 @@ function TermScreen(props: { address: string }) {
   });
   effect(() => { if (webReady()) session.send({ type: "view" }); });
   effect(() => { const t = term(); const st = session.state; if (t && st.opened && !st.sized) post({ t: "size", cols: t.cols, rows: t.rows }); });
-  effect(() => { if (!blocked()) letGo.set(false); });
-  effect(() => { line.hold(held()); sync(); });
   effect(() => {
     const st = lifecycle();
-    if (st === "active") session.send({ type: "away", on: false });
-    else if (st === "background") session.send({ type: "away", on: true });
+    if (st === "active" || st === "background") {
+      const on = st === "background";
+      clientLog("info", "term.away", { address, s: sid(), on, fit: session.state.fit ?? null, phase: session.state.phase });
+      session.send({ type: "away", on });
+    }
   });
   cleanup(() => {
     clientLog("info", "term.cleanup", { address, s: sid() });
@@ -799,7 +798,7 @@ function TermScreen(props: { address: string }) {
     clearTimeout(bootTimer);
     clearTimeout(litTimer);
     stopRepeat();
-    clearInterval(voiceMeterTimer);
+    clearInterval(voiceTickTimer);
     clearTimeout(voiceLimitTimer);
     clearStreamListener(onStream);
     voice.send({ type: "dispose" });
@@ -825,7 +824,6 @@ function TermScreen(props: { address: string }) {
     } else if (m.t === "drawn") {
       termDrawn();
       clearLit();
-      cursorHidden.set(Boolean(m.cursorHidden));
       appCursor.set(Boolean(m.appCursor));
     } else if (m.t === "atLatest") {
       atLatest.set(Boolean(m.on));
@@ -837,6 +835,9 @@ function TermScreen(props: { address: string }) {
       else notify("term.coast", { s: sid(), d: m.d, v: m.v, cell: m.cell });
     } else if (m.t === "tap") {
       field.focus();
+    } else if (m.t === "diag" && typeof m.ev === "string") {
+      const { t: _t, ev, ...rest } = m;
+      clientLog("info", ev, { address, s: sid(), ...rest });
     } else if (m.t === "log") {
       console.warn(`term page: ${m.m}`);
     }
@@ -865,7 +866,6 @@ function TermScreen(props: { address: string }) {
   }
 
   async function pasteFromClipboard() {
-    if (held()) { notice.set("先回答终端里的问题，再粘贴（或点气泡直接打字）"); return; }
     try {
       if (await Clipboard.hasImage()) {
         const img = await Clipboard.readImage();
@@ -919,7 +919,7 @@ function TermScreen(props: { address: string }) {
 
   function send() {
     if (mods().length && named()) { pressNamed(combo(new Set(mods()), "enter"), "⏎"); return; }
-    if (!line.submit()) { notice.set("先回答终端里的问题（1 / 2 / 3、⏎ 或 Esc），刚打的字随后会进去"); return; }
+    line.submit();
     notice.set("");
     sync();
   }
@@ -935,7 +935,6 @@ function TermScreen(props: { address: string }) {
   }
 
   async function pick() {
-    if (held()) { notice.set("先回答终端里的问题，再插图片"); return; }
     try {
       const got = await Picker.pickImages({ multiple: true, limit: 6, maxDimension: 2048, quality: 0.85 });
       for (const [i, g] of got.entries()) {
@@ -951,9 +950,9 @@ function TermScreen(props: { address: string }) {
   // ---- Hold-to-talk voice input (AVAudioRecorder → Mac Volcengine flash ASR)
   let recStartedAt = 0;
   function clearVoiceTimers() {
-    clearInterval(voiceMeterTimer);
+    clearInterval(voiceTickTimer);
     clearTimeout(voiceLimitTimer);
-    voiceMeterTimer = voiceLimitTimer = 0;
+    voiceTickTimer = voiceLimitTimer = 0;
   }
 
   // The press/release race is decided by the pure reducer app/src/voice-hold.js
@@ -976,25 +975,19 @@ function TermScreen(props: { address: string }) {
       })();
     } else if (e === "recording") {
       recStartedAt = Date.now();
-      voiceLevel.set(0.1);
       voiceLeftSec.set(60);
       tapHaptic();
-      voiceMeterTimer = setInterval(async () => {
+      voiceTickTimer = setInterval(() => {
         if (voice.state.phase !== "rec") return;
-        const left = Math.max(0, Math.ceil((MAX_VOICE_MS - (Date.now() - recStartedAt)) / 1000));
-        voiceLeftSec.set(left);
-        try {
-          const r = await host.call<{ level: number }>("voice.level");
-          if (typeof r?.level === "number") voiceLevel.set(r.level);
-        } catch {}
-      }, 90);
+        voiceLeftSec.set(Math.max(0, Math.ceil((MAX_VOICE_MS - (Date.now() - recStartedAt)) / 1000)));
+      }, 500);
       voiceLimitTimer = setTimeout(() => voice.send({ type: "release" }), MAX_VOICE_MS);
     } else if (e === "finish") {
       clearVoiceTimers();
       const elapsed = Date.now() - recStartedAt;
       if (elapsed < 400) {
         host.call("voice.cancel").catch(() => {});
-        notice.set("按住说话，松开输入");
+        notice.set("按住说话");
         voice.send({ type: "done" });
         return;
       }
@@ -1002,7 +995,7 @@ function TermScreen(props: { address: string }) {
       (async () => {
         try {
           const res = await host.call<{ data: string; mime: string }>("voice.stop");
-          if (!res?.data) { notice.set("没录到声音，请再说一次"); return; }
+          if (!res?.data) { notice.set("没录到声音"); return; }
           const { text } = await transcribeAudio(res.data, res.mime || "audio/mp4", address);
           if (text) {
             tapHaptic();
@@ -1010,10 +1003,10 @@ function TermScreen(props: { address: string }) {
             line.set(line.value + sep + text);
             sync();
           } else {
-            notice.set("没听清，请再说一次");
+            notice.set("没听清");
           }
         } catch (err: any) {
-          notice.set(`语音识别失败：${err.message}`);
+          notice.set(`识别失败：${err.message}`);
         } finally {
           voice.send({ type: "done" });
         }
@@ -1022,41 +1015,26 @@ function TermScreen(props: { address: string }) {
       clearVoiceTimers();
       try { host.call("voice.cancel").catch(() => {}); } catch {}
     } else if (e === "hint") {
-      notice.set("按住说话，松开输入");
+      notice.set("按住说话");
     }
   }
 
   const title = computed(() => { const t = term(); return t ? t.app || t.program || address : address; });
   const subtitle = computed(() => {
+    if (uploading()) return `上传图片 ${uploading()}…`;
+    if (notice()) return notice();
     const t = term();
     if (!t) return address;
     const st = t.state === "blocked" ? (KIND_TEXT[t.kind ?? ""] ?? STATE_TEXT.blocked) : STATE_TEXT[t.state ?? ""];
     return [t.where || base(t.cwd) || address, st].filter(Boolean).join(" · ");
   });
 
-  // Floating status bubble at the bottom of the terminal stage, matching .term-bubble in app/src/main.js
-  const bubble = computed(() => {
-    if (voiceState() === "rec") {
-      const left = voiceLeftSec();
-      return {
-        text: left <= 10 ? `还剩 ${left} 秒 · 松开 输入` : "松开 输入 · 点气泡取消",
-        warn: false,
-        tap: "cancel-voice" as const,
-        level: voiceLevel(),
-        busy: false,
-      };
-    }
-    if (voiceState() === "busy") return { text: "识别中…", warn: false, tap: null, level: undefined, busy: true };
-    if (uploading()) return { text: `上传图片 ${uploading()}…`, warn: false, tap: null, level: undefined, busy: false };
-    if (composing()) return { text: composing(), warn: false, tap: null, level: undefined, busy: false };
-    if (held() && pending()) return { text: `等你回答后输入：${pending()} · 点这里照样输入`, warn: true, tap: "let-go" as const, level: undefined, busy: false };
-    if (pending()) return { text: `等你回答后输入：${pending()}`, warn: true, tap: null, level: undefined, busy: false };
-    if (held()) return { text: "终端在问你 · 点这里照样打字", warn: true, tap: "let-go" as const, level: undefined, busy: false };
-    if (notice()) return { text: notice(), warn: true, tap: "dismiss" as const, level: undefined, busy: false };
-    return null;
-  });
-
   const voiceOk = computed(() => Boolean(info()?.voice) && host.available());
+  const voiceLabel = computed(() => {
+    if (voiceState() === "rec") return voiceLeftSec() <= 10 ? `松开 输入 · ${voiceLeftSec()}s` : "松开 输入";
+    if (voiceState() === "busy") return "识别中…";
+    return "按住 说话";
+  });
 
   return (
     <NavPage
@@ -1083,10 +1061,14 @@ function TermScreen(props: { address: string }) {
               </Button>
             </View>
 
-            <View class="flex-1 items-center justify-center gap-0.5 px-1" accessibilityLabel={title()}>
+            <Button
+              onPress={() => { if (notice()) notice.set(""); }}
+              class="flex-1 items-center justify-center gap-0.5 px-1"
+              accessibilityLabel={title()}
+            >
               <ProgIcon t={term()} size={20} dark />
-              <Text class="w-full text-center text-xs text-term-muted" style={{ numberOfLines: 1 }}>{subtitle()}</Text>
-            </View>
+              <Text class={`w-full text-center text-xs ${notice() && !uploading() ? "text-[#f5a623]" : "text-term-muted"}`} style={{ numberOfLines: 1 }}>{subtitle()}</Text>
+            </Button>
 
             <View class="w-[100px] flex-row items-center justify-end gap-1">
               <Button
@@ -1111,36 +1093,9 @@ function TermScreen(props: { address: string }) {
           </View>
         </View>
 
-        {/* Terminal stage + floating status bubble + scroll-to-latest button */}
+        {/* Terminal stage + scroll-to-latest button */}
         <View class="relative flex-1 bg-[#0b0b0c]">
           <WebView ref={web} html={TERM_HTML} style={{ flex: 1 }} scrollable={false} onMessage={(e) => fromPage(e.data)} testID="term-web" />
-          <If when={bubble()}>
-            {(b) => (
-              <View class="absolute inset-x-4 bottom-3 items-center" style={{ pointerEvents: "box-none" }}>
-                <Button
-                  onPress={() => {
-                    const action = b().tap;
-                    if (action === "let-go") { letGo.set(true); field.focus(); }
-                    else if (action === "cancel-voice") voice.send({ type: "cancel" });
-                    else if (action === "dismiss") notice.set("");
-                  }}
-                  class="max-w-full flex-row items-center gap-2 rounded-full border border-[#3a3a3c] bg-[#232325]/95 px-4 py-2"
-                  testID="term-bubble"
-                >
-                  {b().level !== undefined ? (
-                    <View class="h-1.5 w-14 overflow-hidden rounded-full bg-[#3a3a3c]">
-                      <View class="h-full rounded-full bg-[#879fb0]" style={{ width: Math.round((0.08 + (b().level ?? 0) * 0.92) * 56) }} />
-                    </View>
-                  ) : null}
-                  {b().busy ? <View class="h-2 w-2 rounded-full bg-[#8d8d93]" /> : null}
-                  {b().warn ? <View class="h-2 w-2 rounded-full bg-[#f5a623]" /> : null}
-                  <Text class="text-[13px] font-medium text-[#ededed]" style={{ numberOfLines: 1 }}>
-                    {b().text}
-                  </Text>
-                </Button>
-              </View>
-            )}
-          </If>
           <If when={!atLatest()}>
             <Button onPress={() => post({ t: "toLatest" })}
               class="absolute right-3 bottom-3 h-[38px] w-[38px] items-center justify-center rounded-full bg-[#2c2c2e]"
@@ -1194,7 +1149,7 @@ function TermScreen(props: { address: string }) {
               disabled={voiceState() === "busy"}
               onPressDown={() => {
                 if (!host.available() || !info()?.voice) {
-                  notice.set(info()?.voice ? "当前环境不支持录音" : "这台 Mac 没开语音识别：在 Mac 上运行 wayne-herdr-mods voice key 设置");
+                  notice.set(info()?.voice ? "当前环境不支持录音" : "Mac 未配置语音 Key");
                   return;
                 }
                 voice.send({ type: "press" });
@@ -1206,7 +1161,7 @@ function TermScreen(props: { address: string }) {
               accessibilityLabel="按住说话"
             >
               <Text class={`text-[15.5px] font-semibold tracking-[0.02em] ${voiceState() === "rec" ? "text-[#1c1c1e]" : voiceOk() ? "text-[#f2f2f7]" : "text-[#8d8d93]"}`}>
-                {voiceState() === "rec" ? "松开 输入" : voiceState() === "busy" ? "识别中…" : "按住 说话"}
+                {voiceLabel()}
               </Text>
             </Button>
             <Button
@@ -1227,7 +1182,7 @@ function TermScreen(props: { address: string }) {
               autoCapitalize="none"
               autoCorrect={false}
               onChange={(e) => onInputChange(e.value)}
-              onCompositionChange={(e) => { composing.set(e.composing ? e.text : ""); line.compose(e.composing); sync(); }}
+              onCompositionChange={(e) => { line.compose(e.composing); sync(); }}
               onKeyPress={(e) => { if (e.key === "Backspace") line.backspace(); }}
               onSubmit={send}
               onFocus={() => focused.set(true)}
@@ -1245,20 +1200,12 @@ function TermScreen(props: { address: string }) {
 
 // ------------------------------------------------------------------ files & preview --------
 type FileEntry = { name: string; path: string; dir: boolean; size: number; mtime: number; kind: string };
-type RootEntry = { id: string; name: string; folder: string };
 
 function fmtBytes(n?: number) {
   if (!n || n <= 0) return "0 B";
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function fmtDuration(sec?: number) {
-  if (!sec || sec <= 0) return "";
-  const m = Math.floor(sec / 60);
-  const s = Math.round(sec % 60);
-  return `${m}:${s < 10 ? "0" : ""}${s}`;
 }
 
 function fileEntryIconFor(kind: string, dir: boolean) {
@@ -1303,26 +1250,6 @@ function FilesScreen(props: { rootId?: string; address?: string; path?: string; 
   const loading = signal<boolean>(true);
   const err = signal<string>("");
   let initialTriggered = false;
-  let closedOnMac = false;
-
-  function closePanelOnMac() {
-    if (closedOnMac) return;
-    closedOnMac = true;
-    rpc("files.panel", {
-      address: props.address,
-      rootId: activeRoot() || undefined,
-      open: false,
-    }).catch(() => {});
-  }
-
-  function syncTreeToMac(nextFolders: string[], nextOnlyChanged: boolean) {
-    rpc("files.panel", {
-      address: props.address,
-      rootId: activeRoot() || undefined,
-      folders: nextFolders,
-      onlyChanged: nextOnlyChanged,
-    }).catch(() => {});
-  }
 
   async function loadRoot(rId: string) {
     if (status() !== "ready") return;
@@ -1332,24 +1259,18 @@ function FilesScreen(props: { rootId?: string; address?: string; path?: string; 
       const res = (await rpc("files.list", {
         rootId: rId || undefined,
         path: "",
-        syncPanel: true,
-        address: props.address,
       }, 20_000)) as {
         rootId: string;
         rootName: string;
         path: string;
         items: FileEntry[];
         marks?: Record<string, string>;
-        expandedFolders?: string[];
         subfolders?: Record<string, FileEntry[]>;
       };
       activeRoot.set(res.rootId);
       rootName.set(res.rootName || props.title || "Files");
       dirMap.set({ "": res.items ?? [], ...(res.subfolders ?? {}) });
       marks.set(res.marks ?? {});
-      if (Array.isArray(res.expandedFolders) && res.expandedFolders.length) {
-        expanded.set(res.expandedFolders);
-      }
     } catch (e: any) {
       err.set(e.message || "无法读取目录");
     } finally {
@@ -1361,14 +1282,10 @@ function FilesScreen(props: { rootId?: string; address?: string; path?: string; 
     tapHaptic();
     const cur = expanded();
     if (cur.includes(relPath)) {
-      const next = cur.filter((p) => p !== relPath);
-      expanded.set(next);
-      syncTreeToMac(next, onlyChanged());
+      expanded.set(cur.filter((p) => p !== relPath));
       return;
     }
-    const next = [...cur, relPath];
-    expanded.set(next);
-    syncTreeToMac(next, onlyChanged());
+    expanded.set([...cur, relPath]);
 
     if (!dirMap()[relPath] && !loadingDirs()[relPath]) {
       loadingDirs.set({ ...loadingDirs(), [relPath]: true });
@@ -1392,9 +1309,8 @@ function FilesScreen(props: { rootId?: string; address?: string; path?: string; 
     if (onlyChanged() === changedOnly) return;
     tapHaptic();
     onlyChanged.set(changedOnly);
-    let nextExp = expanded();
     if (changedOnly) {
-      const autoSet = new Set(nextExp);
+      const autoSet = new Set(expanded());
       for (const p of Object.keys(marks())) {
         const parts = p.split("/");
         let cur = "";
@@ -1403,10 +1319,8 @@ function FilesScreen(props: { rootId?: string; address?: string; path?: string; 
           autoSet.add(cur);
         }
       }
-      nextExp = [...autoSet];
-      expanded.set(nextExp);
+      expanded.set([...autoSet]);
     }
-    syncTreeToMac(nextExp, changedOnly);
   }
 
   effect(() => {
@@ -1417,13 +1331,7 @@ function FilesScreen(props: { rootId?: string; address?: string; path?: string; 
   });
 
   cleanup(() => {
-    try {
-      const stillInFiles = nav.routes().some((r) => r.name === "files" || r.name === "preview");
-      clientLog("info", "files.cleanup", { rootId: activeRoot(), stillInFiles });
-      if (!stillInFiles) closePanelOnMac();
-    } catch (e: any) {
-      clientLog("error", "files.cleanup.err", { err: String(e?.message ?? e) });
-    }
+    clientLog("info", "files.cleanup", { rootId: activeRoot() });
   });
 
   const changedCount = computed(() => Object.keys(marks()).length);
@@ -1456,41 +1364,9 @@ function FilesScreen(props: { rootId?: string; address?: string; path?: string; 
   });
 
   return (
-    <NavPage
-      title={rootName()}
-      headerClass="bg-background"
-      ios={{ headerRightSymbol: "folder.fill" }}
-      headerRight={
-        <Button
-          onPress={() => {
-            tapHaptic();
-            closePanelOnMac();
-            nav.pop();
-          }}
-          class="h-9 w-9 items-center justify-center rounded-full"
-          testID="files-close"
-          accessibilityLabel="收起文件树"
-        >
-          <Icon src={folderIcon} size={18} class="tint-foreground" />
-        </Button>
-      }
-    >
+    <NavPage title={rootName()} headerClass="bg-background">
       <Scroll class="flex-1 bg-background" contentClass="gap-3 px-4 pt-2 pb-10">
-        {/* Mac my-files style header bar: Files + current session folder + All / Changed filter */}
-        <View class="flex-row items-center justify-between gap-2 px-1">
-          <View class="flex-1 flex-row items-center gap-2">
-            <Image src={folderIosIcon} style={{ width: 18, height: 18 }} />
-            <Text class="text-[13px] font-semibold text-foreground" style={{ numberOfLines: 1 }}>
-              {rootName()}
-            </Text>
-            {changedCount() > 0 ? (
-              <View class="rounded-full bg-[#f5a623]/15 px-2 py-0.5">
-                <Text class="font-mono text-[11px] font-semibold text-[#f5a623]" style={{ fontVariant: ["tabular-nums"] }}>
-                  {changedCount()} 变更
-                </Text>
-              </View>
-            ) : null}
-          </View>
+        <View class="flex-row items-center justify-end">
           <View class="flex-row items-center rounded-full bg-card p-0.5">
             <Button
               onPress={() => setFilterMode(false)}
@@ -1506,8 +1382,11 @@ function FilesScreen(props: { rootId?: string; address?: string; path?: string; 
               class={`rounded-full px-3 py-1 ${onlyChanged() ? "bg-secondary" : ""}`}
               testID="files-filter-changed"
             >
-              <Text class={`text-[12px] font-medium ${onlyChanged() ? "text-foreground" : "text-muted-foreground"}`}>
-                Changed
+              <Text
+                class={`text-[12px] font-medium ${onlyChanged() ? "text-foreground" : "text-muted-foreground"}`}
+                style={{ fontVariant: ["tabular-nums"] }}
+              >
+                {changedCount() > 0 ? `Changed ${changedCount()}` : "Changed"}
               </Text>
             </Button>
           </View>
@@ -1521,7 +1400,7 @@ function FilesScreen(props: { rootId?: string; address?: string; path?: string; 
 
         {loading() ? (
           <View class="items-center justify-center rounded-[20px] bg-card py-10">
-            <Text class="text-[14px] text-muted-foreground">正在同步目录树…</Text>
+            <Text class="text-[14px] text-muted-foreground">加载中…</Text>
           </View>
         ) : treeRows().length ? (
           <View class="overflow-hidden rounded-[20px] bg-card">
@@ -1588,7 +1467,7 @@ function FilesScreen(props: { rootId?: string; address?: string; path?: string; 
         ) : (
           <View class="items-center justify-center rounded-[20px] bg-card py-8">
             <Text class="text-[14px] text-muted-foreground">
-              {onlyChanged() ? "当前没有未提交的变更文件" : "这个文件夹是空的"}
+              {onlyChanged() ? "无变更" : "空目录"}
             </Text>
           </View>
         )}
@@ -1607,8 +1486,8 @@ function PreviewScreen(props: { rootId: string; path: string; title: string }) {
   const err = signal<string>("");
   const imgUrl = signal<string>("");
   const progress = signal<number>(0); // 0..100
-  const busyAction = signal<string>("");
-  const copied = signal<string>("");
+  const opening = signal<boolean>(false);
+  const copied = signal<boolean>(false);
   let initialLoaded = false;
 
   const safeTextInfo = computed(() => {
@@ -1689,9 +1568,9 @@ function PreviewScreen(props: { rootId: string; path: string; title: string }) {
   });
 
   async function openInSystem(previewId: string, name: string, kind: string, total: number) {
-    if (!previewId || busyAction()) return;
+    if (!previewId || opening()) return;
     tapHaptic();
-    busyAction.set("正在同步到本机预览…");
+    opening.set(true);
     progress.set(0);
     err.set("");
     try {
@@ -1699,17 +1578,17 @@ function PreviewScreen(props: { rootId: string; path: string; title: string }) {
         progress.set(tot > 0 ? Math.min(100, Math.round((loaded / tot) * 100)) : 100);
       });
     } catch (e: any) {
-      err.set(e.message || "系统预览打开失败");
+      err.set(e.message || "打开失败");
     } finally {
-      busyAction.set("");
+      opening.set(false);
     }
   }
 
-  async function copyText(str: string, label: string) {
+  async function copyFullText(str: string) {
     tapHaptic();
     await Clipboard.writeText(str);
-    copied.set(label);
-    setTimeout(() => copied.set(""), 2000);
+    copied.set(true);
+    setTimeout(() => copied.set(false), 2000);
   }
 
   return (
@@ -1722,88 +1601,46 @@ function PreviewScreen(props: { rootId: string; path: string; title: string }) {
         ) : null}
 
         {loading() ? (
-          <View class="items-center justify-center gap-2 rounded-[20px] bg-card py-12">
-            <Text class="text-[14px] font-medium text-card-foreground">正在准备预览…</Text>
-            <Text class="text-[12px] text-muted-foreground">大图片或视频会自动在 Mac 上硬件压缩后再传输</Text>
+          <View class="items-center justify-center rounded-[20px] bg-card py-12">
+            <Text class="text-[14px] text-muted-foreground">加载中…</Text>
           </View>
         ) : data() ? (
           <View class="gap-4">
-            {/* Metadata & Quick Actions Card */}
-            <View class="flex-row items-center justify-between rounded-[20px] bg-card px-4 py-3">
-              <View class="flex-1 gap-0.5">
-                <Text class="text-[14px] font-medium text-card-foreground" style={{ numberOfLines: 1 }}>{data().path}</Text>
-                <Text class="font-mono text-[12px] text-muted-foreground" style={{ fontVariant: ["tabular-nums"] }}>
-                  {[
-                    (data().ext || data().kind || "FILE").toUpperCase(),
-                    `原始 ${fmtBytes(data().size)}`,
-                    data().total && data().total !== data().size ? `传输 ${fmtBytes(data().total)}` : null,
-                    data().duration ? fmtDuration(data().duration) : null,
-                  ].filter(Boolean).join(" · ")}
-                </Text>
-              </View>
-              <Button
-                onPress={() => copyText(data().path, "已复制路径")}
-                class="rounded-full bg-secondary px-3 py-1.5 active:opacity-70"
-              >
-                <Text class="text-[12px] font-medium text-foreground">{copied() === "已复制路径" ? "已复制" : "复制路径"}</Text>
-              </Button>
-            </View>
-
-            {/* Video Preview: 6-frame Storyboard Filmstrip + 480p@15fps Native AVPlayer */}
             {data().kind === "video" ? (
               <View class="gap-3 rounded-[20px] bg-card p-4">
-                <View class="flex-row items-center justify-between">
-                  <Text class="text-[13px] font-medium text-muted-foreground">6 帧故事板速览（横向滑动）</Text>
-                  <Text class="font-mono text-[12px] text-muted-foreground" style={{ fontVariant: ["tabular-nums"] }}>
-                    480p · {fmtBytes(data().total)}
-                  </Text>
-                </View>
                 {data().strip ? (
                   <Scroll horizontal scrollbar={false} class="overflow-hidden rounded-[14px] bg-[#151412]">
                     <Image src={data().strip} style={{ width: 960, height: 150 }} />
                   </Scroll>
                 ) : null}
-                {busyAction() ? (
-                  <View class="gap-1.5 py-1">
-                    <View class="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
-                      <View class="h-full rounded-full bg-primary" style={{ width: `${Math.max(6, progress())}%` }} />
-                    </View>
-                    <Text class="text-center font-mono text-[12px] text-muted-foreground" style={{ fontVariant: ["tabular-nums"] }}>
-                      {busyAction()} {progress()}%
-                    </Text>
-                  </View>
-                ) : null}
                 <Button
                   onPress={() => openInSystem(data().previewId, data().name, "video", data().total)}
-                  disabled={Boolean(busyAction())}
+                  disabled={opening()}
                   class="h-11 flex-row items-center justify-center gap-2 rounded-full bg-primary active:opacity-80"
                   testID="play-video"
                 >
                   <Icon src={videoIcon} size={18} class="tint-primary-foreground" />
-                  <Text class="text-[15px] font-medium text-primary-foreground">
-                    {busyAction() ? `正在缓冲 ${progress()}%…` : `播放 480p 视频（${fmtBytes(data().total)}）`}
+                  <Text class="text-[15px] font-medium text-primary-foreground" style={{ fontVariant: ["tabular-nums"] }}>
+                    {opening() ? `${progress()}%` : "播放"}
                   </Text>
                 </Button>
               </View>
             ) : null}
 
-            {/* Audio Preview */}
             {data().kind === "audio" ? (
               <View class="gap-3 rounded-[20px] bg-card p-4">
-                <Text class="text-[14px] text-card-foreground">音频文件（{fmtBytes(data().total)}）</Text>
                 <Button
                   onPress={() => openInSystem(data().previewId, data().name, "audio", data().total)}
-                  disabled={Boolean(busyAction()) || !data().previewId}
+                  disabled={opening() || !data().previewId}
                   class="h-11 items-center justify-center rounded-full bg-primary active:opacity-80"
                 >
-                  <Text class="text-[15px] font-medium text-primary-foreground">
-                    {busyAction() ? `正在缓冲 ${progress()}%…` : "用系统播放器收听"}
+                  <Text class="text-[15px] font-medium text-primary-foreground" style={{ fontVariant: ["tabular-nums"] }}>
+                    {opening() ? `${progress()}%` : "播放"}
                   </Text>
                 </Button>
               </View>
             ) : null}
 
-            {/* Image Preview */}
             {data().kind === "image" ? (
               <View class="gap-3 rounded-[20px] bg-card p-4">
                 {imgUrl() ? (
@@ -1813,24 +1650,23 @@ function PreviewScreen(props: { rootId: string; path: string; title: string }) {
                 ) : (
                   <View class="items-center justify-center rounded-[14px] bg-secondary py-12">
                     <Text class="font-mono text-[13px] text-muted-foreground" style={{ fontVariant: ["tabular-nums"] }}>
-                      正在加载图片 {progress()}%…
+                      {progress()}%
                     </Text>
                   </View>
                 )}
                 <Button
                   onPress={() => openInSystem(data().previewId, data().name, "image", data().total)}
-                  disabled={Boolean(busyAction())}
-                  class="h-11 items-center justify-center rounded-full bg-primary active:opacity-80"
+                  disabled={opening()}
+                  class="h-11 items-center justify-center rounded-full bg-secondary active:opacity-80"
                   testID="open-image-ql"
                 >
-                  <Text class="text-[15px] font-medium text-primary-foreground">
-                    {busyAction() ? `正在打开 ${progress()}%…` : "全屏双指缩放与分享 (QuickLook)"}
+                  <Text class="text-[15px] font-medium text-foreground" style={{ fontVariant: ["tabular-nums"] }}>
+                    {opening() ? `${progress()}%` : "打开"}
                   </Text>
                 </Button>
               </View>
             ) : null}
 
-            {/* QuickLook Document Preview (PDF / Office / iWork / HTML) */}
             {data().kind === "look" ? (
               <View class="gap-3 rounded-[20px] bg-card p-4">
                 {imgUrl() ? (
@@ -1847,46 +1683,46 @@ function PreviewScreen(props: { rootId: string; path: string; title: string }) {
                       data().rawTotal || data().thumbTotal,
                     )
                   }
-                  disabled={Boolean(busyAction()) || (!data().rawPreviewId && !data().thumbPreviewId)}
+                  disabled={opening() || (!data().rawPreviewId && !data().thumbPreviewId)}
                   class="h-11 items-center justify-center rounded-full bg-primary active:opacity-80"
                   testID="open-doc-ql"
                 >
-                  <Text class="text-[15px] font-medium text-primary-foreground">
-                    {busyAction()
-                      ? `正在同步文档 ${progress()}%…`
-                      : `用系统 QuickLook 打开完整文档（${fmtBytes(data().rawTotal || data().thumbTotal)}）`}
+                  <Text class="text-[15px] font-medium text-primary-foreground" style={{ fontVariant: ["tabular-nums"] }}>
+                    {opening() ? `${progress()}%` : "打开"}
                   </Text>
                 </Button>
               </View>
             ) : null}
 
-            {/* Text / Markdown / Code Preview */}
             {data().kind === "text" || data().kind === "md" ? (
               <View class="gap-3 rounded-[20px] bg-card p-4">
-                <View class="flex-row items-center justify-between">
+                <View class="flex-row items-center justify-between gap-2">
                   <Text class="font-mono text-[12px] text-muted-foreground" style={{ fontVariant: ["tabular-nums"] }}>
-                    {safeTextInfo()?.shownLines ?? 0} / {safeTextInfo()?.totalLines ?? 0} 行
-                    {safeTextInfo()?.inlineTruncated ? "（大文件内联速览）" : ""}
+                    {safeTextInfo()?.inlineTruncated
+                      ? `${safeTextInfo()?.shownLines ?? 0} / ${safeTextInfo()?.totalLines ?? 0}`
+                      : `${safeTextInfo()?.totalLines ?? 0} 行`}
                   </Text>
-                  <Button
-                    onPress={() => copyText(String(data().text ?? ""), "已复制全文")}
-                    class="rounded-full bg-secondary px-3 py-1 active:opacity-70"
-                  >
-                    <Text class="text-[12px] font-medium text-foreground">{copied() === "已复制全文" ? "已复制" : "复制全文"}</Text>
-                  </Button>
+                  <View class="flex-row items-center gap-2">
+                    {safeTextInfo()?.inlineTruncated && data().rawPreviewId ? (
+                      <Button
+                        onPress={() => openInSystem(data().rawPreviewId, data().name, "look", data().rawTotal || data().size)}
+                        disabled={opening()}
+                        class="rounded-full bg-secondary px-3 py-1 active:opacity-70"
+                        testID="open-text-ql"
+                      >
+                        <Text class="text-[12px] font-medium text-foreground" style={{ fontVariant: ["tabular-nums"] }}>
+                          {opening() ? `${progress()}%` : "完整查看"}
+                        </Text>
+                      </Button>
+                    ) : null}
+                    <Button
+                      onPress={() => copyFullText(String(data().text ?? ""))}
+                      class="rounded-full bg-secondary px-3 py-1 active:opacity-70"
+                    >
+                      <Text class="text-[12px] font-medium text-foreground">{copied() ? "已复制" : "复制"}</Text>
+                    </Button>
+                  </View>
                 </View>
-                {data().rawPreviewId ? (
-                  <Button
-                    onPress={() => openInSystem(data().rawPreviewId, data().name, "look", data().rawTotal || data().size)}
-                    disabled={Boolean(busyAction())}
-                    class="h-10 items-center justify-center rounded-full bg-primary active:opacity-80"
-                    testID="open-text-ql"
-                  >
-                    <Text class="text-[14px] font-medium text-primary-foreground">
-                      {busyAction() ? `正在同步 ${progress()}%…` : `用系统 QuickLook 查看完整文件（${fmtBytes(data().rawTotal || data().size)}）`}
-                    </Text>
-                  </Button>
-                ) : null}
                 <View class="rounded-[14px] bg-secondary p-3">
                   <Text class="font-mono text-[12.5px] leading-relaxed text-card-foreground">
                     {safeTextInfo()?.display || "（空文件）"}
@@ -1895,18 +1731,19 @@ function PreviewScreen(props: { rootId: string; path: string; title: string }) {
               </View>
             ) : null}
 
-            {/* Binary Fallback */}
             {data().kind === "binary" ? (
               <View class="gap-3 rounded-[20px] bg-card p-4">
-                <Text class="text-[14px] text-muted-foreground">二进制文件（{fmtBytes(data().size)}）</Text>
+                <Text class="font-mono text-[13px] text-muted-foreground" style={{ fontVariant: ["tabular-nums"] }}>
+                  二进制文件 · {fmtBytes(data().size)}
+                </Text>
                 {data().previewId ? (
                   <Button
                     onPress={() => openInSystem(data().previewId, data().name, "binary", data().total)}
-                    disabled={Boolean(busyAction())}
+                    disabled={opening()}
                     class="h-11 items-center justify-center rounded-full bg-primary active:opacity-80"
                   >
-                    <Text class="text-[15px] font-medium text-primary-foreground">
-                      {busyAction() ? `正在同步 ${progress()}%…` : "用系统 QuickLook / 分享打开"}
+                    <Text class="text-[15px] font-medium text-primary-foreground" style={{ fontVariant: ["tabular-nums"] }}>
+                      {opening() ? `${progress()}%` : "打开"}
                     </Text>
                   </Button>
                 ) : null}

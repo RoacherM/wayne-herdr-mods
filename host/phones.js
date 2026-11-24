@@ -36,6 +36,7 @@ const REPRINT_MAX_MS = 1000;
 const REPRINT_NOTE = 16 * 1024; // recorded from this size (a shell's `clear` is not)
 const CLEAR_SCROLLBACK = Buffer.from('\x1b[3J');
 const SCREEN_CLEARS = [Buffer.from('\x1b[2J'), Buffer.from('\x1b[H')];
+const PAINT_BYTES = Buffer.from('\x18\x1b[!p\x1b[?2026l');
 const EMPTY = Buffer.alloc(0);
 // Wheel steps wait while more than this is on its way to the phone (sent, not yet drawn there), then
 // go to the program together: one redraw for many steps, so redraws never queue up on a slow
@@ -58,6 +59,17 @@ function logPhoneClose(log, peer, streams) {
   const devName = peer.device?.name || peer.device?.id || 'phone';
   const kick = peer.kickCode ? ` kick=${peer.kickCode}` : '';
   log(`wayne-herdr-mods: [phone:${devName}] session.close cid=${peer.cid} upMs=${Date.now() - peer.readyAt} streams=${streams}${kick}`);
+}
+
+const fitStr = (f) => (f ? `${f[0]}x${f[1]}` : 'null');
+
+function logStream(log, peer, ev, fields) {
+  const devName = peer.device?.name || peer.device?.id || 'phone';
+  const kv = Object.entries(fields)
+    .filter(([, v]) => v !== undefined)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(' ');
+  log(`wayne-herdr-mods: [phone:${devName}] ${ev} ${kv}`);
 }
 
 export function createPhones({ state, pairing, push, terminals, voice, files, metrics, link: getLink, rtc, log = () => {}, onChange = () => {} }) {
@@ -213,7 +225,7 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
     const t = terminals.get(address);
     if (!t || t.state !== 'live') throw new Error(`没有正在运行的终端 ${address}`);
     const id = nextStream++;
-    const stream = { id, address, core, device: peer.device?.id, channel: null, typer: null, fit, sized: false, cols: t.cols, rows: t.rows, out: [], outW: null, outTimer: null, stopped: false };
+    const stream = { id, address, core, device: peer.device?.id, channel: null, typer: null, fit, sized: false, cols: t.cols, rows: t.rows, out: [], outW: null, outTimer: null, awaitingPaint: 'open', lastLargeLogAt: 0, stopped: false };
     // Scrolling, as the Mac sees it (scroll-watch.js), to the same records as the phone's.
     const via = String(peer.cid).startsWith('rtc:') ? 'direct' : 'relay';
     stream.record = (e) => metrics?.put(peer.device, { ctx: { src: 'mac' }, events: [{ t: Date.now(), via, ...e }] }).catch(() => {});
@@ -224,9 +236,21 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
       if (!stream.out.length || stream.stopped) { stream.out = []; return; }
       const bytes = stream.out.length === 1 ? stream.out[0] : Buffer.concat(stream.out);
       stream.out = [];
+      const fresh = Boolean(stream.fresh);
+      const now = Date.now();
+      const logLarge = !fresh && !stream.awaitingPaint && bytes.length >= 32 * 1024 && now - stream.lastLargeLogAt >= 1000;
+      if (fresh || stream.awaitingPaint || logLarge) {
+        if (logLarge) stream.lastLargeLogAt = now;
+        logStream(log, peer, 'stream.out', {
+          s: id, addr: address, bytes: bytes.length, fresh,
+          hasPaint: bytes.includes(PAINT_BYTES),
+          after: stream.awaitingPaint || (fresh ? 'reprint' : 'large'),
+        });
+        stream.awaitingPaint = '';
+      }
       // w: the phone's wheel steps the program had when these bytes began (the phone's lag, DESIGN.md「滑动延迟」).
       // fresh: a new view's first paint (reprint()); the phone drops its history before it.
-      event(peer, 'out', { s: id, d: bytes.toString('base64'), w: stream.outW, ...(stream.fresh ? { fresh: true } : {}) });
+      event(peer, 'out', { s: id, d: bytes.toString('base64'), w: stream.outW, ...(fresh ? { fresh: true } : {}) });
       stream.outW = null;
       stream.fresh = false;
       stream.watch.sent(bytes.length);
@@ -241,6 +265,7 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
       peer.streams.delete(id);
       if (stream.channel !== null) core.release(stream.channel);
       dropTyper(stream, reason === 'moved' || reason === 'dropped');
+      logStream(log, peer, 'stream.close', { s: id, addr: address, reason });
       event(peer, 'closed', { s: id, reason });
     };
     // The same terminal opened again on this connection (the page reopened it): the new stream
@@ -270,7 +295,8 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
       core.call('terminal.label', { terminal: address, labels: { 'herdr.seen': String(t.turn ?? 0) } }).catch(() => {});
     }
     if (!stream.sized) { stream.cols = now.cols; stream.rows = now.rows; }
-    if (fit && !stream.sized) refit(stream, null, true); // an older core cannot tell the view its size in step
+    if (fit && !stream.sized) refit(peer, stream, null, true); // an older core cannot tell the view its size in step
+    logStream(log, peer, 'stream.open', { s: id, addr: address, grid: `${now.cols}x${now.rows}`, fit: fitStr(fit), lead, sized: stream.sized });
     return { s: id, cols: now.cols, rows: now.rows, sized: stream.sized };
   }
 
@@ -288,10 +314,14 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
       },
       onResize: (cols, rows) => {
         if (stream.channel !== channel) return;
+        const from = `${stream.cols}x${stream.rows}`;
+        const rp = stream.reprint ? (stream.reprint.dropping ? 'drop' : 'hold') : 'no';
         if (stream.reprint && !stream.reprint.dropping) endReprint(peer, stream); // held bytes were for the old grid
         stream.flush(); // the bytes before it were drawn for the old size
         stream.cols = cols;
         stream.rows = rows;
+        stream.awaitingPaint = 'resize';
+        logStream(log, peer, 'stream.resize', { s: id, addr: stream.address, from, to: `${cols}x${rows}`, reprint: rp });
         event(peer, 'size', { s: id, cols, rows });
       },
       onClose: (reason) => {
@@ -303,6 +333,7 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
         clearTimeout(stream.reprint?.timer);
         peer.streams.delete(id);
         dropTyper(stream, false);
+        logStream(log, peer, 'stream.close', { s: id, addr: stream.address, reason: reason?.reason ?? 'closed' });
         event(peer, 'closed', { s: id, reason: reason?.reason ?? 'closed', exitCode: reason?.exit_code ?? null });
       },
     });
@@ -334,6 +365,7 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
       stream.flush();
       r = stream.reprint = { held: [], n: 0, t0: Date.now(), timer: null, dropping: false, w: stream.watch.w };
       bytes = bytes.subarray(at);
+      logStream(log, peer, 'stream.reprint.start', { s: stream.id, addr: stream.address, grid: `${stream.cols}x${stream.rows}`, at, bytes: bytes.length });
     }
     r.n += bytes.length;
     if (r.dropping) stream.core.credit(stream.channel, bytes.length);
@@ -341,6 +373,7 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
       r.dropping = true;
       r.held = [];
       stream.core.credit(stream.channel, r.n); // never sent: the phone will not credit them
+      logStream(log, peer, 'stream.reprint.drop', { s: stream.id, addr: stream.address, bytes: r.n, ms: Date.now() - r.t0 });
     } else r.held.push(bytes);
     if (!r.reattaching) {
       clearTimeout(r.timer);
@@ -358,6 +391,7 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
     if (!r.dropping) {
       stream.reprint = null;
       note(false);
+      logStream(log, peer, 'stream.reprint.end', { s: stream.id, addr: stream.address, fresh: false, bytes: r.n, ms: Date.now() - r.t0 });
       if (r.held.length) { stream.outW ??= r.w; stream.out.push(...r.held); stream.flush(); }
       return;
     }
@@ -374,8 +408,10 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
     stream.sized = reply.resize_notifications === true;
     stream.tail = null;
     stream.fresh = true;
+    stream.awaitingPaint = 'reprint';
     stream.core.release(old);
     listen(peer, stream, reply.channel);
+    logStream(log, peer, 'stream.reprint.end', { s: stream.id, addr: stream.address, fresh: true, bytes: r.n, ms: Date.now() - r.t0, grid: `${stream.cols}x${stream.rows}` });
     note(true);
   }
 
@@ -546,11 +582,12 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
    * The phone's grid changed (it turned), or the phone left (`fit` null: back, locked, in the
    * background). In order with the input, so a burst never goes out at a stale size.
    */
-  function refit(stream, fit, force = false) {
+  function refit(peer, stream, fit, force = false) {
     if (!stream.sized && !force) return;
     const next = fitOf(fit);
     stream.inputs = (stream.inputs ?? Promise.resolve()).then(async () => {
       if (stream.stopped) return;
+      logStream(log, peer, 'stream.fit', { s: stream.id, addr: stream.address, from: fitStr(stream.fit), to: fitStr(next), force });
       stream.fit = next;
       if (!next) {
         const ch = stream.typer && await stream.typer;
@@ -590,7 +627,7 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
       if (m === 'term.input') { const stream = streamOf(peer, p.s); stopCoast(stream); input(stream, p.d); }
       else if (m === 'term.press') { const stream = streamOf(peer, p.s); stopCoast(stream); press(stream, p.keys); }
       else if (m === 'term.coast') coast(streamOf(peer, p.s), p);
-      else if (m === 'term.fit') refit(streamOf(peer, p.s), p.fit);
+      else if (m === 'term.fit') refit(peer, streamOf(peer, p.s), p.fit);
       else if (m === 'term.ack') {
         const stream = streamOf(peer, p.s);
         const n = Math.max(0, Math.min(Number(p.n) || 0, 16 << 20));
@@ -713,7 +750,6 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
     'files.list': (peer, p) => { if (!fileBrowser) throw new Error('文件预览不可用'); return fileBrowser.list(p); },
     'files.open': (peer, p) => { if (!fileBrowser) throw new Error('文件预览不可用'); return fileBrowser.open(p); },
     'files.slice': (peer, p) => { if (!fileBrowser) throw new Error('文件预览不可用'); return fileBrowser.slice(p); },
-    'files.panel': (peer, p) => { if (!fileBrowser) throw new Error('文件预览不可用'); return fileBrowser.panel(p); },
     'device.forget': async (peer) => { await state.removeDevice(peer.device.id); setTimeout(() => getLink()?.close(peer.cid, 'forgotten'), 50); onChange(); return { ok: true }; },
   };
 

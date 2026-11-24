@@ -10,6 +10,7 @@ const MOD_ENTRY_RE = /^mods\/[^/]+\/main\.js$/;
 const MOD_HELPER_JS_RE = /^mods\/[^/]+\/.+\.js$/;
 export const STALE_HERDR_FILES = Object.freeze([
   'mods/wayne-board',
+  'data/my-files',
   'mods/my-files/state.js',
   'mods/my-files/preview.js',
   'mods/my-files/chevron-down.svg',

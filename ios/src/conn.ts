@@ -122,11 +122,15 @@ console.error = (...args: any[]) => {
 };
 
 const TRACKED_RPC = new Set([
-  "files.roots", "files.list", "files.open", "files.slice", "files.panel",
+  "files.roots", "files.list", "files.open", "files.slice",
   "term.open", "term.close", "term.new", "voice.done", "image.put",
 ]);
 
 const RPC_SUMMARIZERS: Record<string, (p: any, res: any, ms: number) => Record<string, any> | null> = {
+  "term.open": (p, res, ms) => ({
+    address: p?.address, fit: p?.fit ?? null, lead: p?.lead,
+    s: res?.s, cols: res?.cols, rows: res?.rows, sized: res?.sized, ms,
+  }),
   "files.open": (p, res, ms) => ({ rootId: p?.rootId, path: p?.path, kind: res?.kind, size: res?.size, total: res?.total ?? res?.rawTotal, truncated: res?.truncated, ms }),
   "files.list": (p, res, ms) => ({ rootId: p?.rootId, path: p?.path, items: res?.items?.length ?? 0, ms }),
   "files.slice": (p, res, ms) => ((p?.offset ?? 0) !== 0 && !res?.eof && ms <= 1000

@@ -248,7 +248,6 @@ final class ShellController: UIViewController, QLPreviewControllerDataSource {
               AVEncoderBitRateKey: 32_000,
             ]
             let rec = try AVAudioRecorder(url: self.audioURL, settings: settings)
-            rec.isMeteringEnabled = true
             rec.prepareToRecord()
             guard rec.record(forDuration: 120) else {
               reply.reject("无法启动录音")
@@ -261,17 +260,6 @@ final class ShellController: UIViewController, QLPreviewControllerDataSource {
           }
         }
       }
-    }
-
-    app.handle("voice.level") { [weak self] _, reply in
-      guard let self, let rec = self.recorder, rec.isRecording else {
-        reply.resolve(["level": 0])
-        return
-      }
-      rec.updateMeters()
-      let db = rec.averagePower(forChannel: 0) // -160 ... 0 dB
-      let normalized = max(0.0, min(1.0, Double((db + 50.0) / 50.0)))
-      reply.resolve(["level": normalized])
     }
 
     app.handle("voice.stop") { [weak self] _, reply in

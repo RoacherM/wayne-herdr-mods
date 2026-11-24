@@ -46,7 +46,8 @@ test('pair, list, stream, type, send, keys — through the relay', { timeout: 12
   const dataDir = await mkdtemp(join(tmpdir(), 'herdr-relay-'));
   // The voice key lives in memory here: a test never writes the user's keychain.
   const keys = { value: null, read: async () => keys.value, save: async (k) => { keys.value = k; }, remove: async () => { keys.value = null; } };
-  const svc = await startService({ relayUrl: RELAY, dataDir, coreOptions: { session: SESSION }, log: () => {}, voiceKeys: keys });
+  const hostLogs = [];
+  const svc = await startService({ relayUrl: RELAY, dataDir, coreOptions: { session: SESSION }, log: (m) => hostLogs.push(m), voiceKeys: keys });
   t.after(() => svc.stop());
   await until('relay online + core online', async () => { const v = await controlCall(dataDir, 'status'); return v.relay === 'online' && v.core === 'online'; }, 20_000);
 
@@ -196,8 +197,9 @@ test('pair, list, stream, type, send, keys — through the relay', { timeout: 12
   await mac.call('terminal.kill', { terminal: made.address }).catch(() => {});
   await assert.rejects(rpc('term.new', { space: 'nope' }), /没有这个工作区/);
 
-  // --- methods outside the whitelist never reach herdr-core
+  // --- methods outside the whitelist never reach herdr-core (including retired files.panel)
   await assert.rejects(rpc('machine.exec', { argv: ['id'] }), /未知方法/);
+  await assert.rejects(rpc('files.panel', { open: false }), /未知方法/);
 
   // --- the phone's own grid (DESIGN.md「手机布局」): opened with `fit`, the terminal takes it; the
   // phone away (`term.fit` with none), the Mac window leads again; typed on the phone, the phone's.
@@ -227,6 +229,13 @@ test('pair, list, stream, type, send, keys — through the relay', { timeout: 12
   // --- close
   await rpc('term.close', { s });
   await until('closed event', () => events.some((e) => e.ev === 'closed' && e.s === s));
+
+  // --- structured stream diagnostic logs recorded without leaking terminal content
+  const streamLogs = hostLogs.filter((l) => l.includes(' stream.'));
+  for (const ev of ['stream.open', 'stream.out', 'stream.resize', 'stream.fit', 'stream.reprint.start', 'stream.reprint.drop', 'stream.reprint.end', 'stream.close']) {
+    assert.ok(streamLogs.some((l) => l.includes(` ${ev} `)), `expected ${ev} in stream diagnostic logs`);
+  }
+  assert.ok(!streamLogs.some((l) => l.includes('FROM_MAC_2') || l.includes('FROM_PHONE_5')), 'stream logs must never contain terminal output');
 
   // --- resume on a new connection with the same device key: `ready` comes with the welcome (one
   // round trip earlier), but the phone is online only once its sealed `auth` proves the key.

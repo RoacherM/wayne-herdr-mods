@@ -53,7 +53,7 @@ export async function startService({ relayUrl = process.env.WAYNE_HERDR_MODS_URL
   const initialVoiceKey = await voiceKeys.read();
   const voice = createVoice({ dir: state.dir, log, keys: voiceKeys, initialAvailable: Boolean(initialVoiceKey) });
   let voiceShown = keyTail(initialVoiceKey); // what status shows of the key; read once, then on each change
-  const files = createFiles({ dir: state.dir, terminals, log, syncApp: !coreOptions?.session && !process.env.HC_SESSION });
+  const files = createFiles({ dir: state.dir, terminals, log });
   const metrics = createMetricsStore({ dir: state.dir });
   // Two kinds of connection carry phones: through the relay, and direct (WebRTC, `rtc:<n>`).
   const via = (cid) => (String(cid).startsWith('rtc:') ? rtc : link);

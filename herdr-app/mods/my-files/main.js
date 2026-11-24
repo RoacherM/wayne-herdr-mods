@@ -3,13 +3,11 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, panes, focused, props, exec, run, shared, setShared, readTextFile, watchFolder, nextCommand, theme, appHome, openOverlay, closeOverlay, checking } from "herdr";
+import { spaces, panes, focused, props, exec, run, shared, setShared, watchFolder, theme, openOverlay, closeOverlay, checking } from "herdr";
 import { locate, FILE_TABS, withFileTab, fileTabOf, newTabId } from "./state.js";
 import { FilePreview } from "./preview.js";
 
 const MOD = "mods/my-files";
-const PHONE_FOLDERS = "my-files/folders";
-const PHONE_SYNC_FILE = "data/my-files/phone-sync.json";
 const PER_FOLDER = 500, TOTAL = 5000;
 const DIR_SCRIPT = 'n=0; for p in "$1"/* "$1"/.[!.]* "$1"/..?*; do [ -e "$p" ] || [ -L "$p" ] || continue; name=${p##*/}; [ "$name" = .git ] && continue; if [ -d "$p" ]; then kind=d; else kind=f; fi; printf "%s\\0%s\\0" "$kind" "$name"; n=$((n+1)); [ "$n" -gt 500 ] && break; done; test -d "$1"';
 
@@ -42,11 +40,6 @@ async function readGitMarks(cwd, on) {
     marks[`${root}/${entry.slice(3)}`] = xy === "??" || xy.includes("A") ? "A" : xy.includes("U") ? "U" : xy.includes("D") ? "D" : "M";
   }
   return marks;
-}
-
-function phoneFolderList(data, root) {
-  if (Array.isArray(data.folders)) return !data.root || data.root === root ? data.folders : null;
-  return root && Array.isArray(data.folders?.[root]) ? data.folders[root] : null;
 }
 
 function openFileTab(absPath, place, cx) {
@@ -105,11 +98,6 @@ export default class MyFiles extends View {
     if (checking()) return;
     this.refresh(cx);
     cx.timer.every(10000, (cx) => this.refresh(cx));
-    cx.spawn(async (cx) => {
-      for (;;) {
-        if ((await nextCommand()) === "sync") await this.syncFromPhone(cx);
-      }
-    });
   }
 
   openRelativeLink(p, target, cx) {
@@ -120,39 +108,6 @@ export default class MyFiles extends View {
   }
 
   current(context) { return this.context === context && JSON.stringify(location()) === context.key; }
-
-  saveSharedFolders() {
-    if (!this.root) return;
-    const prev = shared(PHONE_FOLDERS);
-    const map = prev && typeof prev === "object" ? { ...prev } : {};
-    map[this.root] = [...this.folders];
-    setShared(PHONE_FOLDERS, map);
-  }
-
-  async syncFromPhone(cx) {
-    let raw;
-    try { raw = await readTextFile(`${appHome()}/${PHONE_SYNC_FILE}`); } catch { return; }
-    if (!raw) return;
-    let data;
-    try { data = JSON.parse(raw); } catch { return; }
-    if (data.onlyChanged !== undefined) this.onlyChanged = Boolean(data.onlyChanged);
-    const list = phoneFolderList(data, this.root);
-    if (list) {
-      this.folders = new Set(list.map(String));
-      this.saveSharedFolders();
-      await this.loadMissingFolders(this.context);
-    }
-    cx.notify();
-  }
-
-  async loadMissingFolders(context) {
-    if (!context) return;
-    for (const path of this.folders) {
-      if (!this.entries.has(path) && !this.pending.has(path)) {
-        await this.loadFolder(path, context).catch(() => {});
-      }
-    }
-  }
 
   watch(root, cx) {
     if (this.on || this.watched === root) return;
@@ -183,12 +138,11 @@ export default class MyFiles extends View {
   switchContext(loc, next) {
     if (this.context) this.saved.set(this.context.key, { folders: this.folders });
     const saved = this.saved.get(next);
-    const synced = loc.cwd && Array.isArray(shared(PHONE_FOLDERS)?.[loc.cwd]) ? shared(PHONE_FOLDERS)[loc.cwd] : [];
     this.context = { key: next, cwd: loc.cwd, on: loc.on };
     this.root = loc.cwd;
     this.on = loc.on;
     this.entries = new Map();
-    this.folders = new Set(saved?.folders ?? synced);
+    this.folders = new Set(saved?.folders);
     this.pending = new Set();
     this.marks = {};
     this.watched = null;
@@ -239,7 +193,6 @@ export default class MyFiles extends View {
         });
       }
     }
-    this.saveSharedFolders();
     cx.notify();
   }
 

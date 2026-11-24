@@ -9,16 +9,23 @@
  *   page → app  {t:'ready', fit}   {t:'fit', fit}        {t:'ack', n}
  *               {t:'drawn', cursorHidden, appCursor}     {t:'atLatest', on}
  *               {t:'wheel', d}     {t:'coast', stop?, d?, v?, cell?}
- *               {t:'tap'}          {t:'log', m}
+ *               {t:'tap'}          {t:'log', m}          {t:'diag', ev, ...}
  */
 import { Terminal } from '@xterm/xterm';
 import { UnicodeGraphemesAddon } from '@xterm/addon-unicode-graphemes';
 import { touchScroll } from '../../app/src/touch-scroll.js';
-import { atomic, SYNC_ON } from '../../app/src/paint.js';
+import { atomic, indexOf, SYNC_OFF, SYNC_ON } from '../../app/src/paint.js';
 import { textStyle } from '../../app/src/text-style.js';
 import { coastSteps } from '../../shared/coast.js';
 
 const post = (v) => window.nsh?.postMessage(JSON.stringify(v));
+const diag = (ev, detail = {}) => post({ t: 'diag', ev, ...detail });
+const enc = (s) => new TextEncoder().encode(s);
+const CLEAR_2J = enc('\x1b[2J');
+const CLEAR_J = enc('\x1b[J');
+const ALT_ON = enc('\x1b[?1049h');
+const ALT_OFF = enc('\x1b[?1049l');
+const SYNC_WATCH_MS = 250;
 const theme = { background: '#0b0b0c', foreground: '#e6e6e1', cursor: '#e6e6e1', selectionBackground: '#3a3a36' };
 document.documentElement.style.background = theme.background;
 
@@ -62,7 +69,86 @@ function reportFit() {
   const key = `${fit.cols}x${fit.rows}`;
   if (key === lastFitKey) return;
   lastFitKey = key;
+  diag('term.fit_change', { fit, vpW: viewport.clientWidth, vpH: viewport.clientHeight, fullH: fullHeight });
   post({ t: 'fit', fit });
+}
+
+// ---- render & sync diagnostics (geometry & control flags only; never logs terminal text)
+let expectFrame = '';
+let syncPending = null;
+let lastVpKey = '';
+let lastRoutineFrameAt = 0;
+const ROUTINE_FRAME_MIN_MS = 500;
+
+function bufferStats() {
+  const b = xterm.buffer.active;
+  let nonEmpty = 0;
+  for (let y = 0; y < xterm.rows; y++) {
+    if (b.getLine(b.viewportY + y)?.translateToString(true).trim()) nonEmpty++;
+  }
+  return {
+    alt: b.type === 'alternate',
+    cols: xterm.cols,
+    rows: xterm.rows,
+    baseY: b.baseY,
+    vpY: b.viewportY,
+    curY: b.cursorY,
+    nonEmpty,
+    st: Math.round(viewport.scrollTop),
+    sl: Math.round(viewport.scrollLeft),
+    vpW: viewport.clientWidth,
+    vpH: viewport.clientHeight,
+    hostW: host.scrollWidth,
+    hostH: host.scrollHeight,
+  };
+}
+
+function abortSyncWatch(why) {
+  if (!syncPending) return;
+  clearTimeout(syncPending.timer);
+  const p = syncPending;
+  syncPending = null;
+  diag('term.sync_abort', { why, from: p.from, to: p.to, waitMs: Math.round(performance.now() - p.t0) });
+}
+
+function armSyncWatch(from, to) {
+  if (syncPending) clearTimeout(syncPending.timer);
+  const entry = { t0: performance.now(), from, to, stuck: false, timer: 0 };
+  entry.timer = setTimeout(() => {
+    if (syncPending !== entry) return;
+    entry.stuck = true;
+    diag('term.sync_stuck', { from, to, waitMs: Math.round(performance.now() - entry.t0), ...bufferStats() });
+  }, SYNC_WATCH_MS);
+  syncPending = entry;
+}
+
+function finishSyncWatch(bytesLen, hasPaint, hasSyncOff, fresh) {
+  if (!syncPending || (!hasPaint && !hasSyncOff)) return;
+  clearTimeout(syncPending.timer);
+  const p = syncPending;
+  syncPending = null;
+  diag('term.sync_done', {
+    from: p.from, to: p.to, waitMs: Math.round(performance.now() - p.t0),
+    stuck: p.stuck, bytes: bytesLen, hasPaint, hasSyncOff, fresh,
+  });
+}
+
+function inspectFrame(bytes, fresh, hasPaint) {
+  const hasClear = indexOf(bytes, CLEAR_2J) >= 0 || indexOf(bytes, CLEAR_J) >= 0;
+  const hasSyncOn = indexOf(bytes, SYNC_ON) >= 0;
+  const hasSyncOff = indexOf(bytes, SYNC_OFF) >= 0;
+  const hasAlt = indexOf(bytes, ALT_ON) >= 0 ? 'alt_on' : (indexOf(bytes, ALT_OFF) >= 0 ? 'alt_off' : '');
+  const stateReason = expectFrame || (fresh ? 'fresh' : hasPaint ? 'paint' : hasClear ? 'clear' : hasAlt);
+  if (stateReason) return { reason: stateReason, hasClear, hasSyncOn, hasSyncOff };
+  const routine = hasSyncOn || hasSyncOff ? 'sync' : (bytes.length >= 4096 ? 'large' : '');
+  if (routine) {
+    const now = performance.now();
+    if (now - lastRoutineFrameAt >= ROUTINE_FRAME_MIN_MS) {
+      lastRoutineFrameAt = now;
+      return { reason: routine, hasClear, hasSyncOn, hasSyncOff };
+    }
+  }
+  return { reason: '', hasClear, hasSyncOn, hasSyncOff };
 }
 
 // ---- follow latest & wheel tracking for full-screen programs
@@ -90,20 +176,34 @@ function setBack(n) { back = n; showLatest(); }
 
 function layout() {
   reportFit();
-  if (!follow.y) return;
+  const w = viewport.clientWidth, hgt = viewport.clientHeight;
+  const vpKey = `${w}x${hgt}`;
+  const vpChanged = booted && lastVpKey && vpKey !== lastVpKey;
+  if (booted && w > 0 && hgt > 0) lastVpKey = vpKey;
+  if (!follow.y) {
+    if (vpChanged) diag('term.viewport', { vpW: w, vpH: hgt, st: Math.round(viewport.scrollTop), hostH: host.scrollHeight, followY: false, cols, rows });
+    return;
+  }
   const cell = cellNow();
   if (!cell?.width) { setTimeout(layout, 60); return; }
   const b = xterm.buffer.active;
-  const w = viewport.clientWidth, hgt = viewport.clientHeight;
   if (follow.x) {
     const x = b.cursorX * cell.width;
     if (x < viewport.scrollLeft || x > viewport.scrollLeft + w - 2 * cell.width) viewport.scrollLeft = setLeft = Math.max(0, x - w / 3);
     else setLeft = viewport.scrollLeft;
   }
-  if (atLatest(cell)) return;
-  const { cursor, last } = latestRows();
-  const want = Math.min((last + 1) * cell.height - hgt + cell.height / 2, Math.max(0, (cursor - 1) * cell.height));
-  viewport.scrollTop = Math.max(0, want);
+  const prevSt = viewport.scrollTop;
+  if (!atLatest(cell)) {
+    const { cursor, last } = latestRows();
+    const want = Math.min((last + 1) * cell.height - hgt + cell.height / 2, Math.max(0, (cursor - 1) * cell.height));
+    viewport.scrollTop = Math.max(0, want);
+  }
+  if (vpChanged || Math.abs(viewport.scrollTop - prevSt) > 200) {
+    diag('term.viewport', {
+      vpW: w, vpH: hgt, prevSt: Math.round(prevSt), st: Math.round(viewport.scrollTop),
+      hostH: host.scrollHeight, followY: true, cols, rows,
+    });
+  }
 }
 
 viewport.addEventListener('scroll', () => {
@@ -114,7 +214,12 @@ viewport.addEventListener('scroll', () => {
   if (y !== follow.y) { follow.y = y; showLatest(); }
 }, { passive: true });
 xterm.onScroll(showLatest);
-xterm.buffer.onBufferChange(() => { if (xterm.buffer.active.type !== 'alternate') setBack(0); showLatest(); layout(); });
+xterm.buffer.onBufferChange(() => {
+  if (xterm.buffer.active.type !== 'alternate') setBack(0);
+  diag('term.buffer_change', bufferStats());
+  showLatest();
+  layout();
+});
 new ResizeObserver(layout).observe(viewport);
 
 const wheelReport = (up) => {
@@ -170,20 +275,34 @@ function flush() {
   if (ackTimer) { clearTimeout(ackTimer); ackTimer = 0; }
   if (unacked) { post({ t: 'ack', n: unacked }); unacked = 0; }
 }
-function write(b64) {
+function write(b64, fresh = false) {
+  const t0 = performance.now();
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   let last = bytes;
+  let hasPaint = false;
   if (sized) {
     const [before, repaint] = atomic(bytes, { clearHistory });
     if (repaint) {
+      hasPaint = true;
       clearHistory = false;
       if (before.length) xterm.write(textStyle(before));
       last = repaint;
     }
   }
+  const info = inspectFrame(bytes, fresh, hasPaint);
+  if (info.reason) expectFrame = '';
+  finishSyncWatch(bytes.length, hasPaint, info.hasSyncOff, fresh);
   xterm.write(textStyle(last), () => {
+    if (info.reason) {
+      diag('term.frame', {
+        reason: info.reason, bytes: bytes.length, fresh, hasPaint,
+        hasClear: info.hasClear, hasSyncOn: info.hasSyncOn, hasSyncOff: info.hasSyncOff,
+        writeMs: Math.round(performance.now() - t0),
+        ...bufferStats(),
+      });
+    }
     post({
       t: 'drawn',
       cursorHidden: xterm._core?.coreService?.isCursorHidden !== false,
@@ -199,17 +318,28 @@ function write(b64) {
 window.addEventListener('message', (e) => {
   let m; try { m = JSON.parse(e.data); } catch { return; }
   if (m.t === 'open') {
+    abortSyncWatch('open');
     sized = Boolean(m.sized);
+    expectFrame = 'open';
+    diag('term.open_view', { sized, reopened: Boolean(m.reopened), cols: m.cols, rows: m.rows, prev: `${cols}x${rows}`, fit: fitNow() });
     if (!sized) { xterm.reset(); resizeTo(m.cols, m.rows); }
     else if (m.reopened) clearHistory = true;
     reportFit();
   } else if (m.t === 'out') {
     if (m.fresh) clearHistory = true;
-    write(m.d);
+    write(m.d, Boolean(m.fresh));
   } else if (m.t === 'size') {
-    if (sized) xterm.write(SYNC_ON, () => resizeTo(m.cols, m.rows));
-    else resizeTo(m.cols, m.rows);
+    const from = `${cols}x${rows}`, to = `${m.cols}x${m.rows}`;
+    expectFrame = 'size';
+    diag('term.size', { from, to, sized, vpW: viewport.clientWidth, vpH: viewport.clientHeight });
+    if (sized) {
+      armSyncWatch(from, to);
+      xterm.write(SYNC_ON, () => resizeTo(m.cols, m.rows));
+    } else {
+      resizeTo(m.cols, m.rows);
+    }
   } else if (m.t === 'reset') {
+    abortSyncWatch('reset');
     xterm.reset();
   } else if (m.t === 'typing' || m.t === 'toLatest') {
     toLatest();
