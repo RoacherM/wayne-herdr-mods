@@ -497,7 +497,7 @@ Claude Code 自己怎么回应（`probe/wheel-batch.mjs`：复制一个旧会话
 | `exited` / `replaced` | 程序退出 / 别的页面接手了（这台手机开了超过 4 个流，宿主关掉最早的：`host/phones.js` `MAX_STREAMS`）。提示「程序已退出（N）」/「这个终端在别的页面打开了」。不自动重试 | 下一次连接就绪再开（和以前一样） |
 | `disposed` | 页面关了；之后回来的流马上 `term.close` | — |
 
-**事件。** `link {ready, renewed}`（`renewed`：在新连接上就绪；网页版是 `Duo` 的每次 `ready`，原生 App 是 `conn.ts` 的 `linkEpoch` 变了）、`view`（页面能画了）、`fit {cols, rows}`、`away {on}`（后台、锁屏、页面隐藏）、`opened {r, epoch}`、`openFailed {message, epoch}`、`stream {msg}`、`input {m, p, after}`、`retry`、`dispose`。
+**事件。** `link {ready, renewed}`（`renewed`：在新连接上就绪；网页版是 `Duo` 的每次 `ready`，原生 App 是 `conn.ts` 的 `linkEpoch` 变了）、`view`（页面能画了）、`viewLost`（原生 App 的 `WKWebView` 渲染进程在后台被 iOS 回收、正在重建）、`fit {cols, rows}`、`away {on}`（后台、锁屏、页面隐藏）、`opened {r, epoch}`、`openFailed {message, epoch}`、`stream {msg}`、`input {m, p, after}`、`retry`、`dispose`。
 
 **效果。** `rpc term.open`（结果带着 `epoch` 送回来）、`rpc term.close`、`notify`（`term.fit` / `term.input` / `term.press`）、`view`（`open` / `out` / `size`，就是原生 App 网页的消息）、`notice`（终端下面那行字）、`retry {ms}`。
 
@@ -510,6 +510,8 @@ Claude Code 自己怎么回应（`probe/wheel-batch.mjs`：复制一个旧会话
 5. **旧宿主照旧。** `sized: false` 的流从不发 `term.fit`，页面跟 Mac 的尺寸（原生 App：`terminals.list` 的行列，网页版 `onList`）。
 
 **两边壳子做的事。** 量格子、跟踪前后台、把 `view` 画到 xterm（网页版 `draw()`）或发给页面（原生 App `post()`）、把输入放进一条按顺序的队列（`typed()`：图片之间等 `after` 毫秒；等待中流换了，就交回会话重发）。队列用 `enqueue()` 接：一步出错只记一条警告，后面的输入照常发（以前一次同步异常会让这一页之后的输入全部静默丢失）。协议没变：消息名、字段和以前一样，新手机页 + 旧宿主、旧手机页 + 新宿主都照旧。
+
+**iOS `WKWebView` 后台被杀自动重建（2026-11-25）。** App 在后台挂久了，iOS 会单独回收 `WKWebView` 的 WebContent 进程而保留主进程，重连后 `postMessage` 发给死进程会导致画面冻住（`app.resume` 记录 `paint: null`）。[TermScreen.tsx](ios/src/screens/TermScreen.tsx) 现通过两层兜底自动恢复：① 监听 `<WebView onError>` 的 `ERR_NSH_WEBVIEW_TERMINATED`；② 切回前台与 `reopened` 时给 [ios/term/term.js](ios/term/term.js) 发轻量 `ping`，600 ms 内无 `pong` 即判定无响应。触发后先向状态机发 `viewLost`（关掉旧流并推进 `epoch`，防止旧 `term.open` 回复灌进新视图），再通过 `<Each of={[webEpoch()]}>` 重建全新 `<WebView>`（后台触发则延迟到回前台再建），新页面发出 `ready` 后自动重新 `term.open` 刷出最新画面。
 
 **没做的（有原因）。**
 

@@ -6,11 +6,13 @@
  *   app → page  {t:'open', sized, reopened, cols, rows}  {t:'size', cols, rows}
  *               {t:'out', d:<base64>, fresh?}            {t:'reset'}
  *               {t:'typing'}                             {t:'toLatest'}
+ *               {t:'ping', id}
  *   page → app  {t:'ready', fit}   {t:'fit', fit}        {t:'ack', n}
  *               {t:'drawn', cursorHidden, appCursor}     {t:'atLatest', on}
  *               {t:'wheel', d}     {t:'coast', stop?, d?, v?, cell?}
  *               {t:'tap'}          {t:'openUrl', url}    {t:'copy', text}
- *               {t:'haptic'}       {t:'log', m}          {t:'diag', ev, ...}
+ *               {t:'haptic'}       {t:'pong', id}        {t:'log', m}
+ *               {t:'diag', ev, ...}
  */
 import { Terminal } from '@xterm/xterm';
 import { UnicodeGraphemesAddon } from '@xterm/addon-unicode-graphemes';
@@ -540,6 +542,8 @@ window.addEventListener('message', (e) => {
   } else if (m.t === 'typing' || m.t === 'toLatest') {
     clearSel();
     toLatest();
+  } else if (m.t === 'ping') {
+    post({ t: 'pong', id: m.id });
   }
 });
 window.addEventListener('error', (e) => post({ t: 'log', m: String(e.message) }));

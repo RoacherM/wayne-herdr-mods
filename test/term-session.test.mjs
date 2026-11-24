@@ -371,3 +371,48 @@ test('F5: enqueue: one failing step does not stop the later ones (a plain .then 
   } finally { console.warn = warn; }
   assert.deepEqual(ran, ['a', 'b'], 'the plain chain skipped its next step: that is the bug enqueue prevents');
 });
+
+test('viewLost (iOS WebView terminated): closes old stream, resets view, and reopens fresh once new WebView is ready', () => {
+  const { state: afterLost, effects: lostFx } = step(live(), { type: 'viewLost' });
+  assert.equal(afterLost.viewReady, false);
+  assert.equal(afterLost.phase, 'waiting');
+  assert.equal(afterLost.s, null);
+  assert.equal(afterLost.opened, false);
+  assert.equal(afterLost.fitSent, '');
+  assert.equal(afterLost.epoch, 2);
+  assert.deepEqual(of(lostFx, 'rpc', 'term.close'), [{ type: 'rpc', m: 'term.close', p: { s: 7 } }]);
+  // Calling viewLost twice while already waiting for WebView, or after dispose, is a no-op
+  assert.deepEqual(step(afterLost, { type: 'viewLost' }).effects, []);
+  const disposed = step(live(), { type: 'dispose' }).state;
+  assert.equal(step(disposed, { type: 'viewLost' }).state.phase, 'disposed');
+
+  // Fresh WebView mounts and reports ready + fit -> opens a brand new stream with reopened: false
+  const { st: afterView, effects: viewFx } = run([{ type: 'fit', fit: F }, { type: 'view' }, opened(9, 2)], afterLost);
+  assert.equal(afterView.phase, 'live');
+  assert.equal(afterView.s, 9);
+  assert.deepEqual(of(viewFx, 'rpc', 'term.open'), [{ type: 'rpc', m: 'term.open', p: { address: 't1', fit: F, lead: true }, epoch: 2 }]);
+  assert.equal(of(viewFx, 'view').find((e) => e.msg.t === 'open')?.msg.reopened, false);
+});
+
+test('viewLost while opening discards stale opened reply and waits for fresh WebView before reopening', () => {
+  const opening = run([{ type: 'link', ready: true }, { type: 'fit', fit: F }, { type: 'view' }]).st;
+  const { state: lostSt, effects: lostFx } = step(opening, { type: 'viewLost' });
+  assert.equal(lostSt.phase, 'waiting');
+  assert.equal(lostSt.viewReady, false);
+  assert.deepEqual(of(lostFx, 'rpc', 'term.close'), [], 'no s yet while opening');
+
+  // Stale opened from epoch 1 arrives while WebView is dead -> closed on Mac, never drawn
+  const { state: afterStale, effects: staleFx } = step(lostSt, opened(7, 1));
+  assert.deepEqual(of(staleFx, 'rpc', 'term.close'), [{ type: 'rpc', m: 'term.close', p: { s: 7 } }]);
+  assert.deepEqual(of(staleFx, 'view'), []);
+  assert.equal(afterStale.phase, 'waiting');
+
+  // Link reconnects while WebView is still remounting -> still waits until view is ready
+  const { state: afterLink, effects: linkFx } = step(afterStale, { type: 'link', ready: true, renewed: true });
+  assert.equal(afterLink.phase, 'waiting');
+  assert.deepEqual(of(linkFx, 'rpc', 'term.open'), []);
+
+  // New WebView fires view -> opens immediately on latest epoch
+  const { effects: openFx } = step(afterLink, { type: 'view' });
+  assert.equal(of(openFx, 'rpc', 'term.open').length, 1);
+});

@@ -39,6 +39,9 @@ const ARROWS: Record<string, string> = { up: "A", down: "B", right: "C", left: "
 const REPEAT = new Set(["up", "down", "left", "right"]);
 const MAX_VOICE_MS = 60_000;
 const PAGE_READY_FALLBACK_MS = 1500;
+const WEB_PING_MS = 600;
+const MAX_WEB_RECOVERS = 3;
+const RECOVER_COOLDOWN_MS = 1500;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function TermScreen(props: {
@@ -60,6 +63,7 @@ export function TermScreen(props: {
   const litKey = signal("");
   const filesOpen = signal(false);
   const webReady = signal(false);
+  const webEpoch = signal(0);
 
   let litTimer: any = 0;
   let noticeTimer: any = 0;
@@ -68,23 +72,78 @@ export function TermScreen(props: {
   let didRepeat = false;
   let voiceTickTimer: any = 0;
   let voiceLimitTimer: any = 0;
+  let bootTimer: any = 0;
+  let pingTimer: any = 0;
+  let pingSeq = 0;
+  let webDeadInBg = false;
+  let recoverCount = 0;
+  let lastRecoverAt = 0;
 
-  const mountedAt = Date.now();
+  let mountedAt = Date.now();
   termOpening(address, false);
-  const bootTimer: any = setTimeout(() => {
-    clientLog("warn", "term.ready_timeout", { address, ms: PAGE_READY_FALLBACK_MS });
-    webReady.set(true);
-  }, PAGE_READY_FALLBACK_MS);
+  function armBootTimer(gen: number) {
+    clearTimeout(bootTimer);
+    bootTimer = setTimeout(() => {
+      if (gen !== webEpoch() || pageReady) return;
+      clientLog("warn", "term.ready_timeout", { address, ms: PAGE_READY_FALLBACK_MS, gen });
+      webReady.set(true);
+    }, PAGE_READY_FALLBACK_MS);
+  }
+  armBootTimer(0);
 
   let field!: InputRef;
-  let web!: WebViewRef;
+  let web: WebViewRef | undefined;
   let pageReady = false;
   const toPage: string[] = [];
   const post = (v: object) => {
     const m = JSON.stringify(v);
-    if (pageReady) web.postMessage(m);
+    if (pageReady && web) web.postMessage(m);
     else toPage.push(m);
   };
+  function clearPing() {
+    clearTimeout(pingTimer);
+    pingTimer = 0;
+  }
+  function recoverWebView(reason: string) {
+    clearTimeout(bootTimer);
+    clearPing();
+    toPage.length = 0;
+    pageReady = false;
+    webReady.set(false);
+    session.send({ type: "viewLost" });
+    if (lifecycle() === "background") {
+      webDeadInBg = true;
+      clientLog("warn", "term.web_lost_bg", { address, reason });
+      return;
+    }
+    const now = Date.now();
+    if (recoverCount >= MAX_WEB_RECOVERS && now - lastRecoverAt < 30_000) {
+      clientLog("error", "term.web_recover_limit", { address, reason, count: recoverCount });
+      return;
+    }
+    if (now - lastRecoverAt < RECOVER_COOLDOWN_MS && reason !== "bg_resume") return;
+    lastRecoverAt = now;
+    recoverCount++;
+    webDeadInBg = false;
+    mountedAt = now;
+    const next = webEpoch() + 1;
+    clientLog("warn", "term.web_remount", { address, reason, gen: next, count: recoverCount });
+    web = undefined;
+    webEpoch.set(next);
+    armBootTimer(next);
+  }
+  function probeWebView(why: string) {
+    if (!pageReady || lifecycle() !== "active" || pingTimer) return;
+    const id = ++pingSeq;
+    const gen = webEpoch();
+    post({ t: "ping", id });
+    pingTimer = setTimeout(() => {
+      pingTimer = 0;
+      if (gen !== webEpoch() || !pageReady || lifecycle() !== "active") return;
+      clientLog("warn", "term.web_unresponsive", { address, why, id, ms: WEB_PING_MS });
+      recoverWebView(`ping_timeout:${why}`);
+    }, WEB_PING_MS);
+  }
 
   function flashNotice(msg: string, ms = 1800) {
     clearTimeout(noticeTimer);
@@ -127,6 +186,7 @@ export function TermScreen(props: {
         typed(e);
       } else if (e.type === "view") {
         post(e.msg.t === "out" ? { t: "out", d: e.msg.d, fresh: e.msg.fresh } : e.msg);
+        if (e.msg.t === "open" && e.msg.reopened) probeWebView("reopen");
       } else if (e.type === "notice") {
         notice.set(e.text);
       } else if (e.type === "retry") {
@@ -185,12 +245,24 @@ export function TermScreen(props: {
     const st = session.state;
     if (t && st.opened && !st.sized) post({ t: "size", cols: t.cols, rows: t.rows });
   });
+  let wasAway = false;
   effect(() => {
     const st = lifecycle();
-    if (st === "active" || st === "background") {
-      const on = st === "background";
-      clientLog("info", "term.away", { address, s: sid(), on, fit: session.state.fit ?? null, phase: session.state.phase });
-      session.send({ type: "away", on });
+    if (st === "background") {
+      wasAway = true;
+      clearPing();
+      clientLog("info", "term.away", { address, s: sid(), on: true, fit: session.state.fit ?? null, phase: session.state.phase });
+      session.send({ type: "away", on: true });
+    } else if (st === "active") {
+      clientLog("info", "term.away", { address, s: sid(), on: false, fit: session.state.fit ?? null, phase: session.state.phase });
+      session.send({ type: "away", on: false });
+      if (webDeadInBg) {
+        wasAway = false;
+        recoverWebView("bg_resume");
+      } else if (wasAway) {
+        wasAway = false;
+        probeWebView("resume");
+      }
     }
   });
 
@@ -198,6 +270,7 @@ export function TermScreen(props: {
     clientLog("info", "term.cleanup", { address, s: sid() });
     if (activeTermAddress() === address) activeTermAddress.set(null);
     clearTimeout(bootTimer);
+    clearPing();
     clearTimeout(litTimer);
     clearTimeout(noticeTimer);
     stopRepeat();
@@ -211,20 +284,26 @@ export function TermScreen(props: {
   function fromPage(data: string) {
     let m: any;
     try { m = JSON.parse(data); } catch { return; }
+    clearPing();
+    if (m.t === "pong") {
+      recoverCount = 0;
+      return;
+    }
     if (m.t === "ready") {
       clearTimeout(bootTimer);
       const webMs = Date.now() - mountedAt;
       termWebReady(webMs);
-      clientLog("info", "term.ready", { ms: webMs, fit: m.fit ?? null });
+      clientLog("info", "term.ready", { ms: webMs, fit: m.fit ?? null, gen: webEpoch() });
       pageReady = true;
       if (m.fit) session.send({ type: "fit", fit: m.fit });
-      for (const x of toPage.splice(0)) web.postMessage(x);
+      for (const x of toPage.splice(0)) web?.postMessage(x);
       webReady.set(true);
     } else if (m.t === "fit") {
       session.send({ type: "fit", fit: m.fit });
     } else if (m.t === "ack" && sid() !== null) {
       notify("term.ack", { s: sid(), n: m.n });
     } else if (m.t === "drawn") {
+      recoverCount = 0;
       termDrawn();
       clearLit();
       appCursor.set(Boolean(m.appCursor));
@@ -522,14 +601,26 @@ export function TermScreen(props: {
 
         {/* Live OLED Black Terminal Stage */}
         <View class="relative flex-1 bg-term-bg">
-          <WebView
-            ref={web}
-            html={TERM_HTML}
-            style={{ flex: 1 }}
-            scrollable={false}
-            onMessage={(e) => fromPage(e.data)}
-            testID="term-web"
-          />
+          <Each of={[webEpoch()]}>
+            {(k) => {
+              const gen = k();
+              return (
+                <WebView
+                  ref={(el) => { if (gen === webEpoch()) web = el; }}
+                  html={TERM_HTML}
+                  style={{ flex: 1 }}
+                  scrollable={false}
+                  onMessage={(e) => { if (gen === webEpoch()) fromPage(e.data); }}
+                  onError={(e) => {
+                    if (gen !== webEpoch()) return;
+                    clientLog("warn", "term.web_error", { address, gen, code: e.code ?? null, msg: e.message });
+                    if (e.code === "ERR_NSH_WEBVIEW_TERMINATED") recoverWebView("terminated");
+                  }}
+                  testID="term-web"
+                />
+              );
+            }}
+          </Each>
 
           <If when={!atLatest()}>
             <View class="absolute right-3.5 bottom-3">

@@ -12,6 +12,7 @@
  * Events (`step(state, event)`):
  *   {type:'link', ready, renewed?}  the link is (not) ready; renewed: ready again on another connection
  *   {type:'view'}                   the page can draw (iOS: the WebView said ready)
+ *   {type:'viewLost'}               the page died and is remounting (iOS: WKWebView WebContent terminated)
  *   {type:'fit', fit}               the phone's grid ({cols, rows}); null: not measured yet
  *   {type:'away', on}               the phone left (background, locked, hidden) or came back
  *   {type:'opened', r, epoch}       term.open answered {s, cols, rows, sized}
@@ -199,9 +200,25 @@ function onInput(st, { m, p, after = 0 }, fx) {
   return { ...st, queue: [...st.queue, { m, p, after }] };
 }
 
+function onViewLost(st, fx) {
+  if (st.phase === 'disposed' || !st.viewReady) return st;
+  if (st.s !== null && st.linkReady) fx.push({ type: 'rpc', m: 'term.close', p: { s: st.s } });
+  return {
+    ...st,
+    phase: 'waiting',
+    viewReady: false,
+    epoch: st.epoch + 1,
+    s: null,
+    opened: false,
+    fitSent: '',
+    early: [],
+  };
+}
+
 const STEP = {
   link: onLink,
   view: (st, ev, fx) => (st.viewReady ? st : tryOpen({ ...st, viewReady: true }, fx)),
+  viewLost: (st, _ev, fx) => onViewLost(st, fx),
   fit: (st, ev, fx) => sendFit({ ...st, fit: ev.fit ?? st.fit }, fx),
   away: (st, ev, fx) => sendFit({ ...st, away: Boolean(ev.on) }, fx),
   opened: onOpened,

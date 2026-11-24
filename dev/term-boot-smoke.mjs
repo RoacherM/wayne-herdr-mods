@@ -33,6 +33,10 @@ try {
   const turned = (await page.evaluate(() => window.__posted)).filter((m) => m.t === 'fit');
   console.log('after turning:', JSON.stringify(turned));
   if (turned.length !== 1 || turned[0].fit.cols <= ready[0]?.fit?.cols) { console.log('FAIL: want one fit for the wider grid'); failed = true; }
+  // Liveness ping -> pong used by TermScreen after background resume to detect dead WebContent processes.
+  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ t: 'ping', id: 7 }) })));
+  const pongs = (await page.evaluate(() => window.__posted)).filter((m) => m.t === 'pong');
+  if (pongs.length !== 1 || pongs[0].id !== 7) { console.log('FAIL: want pong id=7, got', JSON.stringify(pongs)); failed = true; }
   if (!failed) console.log('OK');
 } finally { await browser.close(); }
 process.exit(failed ? 1 : 0);
