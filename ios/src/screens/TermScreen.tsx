@@ -1,4 +1,4 @@
-import { cleanup, Clipboard, computed, effect, host, lifecycle, Picker, safeArea, Scroll, signal, Text, View, WebView } from "nsh";
+import { cleanup, Clipboard, computed, effect, host, Keyboard, lifecycle, Picker, safeArea, Scroll, signal, Text, View, WebView } from "nsh";
 import type { InputRef, WebViewRef } from "nsh/types";
 import { Button, Input, NavPage } from "nsh/base";
 import {
@@ -13,16 +13,14 @@ import { agentKeys, combo, keyOfChar, MODS } from "../../../app/src/agent-keys.j
 import { safeHttpUrl } from "../../../app/src/term-select.js";
 import { enqueue, termSession } from "../../../app/src/term-session.js";
 import { voiceHold } from "../../../app/src/voice-hold.js";
-import { base, GlassCapsule, GlassCircle, Icon, spaceName, tapHaptic } from "../ui/controls";
+import { base, GLASS_STYLE, GlassCapsule, GlassCircle, Icon, spaceName, tapHaptic } from "../ui/controls";
 import { FilesSheet } from "./FilesSheet";
-import chevronDownIcon from "../../assets/chevron-down.svg";
 import chevronIcon from "../../assets/chevron.svg";
 import downIcon from "../../assets/down.svg";
 import folderOutlineIcon from "../../assets/folder-outline.svg";
 import kbdIcon from "../../assets/kbd.svg";
 import micIcon from "../../assets/mic.svg";
 import plusIcon from "../../assets/plus.svg";
-import sendUpIcon from "../../assets/send-up.svg";
 import spinnerIcon from "../../assets/spinner.svg";
 
 const KEYBAR_FRONT: [string, string][] = [
@@ -54,12 +52,12 @@ export function TermScreen(props: {
   const atLatest = signal(true);
   const notice = signal("");
   const burst = signal("");
+  const focused = signal(false);
   const uploading = signal("");
   const voiceState = signal<"" | "rec" | "busy">("");
   const voiceLeftSec = signal(60);
   const mods = signal<string[]>([]);
   const litKey = signal("");
-  const keysOpen = signal(false);
   const filesOpen = signal(false);
   const webReady = signal(false);
 
@@ -472,12 +470,17 @@ export function TermScreen(props: {
   });
 
   const floatingStatus = computed(() => {
-    if (voiceState() === "rec") return { text: voiceLeftSec() <= 10 ? `松开输入 · ${voiceLeftSec()}s` : "松开输入", spin: false };
-    if (voiceState() === "busy") return { text: "识别中…", spin: true };
     if (uploading()) return { text: `上传图片 ${uploading()}…`, spin: true };
     if (status() !== "ready") return { text: `重连 ${macName()}…`, spin: true };
     if (notice()) return { text: notice(), spin: false };
     return null;
+  });
+
+  const voiceOk = computed(() => Boolean(info()?.voice) && host.available());
+  const voiceLabel = computed(() => {
+    if (voiceState() === "rec") return voiceLeftSec() <= 10 ? `松开 输入 · ${voiceLeftSec()}s` : "松开 输入";
+    if (voiceState() === "busy") return "识别中…";
+    return "按住 说话";
   });
 
   return (
@@ -543,8 +546,8 @@ export function TermScreen(props: {
           </If>
         </View>
 
-        {/* Floating Bottom Status Pill + Optional Quick Keys + Single Liquid Glass Composer Capsule */}
-        <View class="items-center gap-2.5 bg-term-bg px-3 pt-1.5" style={{ paddingBottom: safeArea().bottom + 10 }}>
+        {/* Floating Bottom Status Pill + Liquid Glass Key Strip + Direct-Input Controls */}
+        <View class="relative items-center gap-2 bg-term-bg px-3 pt-1.5" style={{ paddingBottom: safeArea().bottom + 8 }}>
           <If when={floatingStatus()}>
             {(st) => (
               <GlassCapsule tone="term" class="h-9 gap-2 px-4">
@@ -556,108 +559,79 @@ export function TermScreen(props: {
             )}
           </If>
 
-          <If when={keysOpen()}>
-            <GlassCapsule tone="term" class="w-full px-1.5 py-1">
-              <Scroll
-                horizontal
-                scrollbar={false}
-                keyboardShouldPersistTaps="always"
-                class="flex-1"
-                contentClass="flex-row items-center gap-1"
-              >
-                {KEYBAR_FRONT.map(([label, seq]) => (
-                  <Button
-                    onPress={() => onKeyPress(label, seq)}
-                    onPressDown={() => onKeyDown(label, seq)}
-                    onPressUp={stopRepeat}
-                    class={`h-[30px] min-w-[32px] items-center justify-center rounded-full bg-term-key px-2.5 active:bg-term-key-press ${
-                      litKey() === label ? "border border-term-fg" : ""
-                    }`}
-                  >
-                    <Text class="text-[12.5px] font-medium text-term-fg">{label}</Text>
-                  </Button>
-                ))}
-                {agentShortcuts().map(([label, names]) => (
-                  <Button
-                    onPress={() => pressNamed(names, label)}
-                    class={`h-[30px] min-w-[32px] items-center justify-center rounded-full bg-term-key px-2.5 active:bg-term-key-press ${
-                      litKey() === label ? "border border-term-fg" : ""
-                    }`}
-                  >
-                    <Text class="text-[12.5px] font-medium text-term-fg">{label}</Text>
-                  </Button>
-                ))}
-                {named()
-                  ? MODS.map((m) => {
-                      const active = mods().includes(m);
-                      return (
-                        <Button
-                          onPress={() => toggleMod(m)}
-                          class={`h-[30px] min-w-[32px] items-center justify-center rounded-full px-2.5 active:bg-term-key-press ${
-                            active ? "bg-term-fg" : "bg-term-key"
-                          }`}
-                        >
-                          <Text class={`text-[12.5px] font-medium ${active ? "text-term-bg" : "text-term-fg"}`}>
-                            {MOD_LABELS[m]}
-                          </Text>
-                        </Button>
-                      );
-                    })
-                  : null}
-                {KEYBAR_BACK.map(([label, seq]) => (
-                  <Button
-                    onPress={() => onKeyPress(label, seq)}
-                    class={`h-[30px] min-w-[32px] items-center justify-center rounded-full bg-term-key px-2.5 active:bg-term-key-press ${
-                      litKey() === label ? "border border-term-fg" : ""
-                    }`}
-                  >
-                    <Text class="text-[12.5px] font-medium text-term-fg">{label}</Text>
-                  </Button>
-                ))}
-              </Scroll>
-            </GlassCapsule>
-          </If>
+          {/* Persistent Liquid Glass Shortcut Key Strip */}
+          <GlassCapsule tone="term" class="w-full px-1.5 py-1">
+            <Scroll
+              horizontal
+              scrollbar={false}
+              keyboardShouldPersistTaps="always"
+              class="flex-1"
+              contentClass="flex-row items-center gap-1"
+            >
+              {KEYBAR_FRONT.map(([label, seq]) => (
+                <Button
+                  onPress={() => onKeyPress(label, seq)}
+                  onPressDown={() => onKeyDown(label, seq)}
+                  onPressUp={stopRepeat}
+                  testID={seq === "\r" ? "send" : undefined}
+                  class={`h-[32px] min-w-[36px] items-center justify-center rounded-full bg-term-key px-2.5 active:bg-term-key-press ${
+                    litKey() === label ? "border border-term-fg" : ""
+                  }`}
+                >
+                  <Text class="text-[13.5px] font-medium text-term-fg">{label}</Text>
+                </Button>
+              ))}
+              {agentShortcuts().map(([label, names]) => (
+                <Button
+                  onPress={() => pressNamed(names, label)}
+                  class={`h-[32px] min-w-[36px] items-center justify-center rounded-full bg-term-key px-2.5 active:bg-term-key-press ${
+                    litKey() === label ? "border border-term-fg" : ""
+                  }`}
+                >
+                  <Text class="text-[13.5px] font-medium text-term-fg">{label}</Text>
+                </Button>
+              ))}
+              {named()
+                ? MODS.map((m) => {
+                    const active = mods().includes(m);
+                    return (
+                      <Button
+                        onPress={() => toggleMod(m)}
+                        class={`h-[32px] min-w-[36px] items-center justify-center rounded-full px-2.5 active:bg-term-key-press ${
+                          active ? "bg-term-fg" : "bg-term-key"
+                        }`}
+                      >
+                        <Text class={`text-[13.5px] font-medium ${active ? "text-term-bg" : "text-term-fg"}`}>
+                          {MOD_LABELS[m]}
+                        </Text>
+                      </Button>
+                    );
+                  })
+                : null}
+              {KEYBAR_BACK.map(([label, seq]) => (
+                <Button
+                  onPress={() => onKeyPress(label, seq)}
+                  class={`h-[32px] min-w-[36px] items-center justify-center rounded-full bg-term-key px-2.5 active:bg-term-key-press ${
+                    litKey() === label ? "border border-term-fg" : ""
+                  }`}
+                >
+                  <Text class="text-[13.5px] font-medium text-term-fg">{label}</Text>
+                </Button>
+              ))}
+            </Scroll>
+          </GlassCapsule>
 
-          {/* Signature T3 Code Bottom Liquid Glass Capsule */}
-          <GlassCapsule tone="term" class="h-12 w-full gap-1 pr-1.5 pl-2">
-            <Button
+          {/* Bottom Row: [ + ]  [ 🎙 按住 说话 ]  [ ⌨ ] — zero duplicate text box */}
+          <View class="w-full flex-row items-center gap-2.5">
+            <GlassCircle
               onPress={pick}
-              class="h-9 w-9 items-center justify-center rounded-full active:bg-term-key-press"
-              testID="pick"
+              size={44}
+              tone="term"
               accessibilityLabel="插入图片"
+              testID="pick"
             >
               <Icon src={plusIcon} size={20} class="tint-term-fg" />
-            </Button>
-
-            <Input
-              ref={field}
-              value={burst()}
-              multiline
-              submitBehavior="submit"
-              returnKeyType="send"
-              autoCapitalize="none"
-              autoCorrect={false}
-              placeholder="输入到终端"
-              onChange={(e) => onInputChange(e.value)}
-              onCompositionChange={(e) => { line.compose(e.composing); sync(); }}
-              onKeyPress={(e) => { if (e.key === "Backspace") line.backspace(); }}
-              onSubmit={send}
-              class="max-h-20 flex-1 px-1 py-2 text-[15.5px] text-term-fg"
-              testID="composer"
-              accessibilityLabel="输入到终端"
-            />
-
-            <Button
-              onPress={() => { tapHaptic(); keysOpen.set(!keysOpen()); }}
-              class={`h-8 flex-row items-center gap-0.5 rounded-full px-2 active:bg-term-key-press ${
-                keysOpen() ? "bg-term-key" : ""
-              }`}
-              testID="kbd-toggle"
-              accessibilityLabel="终端快捷键"
-            >
-              <Icon src={kbdIcon} size={16} class="tint-term-fg" />
-              <Icon src={chevronDownIcon} size={11} class="tint-term-muted" />
-            </Button>
+            </GlassCircle>
 
             <Button
               disabled={voiceState() === "busy"}
@@ -674,30 +648,67 @@ export function TermScreen(props: {
                   voice.send({ type: "release" });
                 }
               }}
-              class={`h-9 w-9 items-center justify-center rounded-full transition-colors duration-150 ${
-                voiceState() === "rec" ? "bg-accent" : "active:bg-term-key-press"
-              } ${voiceState() === "busy" ? "opacity-50" : ""}`}
+              class={`h-11 flex-1 flex-row items-center justify-center gap-2 rounded-full border transition-colors duration-150 ${
+                voiceState() === "rec"
+                  ? "border-term-fg bg-term-fg"
+                  : "border-term-glass-border bg-term-glass active:bg-term-key-press"
+              } ${voiceState() === "busy" ? "opacity-60" : ""}`}
+              style={voiceState() === "rec" ? undefined : GLASS_STYLE}
               testID="voice"
               accessibilityLabel="按住说话"
             >
-              <Icon src={micIcon} size={18} class="tint-term-fg" />
+              <Icon
+                src={micIcon}
+                size={17}
+                class={voiceState() === "rec" ? "tint-term-bg" : voiceOk() ? "tint-term-fg" : "tint-term-muted"}
+              />
+              <Text
+                class={`text-[15.5px] font-semibold tracking-[0.02em] ${
+                  voiceState() === "rec" ? "text-term-bg" : voiceOk() ? "text-term-fg" : "text-term-muted"
+                }`}
+              >
+                {voiceLabel()}
+              </Text>
             </Button>
 
             <Button
-              onPress={send}
-              class={`h-9 w-9 items-center justify-center rounded-full transition-transform duration-150 active:scale-95 ${
-                burst().trim() ? "bg-term-fg" : "bg-term-key"
+              onPress={() => {
+                tapHaptic();
+                if (focused()) Keyboard.dismiss();
+                else field.focus();
+              }}
+              class={`h-11 w-11 items-center justify-center rounded-full border transition-transform duration-150 active:scale-95 ${
+                focused()
+                  ? "border-term-fg bg-term-fg"
+                  : "border-term-glass-border bg-term-glass"
               }`}
-              testID="send"
-              accessibilityLabel="发送回车"
+              style={focused() ? undefined : GLASS_STYLE}
+              testID="kbd-toggle"
+              accessibilityLabel="键盘"
             >
-              <Icon
-                src={sendUpIcon}
-                size={17}
-                class={burst().trim() ? "tint-term-bg" : "tint-term-fg"}
-              />
+              <Icon src={kbdIcon} size={20} class={focused() ? "tint-term-bg" : "tint-term-fg"} />
             </Button>
-          </GlassCapsule>
+
+            {/* Invisible direct-to-terminal input field: zero duplicate text echo */}
+            <Input
+              ref={field}
+              value={burst()}
+              multiline
+              submitBehavior="submit"
+              returnKeyType="send"
+              autoCapitalize="none"
+              autoCorrect={false}
+              onChange={(e) => onInputChange(e.value)}
+              onCompositionChange={(e) => { line.compose(e.composing); sync(); }}
+              onKeyPress={(e) => { if (e.key === "Backspace") line.backspace(); }}
+              onSubmit={send}
+              onFocus={() => focused.set(true)}
+              onBlur={() => focused.set(false)}
+              class="pointer-events-none absolute bottom-0 left-1/2 h-px w-px opacity-0"
+              testID="composer"
+              accessibilityLabel="输入到终端"
+            />
+          </View>
         </View>
 
         <FilesSheet
