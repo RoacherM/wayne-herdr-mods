@@ -7,8 +7,25 @@ import { dirname, join, relative } from 'node:path';
 const nodeRequire = createRequire(import.meta.url);
 const APP_WRITES = new Set(['gpui-kit.d.ts', 'jsconfig.json', 'herdr.d.ts']);
 const MOD_ENTRY_RE = /^mods\/[^/]+\/main\.js$/;
-export const STALE_HERDR_FILES = Object.freeze(['mods/wayne-board/layout.js']);
-const SKIP_REL = new Set(STALE_HERDR_FILES);
+const MOD_HELPER_JS_RE = /^mods\/[^/]+\/.+\.js$/;
+export const STALE_HERDR_FILES = Object.freeze([
+  'mods/wayne-board',
+  'mods/my-files/state.js',
+  'mods/my-files/preview.js',
+  'mods/my-files/chevron-down.svg',
+  'mods/my-files/chevron-right.svg',
+  'mods/my-files/file.svg',
+  'mods/my-files/folder.svg',
+  'mods/my-pane/close.svg',
+  'mods/my-pane/split-down.svg',
+  'mods/my-pane/split-right.svg',
+  'mods/my-pane/zoom.svg',
+  'mods/my-pane/unzoom.svg',
+  'mods/my-tabs/win-min.svg',
+  'mods/my-tabs/win-max.svg',
+  'mods/my-tabs/win-restore.svg',
+  'mods/my-tabs/win-close.svg',
+]);
 const MOD_EXTERNALS = [
   'gpui-kit',
   'gpui-base',
@@ -38,8 +55,8 @@ export function readHerdrFiles(root) {
       const p = join(dir, e.name);
       if (e.isDirectory()) { walk(p); continue; }
       const rel = relative(root, p).replace(/\\/g, '/');
-      if (SKIP_REL.has(rel)) continue;
-      out[rel] = MOD_ENTRY_RE.test(rel) ? bundleModMain(p) : readFileSync(p, 'utf8');
+      if (MOD_ENTRY_RE.test(rel)) out[rel] = bundleModMain(p);
+      else if (!MOD_HELPER_JS_RE.test(rel)) out[rel] = readFileSync(p, 'utf8');
     }
   };
   walk(root);
@@ -64,7 +81,7 @@ export function syncHerdrDir(appDir, files, onBadJson = () => {}) {
     mkdirSync(dirname(p), { recursive: true });
     writeFileSync(p, text);
   }
-  for (const rel of STALE_HERDR_FILES) rmSync(join(appDir, rel), { force: true });
+  for (const rel of STALE_HERDR_FILES) rmSync(join(appDir, rel), { recursive: true, force: true });
   if (files['programs.json']) syncProgramsFile(appDir, files['programs.json'], onBadJson);
 }
 

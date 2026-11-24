@@ -7,9 +7,8 @@
  *   {m, p}       a notification, no answer (term.input, term.ack: these are hot paths; term.coast:
  *                the coast after a flick, see shared/coast.js)
  * Host → phone:
- *   {ev, ...}    terminals (list changed), board (topology changed), out (terminal bytes), closed
- *                (stream over), size (the terminal's new grid, in order with out: the repaint at
- *                that size follows)
+ *   {ev, ...}    terminals (list changed), out (terminal bytes), closed (stream over), size (the
+ *                terminal's new grid, in order with out: the repaint at that size follows)
  *
  * Only the methods below reach herdr-core. Nothing here forwards a raw RPC: herdr-core's socket
  * has no password, so `machine.exec`, `file.*`, `terminal.run`, `server.*` stay unreachable.
@@ -25,7 +24,6 @@ import { scrollWatch } from './scroll-watch.js';
 import { createFiles } from './files.js';
 import { createUploads } from './uploads.js';
 import { MAX_BYTES as MAX_VOICE_BYTES } from './voice.js';
-import { laneOf } from '../shared/board.js';
 
 const MAX_STREAMS = 4; // per phone
 const HISTORY_LINES = 400; // scrollback sent with the first paint
@@ -62,7 +60,7 @@ function logPhoneClose(log, peer, streams) {
   log(`wayne-herdr-mods: [phone:${devName}] session.close cid=${peer.cid} upMs=${Date.now() - peer.readyAt} streams=${streams}${kick}`);
 }
 
-export function createPhones({ state, pairing, push, terminals, board, voice, files, metrics, link: getLink, rtc, log = () => {}, onChange = () => {} }) {
+export function createPhones({ state, pairing, push, terminals, voice, files, metrics, link: getLink, rtc, log = () => {}, onChange = () => {} }) {
   const fileBrowser = files ?? (state?.dir ? createFiles({ dir: state.dir, terminals, log }) : null);
   const peers = new Map(); // cid → peer
   let nextStream = 1;
@@ -185,7 +183,6 @@ export function createPhones({ state, pairing, push, terminals, board, voice, fi
       type: 'ready', paired, deviceId: device.id, deviceName: device.name, desktopName: state.desktopName,
       vapidPublicKey: push.publicKey, hasPush: Boolean(device.push), voice: voiceOn,
       keys: true, // term.press: keys by name (DESIGN.md「每个 agent 的快捷键」)
-      board: Boolean(board), // board.get + {ev:'board'} (DESIGN.md「观测面板」)
     });
   }
 
@@ -717,11 +714,6 @@ export function createPhones({ state, pairing, push, terminals, board, voice, fi
     'files.open': (peer, p) => { if (!fileBrowser) throw new Error('文件预览不可用'); return fileBrowser.open(p); },
     'files.slice': (peer, p) => { if (!fileBrowser) throw new Error('文件预览不可用'); return fileBrowser.slice(p); },
     'files.panel': (peer, p) => { if (!fileBrowser) throw new Error('文件预览不可用'); return fileBrowser.panel(p); },
-    // Single-terminal communication topology lane (DESIGN.md「观测面板」).
-    'board.get': (peer, p) => {
-      if (!board) throw new Error('观测面板不可用');
-      return { lane: laneOf(board.board(), addressOf(p)), at: Date.now() };
-    },
     'device.forget': async (peer) => { await state.removeDevice(peer.device.id); setTimeout(() => getLink()?.close(peer.cid, 'forgotten'), 50); onChange(); return { ok: true }; },
   };
 

@@ -3,7 +3,7 @@
  *
  * nsh 0.4.0's global `WebSocket.send()` has an 8-message native outbound queue and throws
  * `Error: WebSocket outbound queue is full` on burst sends (e.g. `flushPendingLogs` + `term.open`
- * + `board.get` right after `ready`). Because `shared/e2e.js` advances `sendCounter++` before
+ * right after `ready`). Because `shared/e2e.js` advances `sendCounter++` before
  * `ws.send()`, any dropped frame permanently desyncs nonces and triggers Mac `kick=bad-frame`.
  * Awaiting `conn.write()` strictly one frame at a time keeps at most 1 write in flight in Rust.
  */

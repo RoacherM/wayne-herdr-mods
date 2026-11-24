@@ -1,144 +1,155 @@
+// Tab bar (cloned from tabs 0.1.12): publishes terminal program icons for the phone, remembers each
+// tab's last-focused agent, resets icon on shell return, and mounts phones + files panel buttons.
+// DESIGN.md「Herdr.app 里的界面」「图标跟着 Herdr.app」
+
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, panes, terminals, run, openOverlay, theme, window, layout, settings, shared, setShared } from "herdr";
+import { spaces, panes, terminals, run, openOverlay, theme, window, layout, settings, shared, setShared, checking } from "herdr";
 
-// Herdr keeps an agent's last report after the agent exits: the pane is back at zsh, its program
-// still says Epi. A shell in front means the agent is gone.
 const SHELLS = new Set(["zsh", "bash", "fish", "sh", "dash", "nu", "pwsh", "elvish", "xonsh", "tcsh", "csh", "ksh"]);
 const SHELL = { key: "shell", icon: "icons/shell.svg", tint: true, shell: true, agent: false };
-
-// The phone shows the icon Herdr shows: Herdr's own answer for each terminal of this Mac goes into
-// shared.json, where wayne-herdr-mods reads it (host/terminals.js, DESIGN.md「图标跟着 Herdr.app」).
-// This bar is always on screen, so it is the one that writes it; only when it changed.
 const PROGRAMS = "wayne-herdr-mods.programs";
+
 function publishPrograms() {
   const out = {};
   for (const t of terminals()) {
     const p = t?.program;
-    if (typeof t?.address === "string" && !t.address.includes("/") && p?.key) out[t.address] = { key: p.key, icon: p.icon ?? null, tint: Boolean(p.tint) };
+    if (typeof t?.address === "string" && !t.address.includes("/") && p?.key) {
+      out[t.address] = { key: p.key, icon: p.icon ?? null, tint: Boolean(p.tint) };
+    }
   }
   if (JSON.stringify(out) !== JSON.stringify(shared(PROGRAMS) ?? {})) setShared(PROGRAMS, out);
 }
 
-function find(node, id) {
+function findNode(node, id) {
   if (node?.id === id) return node;
   for (const child of node?.children ?? []) {
-    const found = find(child, id);
+    const found = findNode(child, id);
     if (found) return found;
   }
   return null;
 }
 
+function loadSavedPanels() {
+  const raw = localStorage.getItem("panels");
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function trafficLightsPadding(root, sidebar) {
+  const w = window();
+  if (w?.platform !== "macos" || w.titlebar !== "none" || w.fullscreen || !root?.traffic_lights) return 10;
+  const sideW = sidebar?.hidden ? 0 : (sidebar?.size?.px ?? 0);
+  return Math.max(10, (root.traffic_lights[0] + 64) / settings().zoom - sideW);
+}
+
+function tabStatusDot(status, t) {
+  if (status === "working") return svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working).spin(900);
+  if (status === "blocked" || status === "done") return div().size(6).rounded(3).bg(t[status]);
+  return null;
+}
+
+const stop = (_e, cx) => cx.stop_propagation();
+
 export default class Tabs extends View {
   init(_props, cx) {
+    this.pressed = null;
+    this.panels = loadSavedPanels() ?? {};
+    this.used = {};
+    if (checking()) return;
     publishPrograms();
     cx.timer.every(2000, () => publishPrograms());
-    this.pressed = null;
-    this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}");
-    this.used = {}; // tab id → the agent pane last focused there
   }
 
-  // What a tab shows: the agent you work with there, not the first one in it. Only the window's
-  // focused pane says `focused`, so each tab remembers its last focused agent pane.
   lead(tab, front) {
-    const mine = panes().filter(p => p.tab === tab).map(p => {
+    const mine = panes().filter((p) => p.tab === tab).map((p) => {
       const fg = front[p.terminal];
       return p.program?.agent && SHELLS.has(fg) ? { ...p, program: { ...SHELL, name: fg } } : p;
     });
-    const now = mine.find(p => p.focused);
+    const now = mine.find((p) => p.focused);
     if (now?.program?.agent) this.used[tab] = now.pane;
-    return mine.find(p => p.pane === this.used[tab] && p.program?.agent) ?? mine.find(p => p.program?.agent) ?? now ?? mine[0];
+    return mine.find((p) => p.pane === this.used[tab] && p.program?.agent) ?? mine.find((p) => p.program?.agent) ?? now ?? mine[0];
   }
 
-  // The side panel is remembered per space: switching shows that space's choice
-  // (closed if it never had one), and opening or closing it records it.
-  syncPanel(space, panel, body, enabled) {
+  syncPanel(space, panel) {
     if (!space || !panel) return;
-    const now = panel.hidden ? null : body?.active ?? null;
+    const open = !panel.hidden;
     if (space.id !== this.space) {
       const first = this.space === undefined;
-      this.space = space.id; this.pending = null;
-      if (!(first && !(space.id in this.panels))) {
-        const stored = this.panels[space.id] ?? null, want = enabled.includes(stored) ? stored : null;
-        if (want !== now) {
+      this.space = space.id;
+      this.pending = null;
+      if (!first || space.id in this.panels) {
+        const stored = this.panels[space.id];
+        const want = stored === true || stored === "files";
+        if (want !== open) {
           this.pending = { want, until: Date.now() + 1000 };
-          if (want) { run("layout.select", { stack: "panel-body", child: want }); run("layout.show", { id: "panel" }); }
-          else run("layout.hide", { id: "panel" });
+          run(want ? "layout.show" : "layout.hide", { id: "panel" });
           return;
         }
       }
     }
-    // Until the restore lands (or something else won), the old state isn't a choice.
     if (this.pending) {
-      if (this.pending.want !== now && Date.now() < this.pending.until) return;
+      if (this.pending.want !== open && Date.now() < this.pending.until) return;
       this.pending = null;
     }
-    if (this.panels[space.id] === now) return;
-    this.panels[space.id] = now;
+    if (this.panels[space.id] === open) return;
+    this.panels[space.id] = open;
     localStorage.setItem("panels", JSON.stringify(this.panels));
+  }
+
+  tabItem(c, i, space, shown, front, t) {
+    const program = this.lead(c.id, front)?.program;
+    const name = /^tb\d+$/.test(c.name) ? program?.name ?? "Terminal" : c.name;
+    const dot = tabStatusDot(c.status, t);
+    const glyph = program?.icon
+      ? (program.tint ? svg(program.icon).size(14).text_color(t.muted) : image(program.icon).size(14))
+      : null;
+    return h_flex().id(`tab-${c.id}`).h(29).px(10).gap(7).rounded(7).items_center().flex_none().text_size(12.8)
+      .border(1).border_color(c.active ? t.border : t.chrome).bg(c.active ? t.raised : t.chrome).text_color(c.active ? t.foreground : t.muted)
+      .hover((s) => s.bg(t.hover))
+      .on_mouse_down("left", (e, cx) => { cx.stop_propagation(); this.pressed = i; if (e.click_count === 2) run("tab.rename", { id: c.id }); })
+      .on_mouse_up("left", () => {
+        const from = this.pressed;
+        this.pressed = null;
+        if (from !== null && from !== i) run("tab.move", { id: shown[from].id, index: space.tabs.findIndex((x) => x.id === c.id) + 1 });
+        else run("tab.select", { id: c.id });
+      })
+      .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); openOverlay({ mod: "menu", kind: "popup", width: 200, props: { tab: "tab", target: { id: c.id, space: space.id } } }); })
+      .when(Boolean(glyph), (el) => el.child(glyph))
+      .child(div().max_w(170).truncate().child(c.zoomed ? `${name} Z` : name))
+      .when(Boolean(dot), (el) => el.child(dot))
+      .when(c.active, (el) => el.child(div().id(`close-${c.id}`).text_color(t.dim).on_mouse_down("left", stop)
+        .on_click((_e, cx) => { cx.stop_propagation(); run("tab.close", { id: c.id }); })
+        .child(svg("mods/pane/close.svg").size(12))));
   }
 
   render() {
     const t = theme();
-    const space = spaces().find(p => p.active);
+    const space = spaces().find((p) => p.active);
     const shown = space?.tabs ?? [];
-    const stop = (_e, cx) => cx.stop_propagation();
-    const button = (id, label, action) => div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
-      .on_mouse_down("left", stop).on_click(action).child(label);
-    const front = Object.fromEntries(terminals().map(x => [x.address, x.foreground?.name])); // what runs in front, per terminal
-    const item = (c, i) => {
-      const program = this.lead(c.id, front)?.program;
-      const name = /^tb\d+$/.test(c.name) ? program?.name ?? "Terminal" : c.name;
-      return h_flex().id(`tab-${c.id}`).h(29).px(10).gap(7).rounded(7).items_center().flex_none().text_size(12.8)
-        .border(1).border_color(c.active ? t.border : t.chrome).bg(c.active ? t.raised : t.chrome).text_color(c.active ? t.foreground : t.muted)
-        .hover(s => s.bg(t.hover))
-        .on_mouse_down("left", (e, cx) => { cx.stop_propagation(); this.pressed = i; if (e.click_count === 2) run("tab.rename", { id: c.id }); })
-        .on_mouse_up("left", () => {
-          const from = this.pressed; this.pressed = null;
-          if (from !== null && from !== i) run("tab.move", { id: shown[from].id, index: space.tabs.findIndex(x => x.id === c.id) + 1 });
-          else run("tab.select", { id: c.id });
-        })
-        .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); openOverlay({ mod: "menu", kind: "popup", width: 200, props: { tab: "tab", target: { id: c.id, space: space.id } } }); })
-        .when(Boolean(program?.icon), el => el.child(program.tint ? svg(program.icon).size(14).text_color(t.muted) : image(program.icon).size(14)))
-        .child(div().max_w(170).truncate().child(c.zoomed ? `${name} Z` : name))
-        .when(c.status === "working", el => el.child(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working).spin(900)))
-        .when(c.status === "blocked" || c.status === "done", el => el.child(div().size(6).rounded(3).bg(t[c.status])))
-        .when(c.active, el => el.child(div().id(`close-${c.id}`).text_color(t.dim).on_mouse_down("left", stop).on_click((_e, cx) => { cx.stop_propagation(); run("tab.close", { id: c.id }); }).child(svg("mods/pane/close.svg").size(12))));
-    };
-    const root = layout(), sidebar = find(root, "sidebar"), w = window();
-    // Old saved rails and a dragged-narrow sidebar can be smaller than the window buttons.
-    const lightsPadding = w?.platform === "macos" && w.titlebar === "none" && !w.fullscreen && root?.traffic_lights
-      ? Math.max(10, (root.traffic_lights[0] + 64) / settings().zoom - (sidebar?.hidden ? 0 : sidebar?.size?.px ?? 0))
-      : 10;
-    const panel = find(root, "panel"), body = find(root, "panel-body");
-    // This layout has one fixed panel button, so the welcome screen's panel choice
-    // does not apply here. The list still drives the per-space memory below.
-    const enabled = ["files", "changes", "board"];
-    this.syncPanel(space, panel, body, enabled);
-    // Two icons at the far right of the bar share the one side panel, like the panel buttons in an
-    // editor's title bar: the board (wayne-board: the agent of the window you are in, its decisions
-    // and its sub-agents) and the files (whichever of files / changes is active; starts on the tree).
-    // A lit icon closes the panel; the other one switches what it shows.
-    const shows = panel && !panel.hidden ? body?.active ?? null : null;
-    const panelToggle = (id, icon, on, child) => div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6)
-      .bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted)
-      .hover(s => s.bg(t.hover).text_color(t.foreground)).on_mouse_down("left", stop)
-      .on_click(() => {
-        if (on) run("layout.hide", { id: "panel" });
-        else { run("layout.select", { stack: "panel-body", child }); run("layout.show", { id: "panel" }); }
-      })
-      .child(svg(icon).size(15));
-    return h_flex().size_full().min_w(0).px(10).pl(lightsPadding).gap(3).items_center().bg(t.chrome).border_b(1).border_color(t.border)
+    const front = Object.fromEntries(terminals().map((x) => [x.address, x.foreground?.name]));
+    const root = layout(), sidebar = findNode(root, "sidebar"), panel = findNode(root, "panel");
+    this.syncPanel(space, panel);
+    const panelOpen = Boolean(panel && !panel.hidden);
+    const iconBtn = (id, glyph, action) => div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6)
+      .text_color(t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .on_mouse_down("left", stop).on_click(action).child(glyph);
+    return h_flex().size_full().min_w(0).px(10).pl(trafficLightsPadding(root, sidebar)).gap(3).items_center().bg(t.chrome).border_b(1).border_color(t.border)
       .on_mouse_up("left", () => { this.pressed = null; })
-      .on_scroll_wheel(e => { if (Math.abs(e.delta.y) >= 1) run(e.delta.y > 0 ? "tab.prev" : "tab.next"); })
-      .child(h_flex().id("tab-scroll").flex_1().min_w(0).h_full().items_center().gap(3).overflow_x_scrollbar().children(shown.map(item)))
-      .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))
-      .when(w?.buttons, el => el.child(button("minimize", w.platform === "windows" ? svg("mods/my-tabs/win-min.svg").size(16) : "−", () => run("window.minimize")))
-        .child(button("maximize", w.platform === "windows" ? svg(`mods/my-tabs/${w.maximized ? "win-restore" : "win-max"}.svg`).size(16) : "□", () => run("window.maximize")))
-        .child(button("close-window", w.platform === "windows" ? svg("mods/my-tabs/win-close.svg").size(16) : svg("mods/pane/close.svg").size(13), () => run("window.close"))))
-      // wayne-herdr-mods: the phones paired with this Mac, and pairing a new one (mods/wayne-phones).
-      .child(button("phones", svg("mods/wayne-phones/phone.svg").size(15), () => run("mod.open", { name: "wayne-phones" })))
-      .child(panelToggle("board", "mods/wayne-board/board.svg", shows === "board", "board"))
-      .child(panelToggle("panel-toggle", "mods/my-tabs/panel-right.svg", shows !== null && shows !== "board", "files"));
+      .on_scroll_wheel((e) => { if (Math.abs(e.delta.y) >= 1) run(e.delta.y > 0 ? "tab.prev" : "tab.next"); })
+      .child(h_flex().id("tab-scroll").flex_1().min_w(0).h_full().items_center().gap(3).overflow_x_scrollbar()
+        .children(shown.map((c, i) => this.tabItem(c, i, space, shown, front, t))))
+      .child(iconBtn("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))
+      .child(iconBtn("phones", svg("mods/wayne-phones/phone.svg").size(15), () => run("mod.open", { name: "wayne-phones" })))
+      .child(div().id("panel-toggle").size(26).flex_none().flex().items_center().justify_center().rounded(6)
+        .bg(panelOpen ? t.selected : t.chrome).text_color(panelOpen ? t.foreground : t.muted)
+        .hover((s) => s.bg(t.hover).text_color(t.foreground)).on_mouse_down("left", stop)
+        .on_click(() => run(panelOpen ? "layout.hide" : "layout.show", { id: "panel" }))
+        .child(svg("mods/my-tabs/panel-right.svg").size(15)));
   }
 }

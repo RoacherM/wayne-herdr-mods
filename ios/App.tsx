@@ -1,10 +1,10 @@
 import "./src/shim";
-import { cleanup, Clipboard, computed, effect, host, Image, Keyboard, lifecycle, mount, Picker, Scroll, signal, Text, token, untracked, View, WebView } from "nsh";
+import { cleanup, Clipboard, computed, effect, host, Image, Keyboard, lifecycle, mount, Picker, Scroll, signal, Text, View, WebView } from "nsh";
 import type { InputRef, WebViewRef } from "nsh/types";
 import { Button, createNavStack, Input, NavPage, NavStack } from "nsh/base";
 import {
-  activeTermAddress, addingMac, boardSeq, boardTarget, boardTouchesTerminal, boot, cancelPair, clearStreamListener, clientLog,
-  coalesceAsync, consumePendingNotificationTap, desktops, disableNotifications, enableNotifications,
+  activeTermAddress, addingMac, boot, cancelPair, clearStreamListener, clientLog,
+  consumePendingNotificationTap, desktops, disableNotifications, enableNotifications,
   fetchPreviewDataUrl, forget, info, list, macStatuses, notify, notifyEnabled, notifyPermission,
   openNativePreview, paired, pairWith, problem, recordOp, refresh, refreshNotifyStatus, rpc, sas, sendImage,
   linkEpoch, sendTestNotification, setStreamListener, status, switchDesktop,
@@ -12,17 +12,14 @@ import {
   transcribeAudio,
   type Saved, type Space, type Terminal,
 } from "./src/conn";
-import { BoardSheet, type BoardSnapshot } from "./src/BoardSheet";
 import { PROG_ICONS } from "./src/prog-icons";
 import { TERM_HTML } from "./src/term-html";
-import { boardBadgeOf, computeStats } from "../shared/board.js";
 import { imageInput, LiveLine, PASTE_LF, pasteText } from "../app/src/live-line.js";
 import { agentKeys, combo, keyOfChar, MODS } from "../app/src/agent-keys.js";
 import { enqueue, termSession } from "../app/src/term-session.js";
 import { voiceHold } from "../app/src/voice-hold.js";
 import chevronDownIcon from "./assets/chevron-down.svg";
 import chevronIcon from "./assets/chevron.svg";
-import boardIcon from "./assets/board.svg";
 import docIosIcon from "./assets/doc-ios.png";
 import downIcon from "./assets/down.svg";
 import fileTextIcon from "./assets/file-text.svg";
@@ -701,24 +698,6 @@ function TermScreen(props: { address: string }) {
   const mods = signal<string[]>([]);
   const litKey = signal("");
   const webReady = signal(false);
-  const boardOpen = signal(false);
-  const boardSnap = signal<BoardSnapshot | null>(null);
-  let boardReqId = 0;
-  const canLoadBoard = () => untracked(() => status() === "ready" && Boolean(info()?.board));
-  const boardLoader = coalesceAsync(async () => {
-    if (!canLoadBoard()) return;
-    const rid = ++boardReqId;
-    try {
-      const r = await rpc("board.get", { address }, 8000);
-      if (rid === boardReqId) {
-        boardSnap.set({ lane: r?.lane ?? null, at: Number(r?.at) || Date.now(), fetchedAt: Date.now() });
-      }
-    } catch { /* next board event or reconnect will refresh */ }
-  }, canLoadBoard);
-  const loadBoard = () => {
-    if (!canLoadBoard()) return;
-    boardLoader.trigger();
-  };
   let litTimer: any = 0;
   let repeatDelay: any = 0;
   let repeatEvery: any = 0;
@@ -814,25 +793,7 @@ function TermScreen(props: { address: string }) {
     if (st === "active") session.send({ type: "away", on: false });
     else if (st === "background") session.send({ type: "away", on: true });
   });
-  let seenBoardSeq = boardSeq();
-  effect(() => {
-    const ready = status() === "ready";
-    const hasBoard = Boolean(info()?.board);
-    void linkEpoch();
-    if (ready && hasBoard) loadBoard();
-    else if (ready && !hasBoard) boardSnap.set(null);
-  });
-  effect(() => {
-    const seq = boardSeq();
-    if (seq === seenBoardSeq) return;
-    seenBoardSeq = seq;
-    if (boardTouchesTerminal(boardTarget(), address, untracked(() => boardSnap())?.lane)) {
-      loadBoard();
-    }
-  });
   cleanup(() => {
-    boardReqId++;
-    boardLoader.cancel();
     clientLog("info", "term.cleanup", { address, s: sid() });
     if (activeTermAddress() === address) activeTermAddress.set(null);
     clearTimeout(bootTimer);
@@ -1096,21 +1057,6 @@ function TermScreen(props: { address: string }) {
   });
 
   const voiceOk = computed(() => Boolean(info()?.voice) && host.available());
-  const boardSupported = computed(() => Boolean(info()?.board));
-  const boardBadge = computed(() => {
-    const lane = boardSnap()?.lane;
-    return boardBadgeOf(lane ? (lane.stats ?? computeStats(lane.agents, lane.events)) : null);
-  });
-  const boardTint = computed(() => {
-    const tone = boardBadge().tone;
-    return tone === "warn" ? token("term-warn") : tone === "accent" ? token("accent") : token("term-fg");
-  });
-  const boardIconTerm = computed<Terminal | null>(() => {
-    const laneApp = boardSnap()?.lane?.app;
-    const cur = term();
-    if (laneApp) return { ...(cur ?? { address, cols: 80, rows: 24 }), app: laneApp, icon: undefined };
-    return cur ?? null;
-  });
 
   return (
     <NavPage
@@ -1143,28 +1089,6 @@ function TermScreen(props: { address: string }) {
             </View>
 
             <View class="w-[100px] flex-row items-center justify-end gap-1">
-              <If when={boardSupported()}>
-                <Button
-                  onPress={() => {
-                    tapHaptic();
-                    Keyboard.dismiss();
-                    boardOpen.set(true);
-                    loadBoard();
-                  }}
-                  hitSlop={4}
-                  class="h-9 min-w-9 flex-row items-center justify-center gap-1 rounded-full px-2 active:bg-term-press selected:bg-term-active"
-                  selected={boardOpen()}
-                  testID="term-board"
-                  accessibilityLabel="通信拓扑…"
-                >
-                  <Icon src={boardIcon} size={17} color={boardTint()} />
-                  <If when={boardBadge().count > 0}>
-                    <Text class="font-mono text-xs font-semibold" style={{ color: boardTint(), fontVariant: ["tabular-nums"] }}>
-                      {String(boardBadge().count)}
-                    </Text>
-                  </If>
-                </Button>
-              </If>
               <Button
                 onPress={() => {
                   tapHaptic();
@@ -1315,13 +1239,6 @@ function TermScreen(props: { address: string }) {
           </View>
         </View>
       </View>
-      <BoardSheet
-        open={boardOpen()}
-        onOpenChange={(open) => boardOpen.set(open)}
-        address={address}
-        snapshot={boardSnap()}
-        renderIcon={() => <ProgIcon t={boardIconTerm()} size={16} dark />}
-      />
     </NavPage>
   );
 }

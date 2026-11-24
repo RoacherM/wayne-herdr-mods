@@ -1,6 +1,6 @@
 ---
 name: wayne-herdr-mods
-description: "Wayne 的 Herdr 套件：用 iPhone 上的 Herdr App 操作这台 Mac 上 Herdr 的终端（配对手机、看谁在线、移除手机），以及 Herdr.app 里我们自己的界面（布局 main-preview、标签栏、文件面板、「手机」窗口、观测面板）。用户提到手机连 Mac、配对手机、herdr-relay、wayne-herdr-mods，或要改 Herdr.app 的这套界面时使用。"
+description: "Wayne 的 Herdr 套件：用 iPhone 上的 Herdr App 操作这台 Mac 上 Herdr 的终端（配对手机、看谁在线、移除手机），以及 Herdr.app 里我们自己的界面（布局 main-preview、标签栏、窗格顶栏、文件面板、「手机」窗口）。用户提到手机连 Mac、配对手机、herdr-relay、wayne-herdr-mods，或要改 Herdr.app 的这套界面时使用。"
 ---
 
 # wayne-herdr-mods
@@ -65,7 +65,7 @@ wayne-herdr-mods metrics                   # 同样的内容，打开一个报�
 
 ## 改 Herdr.app 的界面
 
-源文件在仓库的 `herdr-app/`（`layouts/main-preview.json`、`mods/my-tabs/`、`mods/my-files/`、`mods/wayne-phones/`、`mods/wayne-board/`）。改仓库里的，不要只改 `~/.config/herdr-app/` 里的：下次安装会覆盖。
+源文件在仓库的 `herdr-app/`（`layouts/main-preview.json`、`mods/my-tabs/`、`mods/my-pane/`、`mods/my-files/`、`mods/wayne-phones/`）。改仓库里的，不要只改 `~/.config/herdr-app/` 里的：下次安装会覆盖。
 
 ```sh
 npm run build && node dist/wayne-herdr-mods.mjs install   # 只写改了的文件，Herdr 自动重新加载

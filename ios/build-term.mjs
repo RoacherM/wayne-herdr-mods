@@ -43,16 +43,6 @@ const UI_SVGS = {
   kbd: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>',
   down: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M12 5v14M6 13l6 6 6-6"/></svg>',
   spinner: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#000000" stroke-width="3.2" stroke-linecap="round" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="9.4" stroke-opacity="0.24"/><path d="M12 2.6a9.4 9.4 0 0 1 9.4 9.4"/></svg>',
-  tip: '<svg viewBox="0 0 8 8" width="8" height="8" xmlns="http://www.w3.org/2000/svg"><path d="M1 1l6 3-6 3z" fill="#000000"/></svg>',
-};
-
-const MOD_UI_SVGS = {
-  board: '../herdr-app/mods/wayne-board/board.svg',
-  fork: '../herdr-app/mods/wayne-board/fork.svg',
-  merge: '../herdr-app/mods/wayne-board/merge.svg',
-  fail: '../herdr-app/mods/wayne-board/fail.svg',
-  arrow: '../herdr-app/mods/wayne-board/arrow.svg',
-  stop: '../herdr-app/mods/my-pane/close.svg',
 };
 
 function normalizeSvg(raw, tint) {
@@ -82,10 +72,6 @@ const iconsDir = join(here, 'assets/icons');
 mkdirSync(iconsDir, { recursive: true });
 for (const [name, svg] of Object.entries(UI_SVGS)) {
   await writeFile(join(here, `assets/${name}.svg`), svg);
-}
-for (const [name, rel] of Object.entries(MOD_UI_SVGS)) {
-  const src = join(here, rel);
-  if (existsSync(src)) await writeFile(join(here, `assets/${name}.svg`), normalizeSvg(readFileSync(src, 'utf8'), true));
 }
 
 const allKeys = new Map();

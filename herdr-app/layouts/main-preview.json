@@ -134,43 +134,16 @@
             },
             {
               "id": "panel",
-              "type": "column",
+              "type": "block",
               "hidden": false,
               "size": {
                 "px": 368
               },
               "min": 280,
               "max": 900,
-              "children": [
-                {
-                  "id": "panel-body",
-                  "type": "stack",
-                  "active": "files",
-                  "children": [
-                    {
-                      "id": "files",
-                      "type": "block",
-                      "content": {
-                        "mod": "my-files"
-                      }
-                    },
-                    {
-                      "id": "changes",
-                      "type": "block",
-                      "content": {
-                        "mod": "changes"
-                      }
-                    },
-                    {
-                      "id": "board",
-                      "type": "block",
-                      "content": {
-                        "mod": "wayne-board"
-                      }
-                    }
-                  ]
-                }
-              ]
+              "content": {
+                "mod": "my-files"
+              }
             }
           ]
         },

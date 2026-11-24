@@ -336,7 +336,6 @@ export function createFiles({ dir, terminals, extraRoots = [], syncApp = false, 
               }
             }
           }
-          await runBin('herdr-app', ['do', 'layout.select', JSON.stringify({ stack: 'panel-body', child: 'files' })], 3_000).catch(() => {});
           await runBin('herdr-app', ['do', 'layout.show', JSON.stringify({ id: 'panel' })], 3_000).catch(() => {});
         } catch (err) {
           log(`files.panel open error: ${err?.message ?? err}`);
