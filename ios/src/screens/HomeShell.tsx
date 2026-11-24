@@ -11,7 +11,6 @@ import {
   KIND_TEXT, MonogramBadge, ProgIcon, SettingsGroup, SettingsRow, spaceName, STATE_TEXT,
   STATUS_TEXT, tapHaptic,
 } from "../ui/controls";
-import { createFilesModel, FileTreeList } from "./FilesSheet";
 import bellIcon from "../../assets/bell.svg";
 import brushIcon from "../../assets/brush.svg";
 import chatFilledIcon from "../../assets/chat-filled.svg";
@@ -19,7 +18,6 @@ import chatIcon from "../../assets/chat.svg";
 import checkIcon from "../../assets/check.svg";
 import clockIcon from "../../assets/clock.svg";
 import composeIcon from "../../assets/compose.svg";
-import folderOutlineIcon from "../../assets/folder-outline.svg";
 import gearIcon from "../../assets/gear.svg";
 import globeIcon from "../../assets/globe.svg";
 import monitorIcon from "../../assets/monitor.svg";
@@ -33,7 +31,7 @@ import wifiOffIcon from "../../assets/wifi-off.svg";
 import xIcon from "../../assets/x.svg";
 
 export type AppearancePref = "system" | "dark" | "light";
-type HomeTab = "sessions" | "files" | "settings";
+type HomeTab = "sessions" | "settings";
 type SheetKind = null | "env" | "project" | "new-term" | "macs" | "appearance";
 
 const APPEARANCE_LABEL: Record<AppearancePref, string> = {
@@ -56,7 +54,6 @@ export function HomeShell(props: {
   appearance: () => AppearancePref;
   onChangeAppearance: (next: AppearancePref) => void;
   onOpenTerm: (address: string, reason?: string) => void;
-  onOpenPreview: (rootId: string, path: string, title: string) => void;
 }) {
   const tab = signal<HomeTab>("sessions");
   const filterSpaceId = signal<string>("ALL");
@@ -157,28 +154,6 @@ export function HomeShell(props: {
     const rank = (s: SessionItem) => (s.urgent ? 0 : s.term.state === "working" ? 1 : 2);
     rows.sort((a, b) => rank(a) - rank(b));
     return rows;
-  });
-
-  // ---- Home Files Tab model ----
-  const filesSpaceId = signal<string>("");
-  const defaultFileRoot = computed(() => {
-    const picked = filesSpaceId();
-    const all = spaces();
-    const target = (picked ? all.find((s) => s.space.id === picked) : all[0])?.space;
-    const firstAddr = target?.tabs.flatMap((x) => x.terminals)[0] ?? list().terminals[0]?.address;
-    return firstAddr ? `term:${firstAddr}` : "";
-  });
-  const filesModel = createFilesModel(() => defaultFileRoot());
-  let lastLoadedFilesRoot = "";
-
-  effect(() => {
-    if (tab() === "files" && status() === "ready") {
-      const root = defaultFileRoot();
-      if (root && root !== lastLoadedFilesRoot) {
-        lastLoadedFilesRoot = root;
-        filesModel.loadRoot(root);
-      }
-    }
   });
 
   async function createTerminalIn(sp: Space) {
@@ -372,38 +347,7 @@ export function HomeShell(props: {
           </View>
         </If>
 
-        {/* ==================== TAB 2: FILES ==================== */}
-        <If when={tab() === "files"}>
-          <View class="flex-1">
-            <View class="flex-row items-center justify-between gap-2.5 px-[18px] pt-1.5 pb-3">
-              <Text class="text-[23px] font-semibold text-foreground">文件</Text>
-              <FilterPill
-                label={filesModel.rootName() || spaces()[0]?.name || "工作区"}
-                onPress={() => { tapHaptic(); picker.set("project"); }}
-              />
-            </View>
-            <View class="px-[18px] pb-2">
-              <GlassCapsule class="h-11 gap-2.5 px-3.5">
-                <Icon src={searchIcon} size={17} class="tint-muted-foreground" />
-                <Input
-                  value={filesModel.query()}
-                  onChange={(e) => filesModel.query.set(e.value)}
-                  placeholder="Search files"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  class="flex-1 text-[15.5px] text-foreground"
-                />
-              </GlassCapsule>
-            </View>
-            <FileTreeList
-              model={filesModel}
-              onOpenFile={(rootId, path, fileTitle) => props.onOpenPreview(rootId, path, fileTitle)}
-              bottomPadding={safeArea().bottom + 104}
-            />
-          </View>
-        </If>
-
-        {/* ==================== TAB 3: SETTINGS (Screenshot 2) ==================== */}
+        {/* ==================== TAB 2: SETTINGS (Screenshot 2) ==================== */}
         <If when={tab() === "settings"}>
           <View class="flex-1">
             <View class="flex-row items-center justify-between px-[18px] pt-1.5 pb-3">
@@ -533,12 +477,12 @@ export function HomeShell(props: {
           </View>
         </If>
 
-        {/* ==================== FLOATING BOTTOM LIQUID GLASS DOCK (Screenshots 1 & 2) ==================== */}
+        {/* ==================== FLOATING BOTTOM LIQUID GLASS DOCK (2 tabs: Sessions | Settings) ==================== */}
         <View
-          class="absolute right-[18px] left-[18px] flex-row items-center gap-3"
+          class="absolute right-[18px] left-[18px] flex-row items-center justify-between"
           style={{ bottom: safeArea().bottom + 12 }}
         >
-          <GlassCapsule class={`h-[60px] p-[5px] ${tab() === "sessions" ? "flex-1" : "w-[264px]"}`}>
+          <GlassCapsule class="h-[60px] w-[192px] p-[5px]">
             <Button
               onPress={() => { tapHaptic(); tab.set("sessions"); }}
               class={`h-[50px] flex-1 items-center justify-center rounded-full transition-colors duration-150 ${
@@ -551,21 +495,6 @@ export function HomeShell(props: {
                 src={tab() === "sessions" ? chatFilledIcon : chatIcon}
                 size={21}
                 class={tab() === "sessions" ? "tint-accent" : "tint-foreground"}
-              />
-            </Button>
-
-            <Button
-              onPress={() => { tapHaptic(); tab.set("files"); }}
-              class={`h-[50px] flex-1 items-center justify-center rounded-full transition-colors duration-150 ${
-                tab() === "files" ? "bg-glass-active" : ""
-              }`}
-              accessibilityLabel="文件"
-              testID="tab-files"
-            >
-              <Icon
-                src={folderOutlineIcon}
-                size={21}
-                class={tab() === "files" ? "tint-accent" : "tint-foreground"}
               />
             </Button>
 
@@ -643,34 +572,26 @@ export function HomeShell(props: {
           detents={[{ fraction: 0.52 }, "large"]}
         >
           <Scroll class="flex-1" contentClass="pb-8">
-            {tab() === "sessions" ? (
+            <Button
+              onPress={() => { tapHaptic(); filterSpaceId.set("ALL"); picker.set(null); }}
+              class="min-h-[50px] flex-row items-center justify-between px-5 active:bg-secondary/60"
+            >
+              <Text class="text-[16.5px] text-foreground">全部工作区</Text>
+              {filterSpaceId() === "ALL" ? <Icon src={checkIcon} size={18} class="tint-accent" /> : null}
+            </Button>
+            {spaces().map((s) => (
               <Button
-                onPress={() => { tapHaptic(); filterSpaceId.set("ALL"); picker.set(null); }}
+                onPress={() => {
+                  tapHaptic();
+                  filterSpaceId.set(s.space.id);
+                  picker.set(null);
+                }}
                 class="min-h-[50px] flex-row items-center justify-between px-5 active:bg-secondary/60"
               >
-                <Text class="text-[16.5px] text-foreground">全部工作区</Text>
-                {filterSpaceId() === "ALL" ? <Icon src={checkIcon} size={18} class="tint-accent" /> : null}
+                <Text class="text-[16.5px] text-foreground">{s.name}</Text>
+                {filterSpaceId() === s.space.id ? <Icon src={checkIcon} size={18} class="tint-accent" /> : null}
               </Button>
-            ) : null}
-            {spaces().map((s) => {
-              const selected = tab() === "files"
-                ? (filesSpaceId() || spaces()[0]?.space.id) === s.space.id
-                : filterSpaceId() === s.space.id;
-              return (
-                <Button
-                  onPress={() => {
-                    tapHaptic();
-                    if (tab() === "files") filesSpaceId.set(s.space.id);
-                    else filterSpaceId.set(s.space.id);
-                    picker.set(null);
-                  }}
-                  class="min-h-[50px] flex-row items-center justify-between px-5 active:bg-secondary/60"
-                >
-                  <Text class="text-[16.5px] text-foreground">{s.name}</Text>
-                  {selected ? <Icon src={checkIcon} size={18} class="tint-accent" /> : null}
-                </Button>
-              );
-            })}
+            ))}
           </Scroll>
         </BottomSheet>
 

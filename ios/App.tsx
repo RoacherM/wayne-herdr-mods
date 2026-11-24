@@ -73,7 +73,6 @@ function App() {
               appearance={appearance}
               onChangeAppearance={updateAppearance}
               onOpenTerm={openTerm}
-              onOpenPreview={openPreview}
             />
           ) : route.name === "preview" ? (
             <PreviewScreen

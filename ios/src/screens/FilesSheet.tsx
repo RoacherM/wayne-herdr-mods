@@ -33,7 +33,7 @@ const MARK_COLOR: Record<string, string> = {
   U: "text-bad",
 };
 
-export function createFilesModel(getRootId: () => string) {
+function createFilesModel(getRootId: () => string) {
   const activeRoot = signal<string>(getRootId());
   const rootName = signal<string>("");
   const dirMap = signal<Record<string, FileEntry[]>>({});
@@ -141,7 +141,7 @@ export function createFilesModel(getRootId: () => string) {
   return { activeRoot, rootName, loading, err, query, rows, loadRoot, toggleFolder };
 }
 
-export function FileTreeList(props: {
+function FileTreeList(props: {
   model: ReturnType<typeof createFilesModel>;
   onOpenFile: (rootId: string, path: string, title: string) => void;
   bottomPadding?: number;
