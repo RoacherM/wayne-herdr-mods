@@ -1,4 +1,4 @@
-import { cleanup, Clipboard, computed, effect, host, Keyboard, lifecycle, Picker, safeArea, Scroll, signal, Text, View, WebView } from "nsh";
+import { cleanup, Clipboard, computed, effect, host, Keyboard, keyboardFrame, lifecycle, Picker, safeArea, Scroll, signal, Text, View, WebView } from "nsh";
 import type { InputRef, WebViewRef } from "nsh/types";
 import { Button, Input, NavPage, Popover } from "nsh/base";
 import {
@@ -17,6 +17,7 @@ import {
 } from "../ui/controls";
 import { FilesSheet } from "./FilesSheet";
 import checkIcon from "../../assets/check.svg";
+import chevronDownIcon from "../../assets/chevron-down.svg";
 import chevronIcon from "../../assets/chevron.svg";
 import downIcon from "../../assets/down.svg";
 import folderOutlineIcon from "../../assets/folder-outline.svg";
@@ -29,10 +30,10 @@ import spinnerIcon from "../../assets/spinner.svg";
 import xIcon from "../../assets/x.svg";
 
 const KEYBAR_FRONT: [string, string][] = [
-  ["Esc", "\x1b"], ["←", "left"], ["↑", "up"], ["↓", "down"], ["→", "right"], ["⏎", "\r"], ["⇧Tab", "\x1b[Z"], ["^C", "\x03"],
+  ["Esc", "\x1b"], ["↑", "up"], ["↓", "down"], ["⏎", "\r"], ["⇧Tab", "\x1b[Z"], ["^C", "\x03"],
 ];
 const KEYBAR_BACK: [string, string][] = [
-  ["Tab", "\t"], ["粘贴", "paste"], ["换行", PASTE_LF],
+  ["←", "left"], ["→", "right"], ["Tab", "\t"], ["粘贴", "paste"], ["换行", PASTE_LF],
   ["1", "1"], ["2", "2"], ["3", "3"], ["y", "y"], ["n", "n"], ["^D", "\x04"], ["^R", "\x12"], ["^L", "\x0c"],
 ];
 const NAME_OF: Record<string, string> = {
@@ -515,6 +516,7 @@ export function TermScreen(props: {
       flashNotice(info()?.voice ? "当前环境不支持录音" : "Mac 未配置语音 Key");
       return;
     }
+    if (kbdOpen()) Keyboard.dismiss();
     tapHaptic();
     notice.set("");
     const gen = ++voiceGen;
@@ -626,6 +628,7 @@ export function TermScreen(props: {
   });
 
   const voiceOk = computed(() => Boolean(info()?.voice) && host.available());
+  const kbdOpen = computed(() => focused() || keyboardFrame().height > 0);
 
   return (
     <NavPage title={title()} headerVisible={false} statusBar={{ foreground: "light" }}>
@@ -702,8 +705,11 @@ export function TermScreen(props: {
           </If>
         </View>
 
-        {/* Floating Liquid Glass Controls (Shortcut Strip + Single Unified Bar / Live Waveform Bar) */}
-        <View class="relative items-center gap-2 bg-term-bg px-3.5 pt-1.5" style={{ paddingBottom: safeArea().bottom + 8 }}>
+        {/* Single Unified Floating Liquid Glass Bar (Shortcuts + Attach + Voice + Keyboard) */}
+        <View
+          class="relative items-center gap-2 bg-term-bg px-3 pt-1.5"
+          style={{ paddingBottom: keyboardFrame().height > 0 ? 8 : safeArea().bottom + 8 }}
+        >
           <If when={floatingStatus()}>
             {(st) => (
               <GlassCapsule tone="term" class="h-9 gap-2 px-4">
@@ -715,78 +721,16 @@ export function TermScreen(props: {
             )}
           </If>
 
-          {/* Slim Pure Liquid Glass Shortcut Strip */}
-          <GlassCapsule tone="term" class="h-[38px] w-full px-1.5">
-            <Scroll
-              horizontal
-              scrollbar={false}
-              keyboardShouldPersistTaps="always"
-              class="flex-1"
-              contentClass="flex-row items-center gap-1"
-            >
-              {KEYBAR_FRONT.map(([label, seq]) => (
-                <Button
-                  onPress={() => onKeyPress(label, seq)}
-                  onPressDown={() => onKeyDown(label, seq)}
-                  onPressUp={stopRepeat}
-                  testID={seq === "\r" ? "send" : undefined}
-                  class={`h-[28px] min-w-[32px] items-center justify-center rounded-full bg-term-key px-2.5 active:bg-term-key-press ${
-                    litKey() === label ? "border border-term-fg" : ""
-                  }`}
-                >
-                  <Text class="text-[13px] font-medium text-term-fg">{label}</Text>
-                </Button>
-              ))}
-              {agentShortcuts().map(([label, names]) => (
-                <Button
-                  onPress={() => pressNamed(names, label)}
-                  class={`h-[28px] min-w-[32px] items-center justify-center rounded-full bg-term-key px-2.5 active:bg-term-key-press ${
-                    litKey() === label ? "border border-term-fg" : ""
-                  }`}
-                >
-                  <Text class="text-[13px] font-medium text-term-fg">{label}</Text>
-                </Button>
-              ))}
-              {named()
-                ? MODS.map((m) => {
-                    const active = mods().includes(m);
-                    return (
-                      <Button
-                        onPress={() => toggleMod(m)}
-                        class={`h-[28px] min-w-[32px] items-center justify-center rounded-full px-2.5 active:bg-term-key-press ${
-                          active ? "bg-term-fg" : "bg-term-key"
-                        }`}
-                      >
-                        <Text class={`text-[13px] font-medium ${active ? "text-term-bg" : "text-term-fg"}`}>
-                          {MOD_LABELS[m]}
-                        </Text>
-                      </Button>
-                    );
-                  })
-                : null}
-              {KEYBAR_BACK.map(([label, seq]) => (
-                <Button
-                  onPress={() => onKeyPress(label, seq)}
-                  class={`h-[28px] min-w-[32px] items-center justify-center rounded-full bg-term-key px-2.5 active:bg-term-key-press ${
-                    litKey() === label ? "border border-term-fg" : ""
-                  }`}
-                >
-                  <Text class="text-[13px] font-medium text-term-fg">{label}</Text>
-                </Button>
-              ))}
-            </Scroll>
-          </GlassCapsule>
-
-          {/* Main Single Liquid Glass Bar: Idle (IMG_1852/1854) <-> Recording Waveform (IMG_1853) <-> Busy */}
+          {/* Voice Recording Morph (same single bar slot) */}
           <If when={voiceState() === "rec" || voiceState() === "starting"}>
-            <GlassCapsule tone="term" class="h-[50px] w-full gap-2 px-1.5">
+            <GlassCapsule tone="term" class="w-full gap-2 px-1.5" style={{ height: 48 }}>
               <Button
                 onPress={cancelVoice}
-                class="h-[38px] w-[38px] items-center justify-center rounded-full transition-transform duration-150 active:scale-95 active:bg-term-key-press"
+                class="h-[36px] w-[36px] items-center justify-center rounded-full transition-transform duration-150 active:scale-95 active:bg-term-key-press"
                 accessibilityLabel="取消录音"
                 testID="voice-cancel"
               >
-                <Icon src={xIcon} size={18} class="tint-term-fg" />
+                <Icon src={xIcon} size={17} class="tint-term-fg" />
               </Button>
 
               <View class="h-full flex-1 flex-row items-center justify-end gap-[3px] overflow-hidden px-1">
@@ -799,7 +743,7 @@ export function TermScreen(props: {
               </View>
 
               <Text
-                class="min-w-[36px] text-right text-[14px] text-term-muted"
+                class="min-w-[36px] text-right text-[13.5px] text-term-muted"
                 style={{ fontVariant: ["tabular-nums"] }}
               >
                 {formatClock(voiceSec())}
@@ -808,7 +752,7 @@ export function TermScreen(props: {
               <Button
                 onPress={confirmVoice}
                 disabled={voiceState() !== "rec"}
-                class="h-[36px] w-[36px] items-center justify-center rounded-full bg-accent transition-transform duration-150 active:scale-95 disabled:opacity-50"
+                class="h-[34px] w-[34px] items-center justify-center rounded-full bg-accent transition-transform duration-150 active:scale-95 disabled:opacity-50"
                 accessibilityLabel="完成录音"
                 testID="voice-confirm"
               >
@@ -818,14 +762,19 @@ export function TermScreen(props: {
           </If>
 
           <If when={voiceState() === "busy"}>
-            <GlassCapsule tone="term" class="h-[50px] w-full items-center justify-center gap-2 px-4">
+            <GlassCapsule tone="term" class="w-full items-center justify-center gap-2 px-4" style={{ height: 48 }}>
               <Icon src={spinnerIcon} size={16} class="tint-term-muted" />
-              <Text class="text-[14.5px] font-medium text-term-muted">识别中…</Text>
+              <Text class="text-[14px] font-medium text-term-muted">识别中…</Text>
             </GlassCapsule>
           </If>
 
+          {/* Single-Row Unified Bar: [ + | Scrollable Shortcuts | 🎙 | ⌨ / ⌄ ] */}
           <If when={!voiceState()}>
-            <GlassCapsule tone="term" class="h-[50px] w-full gap-1 px-1.5">
+            <GlassCapsule
+              tone="term"
+              class="w-full gap-1 px-1.5"
+              style={{ height: kbdOpen() ? 42 : 48 }}
+            >
               <Popover
                 open={attachOpen()}
                 onOpenChange={(e) => { if (e.open) tapHaptic(); attachOpen.set(e.open); }}
@@ -840,9 +789,9 @@ export function TermScreen(props: {
                   <View
                     accessibilityLabel="添加"
                     testID="pick"
-                    class="h-[38px] w-[38px] items-center justify-center rounded-full active:bg-term-key-press"
+                    class="h-[34px] w-[34px] items-center justify-center rounded-full active:bg-term-key-press"
                   >
-                    <Icon src={plusIcon} size={20} class="tint-term-fg" />
+                    <Icon src={plusIcon} size={19} class="tint-term-fg" />
                   </View>
                 }
               >
@@ -877,34 +826,97 @@ export function TermScreen(props: {
                 </View>
               </Popover>
 
-              <Button
-                onPress={() => { tapHaptic(); field.focus(); }}
-                class="h-full flex-1"
-                accessibilityLabel="输入到终端"
-              />
+              <View class="mx-0.5 h-[18px] w-px bg-term-glass-border" />
+
+              <Scroll
+                horizontal
+                scrollbar={false}
+                keyboardShouldPersistTaps="always"
+                class="flex-1"
+                contentClass="flex-row items-center gap-1 pr-2"
+              >
+                {KEYBAR_FRONT.map(([label, seq]) => (
+                  <Button
+                    onPress={() => onKeyPress(label, seq)}
+                    onPressDown={() => onKeyDown(label, seq)}
+                    onPressUp={stopRepeat}
+                    testID={seq === "\r" ? "send" : undefined}
+                    class={`h-[29px] min-w-[30px] items-center justify-center rounded-full bg-term-key px-2.5 active:bg-term-key-press ${
+                      litKey() === label ? "border border-term-fg" : ""
+                    }`}
+                  >
+                    <Text class="text-[12.5px] font-medium text-term-fg">{label}</Text>
+                  </Button>
+                ))}
+                {agentShortcuts().map(([label, names]) => (
+                  <Button
+                    onPress={() => pressNamed(names, label)}
+                    class={`h-[29px] min-w-[30px] items-center justify-center rounded-full bg-term-key px-2.5 active:bg-term-key-press ${
+                      litKey() === label ? "border border-term-fg" : ""
+                    }`}
+                  >
+                    <Text class="text-[12.5px] font-medium text-term-fg">{label}</Text>
+                  </Button>
+                ))}
+                {named()
+                  ? MODS.map((m) => {
+                      const active = mods().includes(m);
+                      return (
+                        <Button
+                          onPress={() => toggleMod(m)}
+                          class={`h-[29px] min-w-[30px] items-center justify-center rounded-full px-2.5 active:bg-term-key-press ${
+                            active ? "bg-term-fg" : "bg-term-key"
+                          }`}
+                        >
+                          <Text class={`text-[12.5px] font-medium ${active ? "text-term-bg" : "text-term-fg"}`}>
+                            {MOD_LABELS[m]}
+                          </Text>
+                        </Button>
+                      );
+                    })
+                  : null}
+                {KEYBAR_BACK.map(([label, seq]) => (
+                  <Button
+                    onPress={() => onKeyPress(label, seq)}
+                    onPressDown={() => onKeyDown(label, seq)}
+                    onPressUp={stopRepeat}
+                    class={`h-[29px] min-w-[30px] items-center justify-center rounded-full bg-term-key px-2.5 active:bg-term-key-press ${
+                      litKey() === label ? "border border-term-fg" : ""
+                    }`}
+                  >
+                    <Text class="text-[12.5px] font-medium text-term-fg">{label}</Text>
+                  </Button>
+                ))}
+              </Scroll>
+
+              <View class="mx-0.5 h-[18px] w-px bg-term-glass-border" />
 
               <Button
                 onPress={startVoice}
-                class="h-[38px] w-[38px] items-center justify-center rounded-full transition-transform duration-150 active:scale-95 active:bg-term-key-press"
+                class="h-[34px] w-[34px] items-center justify-center rounded-full transition-transform duration-150 active:scale-95 active:bg-term-key-press"
                 testID="voice"
                 accessibilityLabel="语音输入"
               >
-                <Icon src={micIcon} size={19} class={voiceOk() ? "tint-term-fg" : "tint-term-muted"} />
+                <Icon src={micIcon} size={18} class={voiceOk() ? "tint-term-fg" : "tint-term-muted"} />
               </Button>
 
               <Button
                 onPress={() => {
                   tapHaptic();
-                  if (focused()) Keyboard.dismiss();
+                  if (kbdOpen()) Keyboard.dismiss();
                   else field.focus();
                 }}
-                class={`h-[36px] w-[36px] items-center justify-center rounded-full transition-all duration-150 active:scale-95 ${
-                  focused() ? "bg-term-fg" : "bg-term-key"
+                class={`h-[34px] w-[34px] items-center justify-center rounded-full transition-all duration-150 active:scale-95 ${
+                  kbdOpen() ? "bg-term-fg" : "bg-term-key"
                 }`}
                 testID="kbd-toggle"
-                accessibilityLabel="键盘"
+                accessibilityLabel={kbdOpen() ? "收起键盘" : "键盘"}
               >
-                <Icon src={kbdIcon} size={18} class={focused() ? "tint-term-bg" : "tint-term-fg"} />
+                <Icon
+                  src={kbdOpen() ? chevronDownIcon : kbdIcon}
+                  size={kbdOpen() ? 18 : 17}
+                  class={kbdOpen() ? "tint-term-bg" : "tint-term-fg"}
+                />
               </Button>
             </GlassCapsule>
           </If>

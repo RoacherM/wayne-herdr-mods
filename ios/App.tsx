@@ -1,5 +1,5 @@
 import "./src/shim";
-import { computed, effect, mount, setColorScheme, signal, Storage } from "nsh";
+import { computed, effect, host, mount, setColorScheme, signal, Storage } from "nsh";
 import { createNavStack, NavStack } from "nsh/base";
 import { addingMac, boot, clientLog, paired } from "./src/conn";
 import { HomeShell, type AppearancePref } from "./src/screens/HomeShell";
@@ -15,7 +15,14 @@ type Route =
 const nav = createNavStack<Route>([{ name: "home" }]);
 const APPEARANCE_KEY = "herdr-appearance";
 const appearance = signal<AppearancePref>("dark");
-setColorScheme("dark");
+
+function applyAppearance(next: AppearancePref) {
+  appearance.set(next);
+  setColorScheme(next);
+  if (host.available()) host.call("ui.appearance", { mode: next }).catch(() => {});
+}
+
+applyAppearance("dark");
 
 function routeDesc(r: Route): string {
   if (r.name === "term") return `term:${r.address}`;
@@ -51,15 +58,13 @@ async function initAppearance() {
   try {
     const saved = await Storage.getItem(APPEARANCE_KEY);
     if (saved === "dark" || saved === "light" || saved === "system") {
-      appearance.set(saved);
-      setColorScheme(saved);
+      applyAppearance(saved);
     }
   } catch {}
 }
 
 function updateAppearance(next: AppearancePref) {
-  appearance.set(next);
-  setColorScheme(next);
+  applyAppearance(next);
   Storage.setItem(APPEARANCE_KEY, next).catch(() => {});
 }
 

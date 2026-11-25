@@ -126,6 +126,8 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
   func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
     guard let scene = scene as? UIWindowScene else { return }
     let window = UIWindow(windowScene: scene)
+    window.overrideUserInterfaceStyle = .dark
+    window.backgroundColor = .black
     window.rootViewController = ShellController()
     window.makeKeyAndVisible()
     self.window = window
@@ -208,6 +210,27 @@ final class ShellController: UIViewController, QLPreviewControllerDataSource {
     app.handle("haptic") { _, reply in
       UIImpactFeedbackGenerator(style: .light).impactOccurred()
       reply.resolve(nil)
+    }
+
+    app.handle("ui.appearance") { [weak self] args, reply in
+      let dict = args as? [String: Any] ?? [:]
+      let mode = dict["mode"] as? String ?? "dark"
+      let style: UIUserInterfaceStyle
+      switch mode {
+      case "light": style = .light
+      case "system": style = .unspecified
+      default: style = .dark
+      }
+      DispatchQueue.main.async {
+        if let win = self?.view.window {
+          win.overrideUserInterfaceStyle = style
+        } else {
+          for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
+            for win in scene.windows { win.overrideUserInterfaceStyle = style }
+          }
+        }
+        reply.resolve(["ok": true])
+      }
     }
 
     app.handle("url.open") { args, reply in
