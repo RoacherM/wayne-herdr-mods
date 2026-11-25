@@ -33,7 +33,7 @@ const KEYBAR_FRONT: [string, string][] = [
   ["Esc", "\x1b"], ["↑", "up"], ["↓", "down"], ["⏎", "\r"], ["⇧Tab", "\x1b[Z"], ["^C", "\x03"],
 ];
 const KEYBAR_BACK: [string, string][] = [
-  ["←", "left"], ["→", "right"], ["Tab", "\t"], ["粘贴", "paste"], ["换行", PASTE_LF],
+  ["←", "left"], ["→", "right"], ["Tab", "\t"], ["⌘V", "paste"], ["\\n", PASTE_LF],
   ["1", "1"], ["2", "2"], ["3", "3"], ["y", "y"], ["n", "n"], ["^D", "\x04"], ["^R", "\x12"], ["^L", "\x0c"],
 ];
 const NAME_OF: Record<string, string> = {
