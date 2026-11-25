@@ -1,15 +1,29 @@
-import { host, Image, Text, View } from "nsh";
+import { host, Image, platform, Text, View } from "nsh";
 import type { JSX, SheetDetent, ViewStyle } from "nsh/types";
-import { Button, Sheet, Switch } from "nsh/base";
+import { Button, Sheet, Switch as BaseSwitch } from "nsh/base";
+import { Haptics, isAvailable as mobileAvailable } from "nsh/mobile";
 import type { Space, Terminal } from "../conn";
 import { PROG_ICONS } from "../prog-icons";
 import chevronDownIcon from "../../assets/chevron-down.svg";
 import chevronIcon from "../../assets/chevron.svg";
 import xIcon from "../../assets/x.svg";
 
+const MAJOR_OS = Number(String(platform.version ?? "0").split(".")[0]) || 0;
+export const HAS_NATIVE_GLASS = (platform.os === "ios" || platform.os === "macos") && MAJOR_OS >= 26;
+
+/**
+ * Pure Apple Liquid Glass on iOS 26+ / macOS 26+: zero opaque fill and zero double border so
+ * native `UIGlassEffect` refraction and Fresnel specular rim show unobstructed. Older OSes
+ * fall back to frosted blur + subtle translucent surface classes.
+ */
 export const GLASS_STYLE: ViewStyle = {
   glassEffect: "regular",
+  borderCurve: "continuous",
   backdropFilter: "blur(24px)",
+};
+
+export const CARD_CURVE: ViewStyle = {
+  borderCurve: "continuous",
 };
 
 export const STATE_TEXT: Record<string, string> = {
@@ -56,6 +70,9 @@ const BADGE_CLASSES: [string, string][] = [
 export const base = (p?: string | null) => (p ? p.replace(/\/+$/, "").split("/").pop() || p : "");
 
 export const tapHaptic = () => {
+  if (mobileAvailable) {
+    try { Haptics.impact("light"); return; } catch {}
+  }
   if (host.available()) try { host.post("haptic"); } catch {}
 };
 
@@ -111,7 +128,10 @@ export function MonogramBadge(props: { label: string }) {
   const idx = hashSeed(props.label) % BADGE_CLASSES.length;
   const [bgCls, fgCls] = BADGE_CLASSES[idx];
   return (
-    <View class={`mt-0.5 h-7 w-7 items-center justify-center rounded-[7px] ${bgCls}`}>
+    <View
+      class={`mt-0.5 h-7 w-7 items-center justify-center rounded-[8px] ${bgCls}`}
+      style={CARD_CURVE}
+    >
       <Text class={`text-[11px] font-bold tracking-[0.02em] ${fgCls}`}>{monogramOf(props.label)}</Text>
     </View>
   );
@@ -149,6 +169,13 @@ export function ProgIcon(props: { t?: Terminal | null; size?: number; tone?: "mu
   );
 }
 
+export function glassFallbackClass(tone: "default" | "term" = "default"): string {
+  if (HAS_NATIVE_GLASS) return "";
+  return tone === "term"
+    ? "border border-term-glass-border bg-term-glass"
+    : "border border-glass-border bg-glass";
+}
+
 export function GlassCircle(props: {
   onPress: () => void;
   size?: number;
@@ -159,16 +186,13 @@ export function GlassCircle(props: {
   children?: JSX.Element;
 }) {
   const sz = props.size ?? 44;
-  const surface = props.tone === "term"
-    ? "bg-term-glass border-term-glass-border"
-    : "bg-glass border-glass-border";
   return (
     <Button
       onPress={props.onPress}
       disabled={props.disabled}
       testID={props.testID}
       accessibilityLabel={props.accessibilityLabel}
-      class={`items-center justify-center rounded-full border transition-transform duration-150 active:scale-95 ${surface}`}
+      class={`items-center justify-center rounded-full transition-transform duration-150 active:scale-95 ${glassFallbackClass(props.tone)}`}
       style={{ ...GLASS_STYLE, width: sz, height: sz }}
     >
       {props.children}
@@ -182,12 +206,9 @@ export function GlassCapsule(props: {
   style?: ViewStyle;
   children?: JSX.Element;
 }) {
-  const surface = props.tone === "term"
-    ? "bg-term-glass border-term-glass-border"
-    : "bg-glass border-glass-border";
   return (
     <View
-      class={`flex-row items-center rounded-full border ${surface} ${props.class ?? ""}`}
+      class={`flex-row items-center rounded-full ${glassFallbackClass(props.tone)} ${props.class ?? ""}`}
       style={{ ...GLASS_STYLE, ...props.style }}
     >
       {props.children}
@@ -205,14 +226,15 @@ export function FilterPill(props: {
     <Button
       onPress={props.onPress}
       testID={props.testID}
-      class={`h-9 flex-row items-center gap-1.5 rounded-full border bg-pill px-3.5 transition-transform duration-150 active:scale-95 ${
-        props.active ? "border-glass-border" : "border-pill-border"
+      class={`h-[34px] flex-row items-center gap-1.5 rounded-full border bg-pill px-3.5 transition-transform duration-150 active:scale-95 ${
+        props.active ? "border-border" : "border-pill-border"
       }`}
+      style={CARD_CURVE}
     >
-      <Text class={`text-[14.5px] ${props.active ? "text-foreground" : "text-muted-foreground"}`} style={{ numberOfLines: 1 }}>
+      <Text class={`text-[14px] font-medium ${props.active ? "text-foreground" : "text-muted-foreground"}`} style={{ numberOfLines: 1 }}>
         {props.label}
       </Text>
-      <Icon src={chevronDownIcon} size={13} class="tint-muted-foreground" />
+      <Icon src={chevronDownIcon} size={12} class="tint-muted-foreground" />
     </Button>
   );
 }
@@ -224,14 +246,14 @@ export function AppSwitch(props: {
   testID?: string;
 }) {
   return (
-    <Switch
+    <BaseSwitch
       checked={props.checked}
       onChange={(e) => props.onChange(e.checked)}
       accessibilityLabel={props.accessibilityLabel}
       testID={props.testID}
       hitSlop={8}
-      trackClass="h-7 w-12 justify-center rounded-full bg-secondary p-0.5 transition-colors duration-150 checked:bg-ok"
-      thumbClass="h-6 w-6 rounded-full bg-white transition-transform duration-150 checked:translate-x-5"
+      trackClass="h-[31px] w-[51px] justify-center rounded-full bg-secondary p-[2px] transition-colors duration-150 checked:bg-ok"
+      thumbClass="h-[27px] w-[27px] rounded-full bg-white shadow-sm transition-transform duration-150 checked:translate-x-[20px]"
     />
   );
 }
@@ -240,13 +262,17 @@ export function SettingsGroup(props: { title?: string; children?: JSX.Element })
   return (
     <View class="gap-2">
       {props.title ? (
-        <Text class="px-3.5 text-[15px] text-muted-foreground">{props.title}</Text>
+        <Text class="px-4 text-[13.5px] font-medium text-muted-foreground">{props.title}</Text>
       ) : null}
-      <View class="overflow-hidden rounded-[22px] bg-card py-1">
+      <View class="overflow-hidden rounded-[22px] bg-card" style={CARD_CURVE}>
         {props.children}
       </View>
     </View>
   );
+}
+
+export function RowDivider() {
+  return <View class="ml-[54px] h-px bg-separator" />;
 }
 
 export function SettingsRow(props: {
@@ -263,19 +289,19 @@ export function SettingsRow(props: {
   const icoTint = isDanger ? "tint-destructive" : "tint-foreground";
   const textCls = isDanger ? "text-destructive" : "text-card-foreground";
   const inner = (
-    <View class="min-h-[54px] flex-row items-center gap-4 px-[18px] py-2">
+    <View class="min-h-[52px] flex-row items-center gap-4 px-[18px] py-2">
       <Icon src={props.icon} size={20} class={icoTint} />
-      <Text class={`flex-1 text-[17px] ${textCls}`} style={{ numberOfLines: 1 }}>
+      <Text class={`flex-1 text-[16.5px] ${textCls}`} style={{ numberOfLines: 1 }}>
         {props.label}
       </Text>
       {props.value ? (
-        <Text class="max-w-[155px] text-[16px] text-muted-foreground" style={{ numberOfLines: 1, fontVariant: ["tabular-nums"] }}>
+        <Text class="max-w-[160px] text-[15.5px] text-muted-foreground" style={{ numberOfLines: 1, fontVariant: ["tabular-nums"] }}>
           {props.value}
         </Text>
       ) : null}
       {props.trailing}
       {props.showChevron !== false && !props.trailing ? (
-        <Icon src={chevronIcon} size={15} class="tint-chevron" />
+        <Icon src={chevronIcon} size={14} class="tint-chevron" />
       ) : null}
     </View>
   );
@@ -285,7 +311,7 @@ export function SettingsRow(props: {
       onPress={props.onPress}
       testID={props.testID}
       accessibilityLabel={props.label}
-      class="active:bg-secondary"
+      class="active:bg-secondary/70"
     >
       {inner}
     </Button>
@@ -311,9 +337,9 @@ export function BottomSheet(props: {
       closeOnBackdropPress
       closeOnEscape
       grabber
-      grabberClass="mx-auto mt-2.5 mb-1 h-1 w-10 rounded-full bg-idle/50"
+      grabberClass="mx-auto mt-2.5 mb-1 h-1 w-9 rounded-full bg-idle/50"
       backdropClass="bg-scrim"
-      popupClass="overflow-hidden rounded-t-[30px] border-t border-border bg-sheet"
+      popupClass="overflow-hidden rounded-t-[30px] bg-sheet"
       accessibilityLabel={props.accessibilityLabel ?? props.title}
       onOpenChange={(e) => { if (!e.open) props.onClose(); }}
       footer={props.footer}
@@ -325,13 +351,13 @@ export function BottomSheet(props: {
               {props.title}
             </Text>
             {props.subtitle ? (
-              <Text class="text-[14px] text-muted-foreground" style={{ numberOfLines: 1 }}>
+              <Text class="text-[13.5px] text-muted-foreground" style={{ numberOfLines: 1 }}>
                 {props.subtitle}
               </Text>
             ) : null}
           </View>
-          <GlassCircle onPress={props.onClose} size={40} accessibilityLabel="关闭" testID="sheet-close">
-            <Icon src={xIcon} size={17} class="tint-foreground" />
+          <GlassCircle onPress={props.onClose} size={38} accessibilityLabel="关闭" testID="sheet-close">
+            <Icon src={xIcon} size={16} class="tint-foreground" />
           </GlassCircle>
         </View>
         {props.children}

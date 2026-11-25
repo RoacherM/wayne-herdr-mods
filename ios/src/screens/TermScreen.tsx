@@ -1,6 +1,6 @@
 import { cleanup, Clipboard, computed, effect, host, Keyboard, lifecycle, Picker, safeArea, Scroll, signal, Text, View, WebView } from "nsh";
 import type { InputRef, WebViewRef } from "nsh/types";
-import { Button, Input, NavPage } from "nsh/base";
+import { Button, Input, NavPage, Popover } from "nsh/base";
 import {
   activeTermAddress, clearStreamListener, clientLog, info, linkEpoch, list, notify,
   paired, recordOp, rpc, sendImage, setStreamListener, status,
@@ -12,16 +12,21 @@ import { imageInput, LiveLine, PASTE_LF, pasteText } from "../../../app/src/live
 import { agentKeys, combo, keyOfChar, MODS } from "../../../app/src/agent-keys.js";
 import { safeHttpUrl } from "../../../app/src/term-select.js";
 import { enqueue, termSession } from "../../../app/src/term-session.js";
-import { voiceHold } from "../../../app/src/voice-hold.js";
-import { base, GLASS_STYLE, GlassCapsule, GlassCircle, Icon, spaceName, tapHaptic } from "../ui/controls";
+import {
+  base, GLASS_STYLE, GlassCapsule, GlassCircle, glassFallbackClass, Icon, spaceName, tapHaptic,
+} from "../ui/controls";
 import { FilesSheet } from "./FilesSheet";
+import checkIcon from "../../assets/check.svg";
 import chevronIcon from "../../assets/chevron.svg";
 import downIcon from "../../assets/down.svg";
 import folderOutlineIcon from "../../assets/folder-outline.svg";
 import kbdIcon from "../../assets/kbd.svg";
 import micIcon from "../../assets/mic.svg";
+import pasteIcon from "../../assets/paste.svg";
+import photoIcon from "../../assets/photo.svg";
 import plusIcon from "../../assets/plus.svg";
 import spinnerIcon from "../../assets/spinner.svg";
+import xIcon from "../../assets/x.svg";
 
 const KEYBAR_FRONT: [string, string][] = [
   ["Esc", "\x1b"], ["←", "left"], ["↑", "up"], ["↓", "down"], ["→", "right"], ["⏎", "\r"], ["⇧Tab", "\x1b[Z"], ["^C", "\x03"],
@@ -38,11 +43,21 @@ const MOD_LABELS: Record<string, string> = { ctrl: "^", alt: "⌥", shift: "⇧"
 const ARROWS: Record<string, string> = { up: "A", down: "B", right: "C", left: "D" };
 const REPEAT = new Set(["up", "down", "left", "right"]);
 const MAX_VOICE_MS = 60_000;
+const WAVE_BARS = 32;
+const WAVE_POLL_MS = 80;
 const PAGE_READY_FALLBACK_MS = 1500;
 const WEB_PING_MS = 600;
 const MAX_WEB_RECOVERS = 3;
 const RECOVER_COOLDOWN_MS = 1500;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const emptyWave = () => Array.from({ length: WAVE_BARS }, () => 0);
+
+function formatClock(totalSec: number): string {
+  const s = Math.max(0, Math.floor(totalSec));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${r < 10 ? "0" : ""}${r}`;
+}
 
 export function TermScreen(props: {
   address: string;
@@ -57,8 +72,10 @@ export function TermScreen(props: {
   const burst = signal("");
   const focused = signal(false);
   const uploading = signal("");
-  const voiceState = signal<"" | "rec" | "busy">("");
-  const voiceLeftSec = signal(60);
+  const voiceState = signal<"" | "starting" | "rec" | "busy">("");
+  const voiceSec = signal(0);
+  const waveBars = signal<number[]>(emptyWave());
+  const attachOpen = signal(false);
   const mods = signal<string[]>([]);
   const litKey = signal("");
   const filesOpen = signal(false);
@@ -71,7 +88,11 @@ export function TermScreen(props: {
   let repeatEvery: any = 0;
   let didRepeat = false;
   let voiceTickTimer: any = 0;
+  let voiceMeterTimer: any = 0;
   let voiceLimitTimer: any = 0;
+  let voiceGen = 0;
+  let recStartedAt = 0;
+  let disposed = false;
   let bootTimer: any = 0;
   let pingTimer: any = 0;
   let pingSeq = 0;
@@ -266,7 +287,16 @@ export function TermScreen(props: {
     }
   });
 
+  function clearVoiceTimers() {
+    clearInterval(voiceTickTimer);
+    clearInterval(voiceMeterTimer);
+    clearTimeout(voiceLimitTimer);
+    voiceTickTimer = voiceMeterTimer = voiceLimitTimer = 0;
+  }
+
   cleanup(() => {
+    disposed = true;
+    voiceGen++;
     clientLog("info", "term.cleanup", { address, s: sid() });
     if (activeTermAddress() === address) activeTermAddress.set(null);
     clearTimeout(bootTimer);
@@ -274,10 +304,11 @@ export function TermScreen(props: {
     clearTimeout(litTimer);
     clearTimeout(noticeTimer);
     stopRepeat();
-    clearInterval(voiceTickTimer);
-    clearTimeout(voiceLimitTimer);
+    clearVoiceTimers();
+    if (voiceState() === "starting" || voiceState() === "rec") {
+      try { host.call("voice.cancel").catch(() => {}); } catch {}
+    }
     clearStreamListener(onStream);
-    voice.send({ type: "dispose" });
     session.send({ type: "dispose" });
   });
 
@@ -456,74 +487,92 @@ export function TermScreen(props: {
     }
   }
 
-  // ---- Hold-to-talk voice input (AVAudioRecorder → Mac Volcengine ASR → direct LiveLine)
-  let recStartedAt = 0;
-  function clearVoiceTimers() {
-    clearInterval(voiceTickTimer);
-    clearTimeout(voiceLimitTimer);
-    voiceTickTimer = voiceLimitTimer = 0;
-  }
-
-  const voice = voiceHold((effects) => {
-    voiceState.set(voice.state.phase === "rec" || voice.state.phase === "busy" ? voice.state.phase : "");
-    for (const e of effects) runVoiceEffect(e);
-  });
-
-  function runVoiceEffect(e: string) {
-    if (e === "start") {
-      (async () => {
-        try {
-          notice.set("");
-          await host.call("voice.start");
-          voice.send({ type: "started" });
-        } catch (err: any) {
-          flashNotice(err.message || "录音启动失败");
-          voice.send({ type: "startFailed" });
-        }
-      })();
-    } else if (e === "recording") {
-      recStartedAt = Date.now();
-      voiceLeftSec.set(60);
-      tapHaptic();
-      voiceTickTimer = setInterval(() => {
-        if (voice.state.phase !== "rec") return;
-        voiceLeftSec.set(Math.max(0, Math.ceil((MAX_VOICE_MS - (Date.now() - recStartedAt)) / 1000)));
-      }, 500);
-      voiceLimitTimer = setTimeout(() => voice.send({ type: "release" }), MAX_VOICE_MS);
-    } else if (e === "finish") {
-      clearVoiceTimers();
-      const elapsed = Date.now() - recStartedAt;
-      if (elapsed < 400) {
+  // ---- Liquid Glass live-waveform voice recording (tap mic → [✕ | waveform 0:01 | ✓])
+  async function startVoice() {
+    if (voiceState()) return;
+    if (!host.available() || !info()?.voice) {
+      flashNotice(info()?.voice ? "当前环境不支持录音" : "Mac 未配置语音 Key");
+      return;
+    }
+    tapHaptic();
+    notice.set("");
+    const gen = ++voiceGen;
+    voiceState.set("starting");
+    voiceSec.set(0);
+    waveBars.set(emptyWave());
+    try {
+      await host.call("voice.start");
+      if (disposed || gen !== voiceGen) {
         host.call("voice.cancel").catch(() => {});
-        flashNotice("按住说话", 1200);
-        voice.send({ type: "done" });
         return;
       }
-      voice.send({ type: "busy" });
-      (async () => {
-        try {
-          const res = await host.call<{ data: string; mime: string }>("voice.stop");
-          if (!res?.data) { flashNotice("没录到声音"); return; }
-          const { text } = await transcribeAudio(res.data, res.mime || "audio/mp4", address);
-          if (text) {
-            tapHaptic();
-            const sep = line.value && !/\s$/.test(line.value) ? " " : "";
-            line.set(line.value + sep + text);
-            sync();
-          } else {
-            flashNotice("没听清");
-          }
-        } catch (err: any) {
-          flashNotice(`识别失败：${err.message}`);
-        } finally {
-          voice.send({ type: "done" });
-        }
-      })();
-    } else if (e === "cancel") {
-      clearVoiceTimers();
-      try { host.call("voice.cancel").catch(() => {}); } catch {}
-    } else if (e === "hint") {
-      flashNotice("按住说话", 1200);
+      recStartedAt = Date.now();
+      voiceState.set("rec");
+      voiceTickTimer = setInterval(() => {
+        if (gen !== voiceGen) return;
+        voiceSec.set(Math.floor((Date.now() - recStartedAt) / 1000));
+      }, 250);
+      voiceMeterTimer = setInterval(() => {
+        if (gen !== voiceGen) return;
+        host.call<{ level?: number }>("voice.meter").then((r) => {
+          if (disposed || gen !== voiceGen || voiceState() !== "rec") return;
+          const level = typeof r?.level === "number" ? Math.max(0, Math.min(1, r.level)) : 0;
+          waveBars.update((prev) => [...prev.slice(1), level]);
+        }).catch(() => {});
+      }, WAVE_POLL_MS);
+      voiceLimitTimer = setTimeout(() => {
+        if (gen === voiceGen && voiceState() === "rec") confirmVoice();
+      }, MAX_VOICE_MS);
+    } catch (err: any) {
+      if (gen === voiceGen) {
+        clearVoiceTimers();
+        voiceState.set("");
+        flashNotice(err?.message || "录音启动失败");
+      }
+    }
+  }
+
+  function cancelVoice() {
+    tapHaptic();
+    voiceGen++;
+    clearVoiceTimers();
+    voiceState.set("");
+    voiceSec.set(0);
+    waveBars.set(emptyWave());
+    try { host.call("voice.cancel").catch(() => {}); } catch {}
+  }
+
+  async function confirmVoice() {
+    if (voiceState() !== "rec") return;
+    tapHaptic();
+    const gen = ++voiceGen;
+    clearVoiceTimers();
+    voiceState.set("busy");
+    try {
+      const res = await host.call<{ data: string; mime: string }>("voice.stop");
+      if (disposed || gen !== voiceGen) return;
+      if (!res?.data) {
+        flashNotice("没录到声音");
+        return;
+      }
+      const { text } = await transcribeAudio(res.data, res.mime || "audio/mp4", address);
+      if (disposed || gen !== voiceGen) return;
+      if (text) {
+        tapHaptic();
+        const sep = line.value && !/\s$/.test(line.value) ? " " : "";
+        line.set(line.value + sep + text);
+        sync();
+      } else {
+        flashNotice("没听清");
+      }
+    } catch (err: any) {
+      if (!disposed && gen === voiceGen) flashNotice(`识别失败：${err.message}`);
+    } finally {
+      if (!disposed && gen === voiceGen) {
+        voiceState.set("");
+        voiceSec.set(0);
+        waveBars.set(emptyWave());
+      }
     }
   }
 
@@ -556,17 +605,12 @@ export function TermScreen(props: {
   });
 
   const voiceOk = computed(() => Boolean(info()?.voice) && host.available());
-  const voiceLabel = computed(() => {
-    if (voiceState() === "rec") return voiceLeftSec() <= 10 ? `松开 输入 · ${voiceLeftSec()}s` : "松开 输入";
-    if (voiceState() === "busy") return "识别中…";
-    return "按住 说话";
-  });
 
   return (
     <NavPage title={title()} headerVisible={false} statusBar={{ foreground: "light" }}>
       <View class="flex-1 bg-term-bg pt-[env(safe-area-inset-top)] pb-[env(keyboard-inset-height)]">
-        {/* Session Header (Screenshot 3 without >_ or diff: circular glass < | 2-line title | circular glass 📁) */}
-        <View class="flex-row items-center gap-2.5 border-b border-term-border px-3.5 pt-1 pb-2.5">
+        {/* Borderless Floating Liquid Glass Header */}
+        <View class="flex-row items-center gap-3 px-3.5 pt-1 pb-2">
           <GlassCircle
             onPress={() => { tapHaptic(); props.onBack(); }}
             size={42}
@@ -580,10 +624,10 @@ export function TermScreen(props: {
           </GlassCircle>
 
           <View class="flex-1 gap-0.5">
-            <Text class="text-[17px] font-semibold text-term-fg" style={{ numberOfLines: 1 }}>
+            <Text class="text-[17px] font-semibold tracking-[-0.01em] text-term-fg" style={{ numberOfLines: 1 }}>
               {title()}
             </Text>
-            <Text class="text-[13.5px] text-term-muted" style={{ numberOfLines: 1 }}>
+            <Text class="text-[13px] text-term-muted" style={{ numberOfLines: 1 }}>
               {subtitle()}
             </Text>
           </View>
@@ -599,7 +643,7 @@ export function TermScreen(props: {
           </GlassCircle>
         </View>
 
-        {/* Live OLED Black Terminal Stage */}
+        {/* Live Pure OLED Black Terminal Stage */}
         <View class="relative flex-1 bg-term-bg">
           <Each of={[webEpoch()]}>
             {(k) => {
@@ -637,21 +681,21 @@ export function TermScreen(props: {
           </If>
         </View>
 
-        {/* Floating Bottom Status Pill + Liquid Glass Key Strip + Direct-Input Controls */}
-        <View class="relative items-center gap-2 bg-term-bg px-3 pt-1.5" style={{ paddingBottom: safeArea().bottom + 8 }}>
+        {/* Floating Liquid Glass Controls (Shortcut Strip + Single Unified Bar / Live Waveform Bar) */}
+        <View class="relative items-center gap-2 bg-term-bg px-3.5 pt-1.5" style={{ paddingBottom: safeArea().bottom + 8 }}>
           <If when={floatingStatus()}>
             {(st) => (
               <GlassCapsule tone="term" class="h-9 gap-2 px-4">
                 {st().spin ? <Icon src={spinnerIcon} size={15} class="tint-term-muted" /> : null}
-                <Text class="text-[14px] font-medium text-term-fg" style={{ numberOfLines: 1 }}>
+                <Text class="text-[13.5px] font-medium text-term-fg" style={{ numberOfLines: 1 }}>
                   {st().text}
                 </Text>
               </GlassCapsule>
             )}
           </If>
 
-          {/* Persistent Liquid Glass Shortcut Key Strip */}
-          <GlassCapsule tone="term" class="w-full px-1.5 py-1">
+          {/* Slim Pure Liquid Glass Shortcut Strip */}
+          <GlassCapsule tone="term" class="h-[38px] w-full px-1.5">
             <Scroll
               horizontal
               scrollbar={false}
@@ -665,21 +709,21 @@ export function TermScreen(props: {
                   onPressDown={() => onKeyDown(label, seq)}
                   onPressUp={stopRepeat}
                   testID={seq === "\r" ? "send" : undefined}
-                  class={`h-[32px] min-w-[36px] items-center justify-center rounded-full bg-term-key px-2.5 active:bg-term-key-press ${
+                  class={`h-[28px] min-w-[32px] items-center justify-center rounded-full bg-term-key px-2.5 active:bg-term-key-press ${
                     litKey() === label ? "border border-term-fg" : ""
                   }`}
                 >
-                  <Text class="text-[13.5px] font-medium text-term-fg">{label}</Text>
+                  <Text class="text-[13px] font-medium text-term-fg">{label}</Text>
                 </Button>
               ))}
               {agentShortcuts().map(([label, names]) => (
                 <Button
                   onPress={() => pressNamed(names, label)}
-                  class={`h-[32px] min-w-[36px] items-center justify-center rounded-full bg-term-key px-2.5 active:bg-term-key-press ${
+                  class={`h-[28px] min-w-[32px] items-center justify-center rounded-full bg-term-key px-2.5 active:bg-term-key-press ${
                     litKey() === label ? "border border-term-fg" : ""
                   }`}
                 >
-                  <Text class="text-[13.5px] font-medium text-term-fg">{label}</Text>
+                  <Text class="text-[13px] font-medium text-term-fg">{label}</Text>
                 </Button>
               ))}
               {named()
@@ -688,11 +732,11 @@ export function TermScreen(props: {
                     return (
                       <Button
                         onPress={() => toggleMod(m)}
-                        class={`h-[32px] min-w-[36px] items-center justify-center rounded-full px-2.5 active:bg-term-key-press ${
+                        class={`h-[28px] min-w-[32px] items-center justify-center rounded-full px-2.5 active:bg-term-key-press ${
                           active ? "bg-term-fg" : "bg-term-key"
                         }`}
                       >
-                        <Text class={`text-[13.5px] font-medium ${active ? "text-term-bg" : "text-term-fg"}`}>
+                        <Text class={`text-[13px] font-medium ${active ? "text-term-bg" : "text-term-fg"}`}>
                           {MOD_LABELS[m]}
                         </Text>
                       </Button>
@@ -702,104 +746,158 @@ export function TermScreen(props: {
               {KEYBAR_BACK.map(([label, seq]) => (
                 <Button
                   onPress={() => onKeyPress(label, seq)}
-                  class={`h-[32px] min-w-[36px] items-center justify-center rounded-full bg-term-key px-2.5 active:bg-term-key-press ${
+                  class={`h-[28px] min-w-[32px] items-center justify-center rounded-full bg-term-key px-2.5 active:bg-term-key-press ${
                     litKey() === label ? "border border-term-fg" : ""
                   }`}
                 >
-                  <Text class="text-[13.5px] font-medium text-term-fg">{label}</Text>
+                  <Text class="text-[13px] font-medium text-term-fg">{label}</Text>
                 </Button>
               ))}
             </Scroll>
           </GlassCapsule>
 
-          {/* Bottom Row: [ + ]  [ 🎙 按住 说话 ]  [ ⌨ ] — zero duplicate text box */}
-          <View class="w-full flex-row items-center gap-2.5">
-            <GlassCircle
-              onPress={pick}
-              size={44}
-              tone="term"
-              accessibilityLabel="插入图片"
-              testID="pick"
-            >
-              <Icon src={plusIcon} size={20} class="tint-term-fg" />
-            </GlassCircle>
-
-            <Button
-              disabled={voiceState() === "busy"}
-              onPressDown={() => {
-                if (!host.available() || !info()?.voice) {
-                  flashNotice(info()?.voice ? "当前环境不支持录音" : "Mac 未配置语音 Key");
-                  return;
-                }
-                voice.send({ type: "press" });
-              }}
-              onPressUp={() => voice.send({ type: "release" })}
-              onPress={() => {
-                if (voice.state.phase === "rec" && Date.now() - recStartedAt >= 400) {
-                  voice.send({ type: "release" });
-                }
-              }}
-              class={`h-11 flex-1 flex-row items-center justify-center gap-2 rounded-full border transition-colors duration-150 ${
-                voiceState() === "rec"
-                  ? "border-term-fg bg-term-fg"
-                  : "border-term-glass-border bg-term-glass active:bg-term-key-press"
-              } ${voiceState() === "busy" ? "opacity-60" : ""}`}
-              style={voiceState() === "rec" ? undefined : GLASS_STYLE}
-              testID="voice"
-              accessibilityLabel="按住说话"
-            >
-              <Icon
-                src={micIcon}
-                size={17}
-                class={voiceState() === "rec" ? "tint-term-bg" : voiceOk() ? "tint-term-fg" : "tint-term-muted"}
-              />
-              <Text
-                class={`text-[15.5px] font-semibold tracking-[0.02em] ${
-                  voiceState() === "rec" ? "text-term-bg" : voiceOk() ? "text-term-fg" : "text-term-muted"
-                }`}
+          {/* Main Single Liquid Glass Bar: Idle (IMG_1852/1854) <-> Recording Waveform (IMG_1853) <-> Busy */}
+          <If when={voiceState() === "rec" || voiceState() === "starting"}>
+            <GlassCapsule tone="term" class="h-[50px] w-full gap-2 px-1.5">
+              <Button
+                onPress={cancelVoice}
+                class="h-[38px] w-[38px] items-center justify-center rounded-full transition-transform duration-150 active:scale-95 active:bg-term-key-press"
+                accessibilityLabel="取消录音"
+                testID="voice-cancel"
               >
-                {voiceLabel()}
+                <Icon src={xIcon} size={18} class="tint-term-fg" />
+              </Button>
+
+              <View class="h-full flex-1 flex-row items-center justify-end gap-[3px] overflow-hidden px-1">
+                {waveBars().map((lvl) => (
+                  <View
+                    class={`w-[2.5px] rounded-full ${lvl > 0.06 ? "bg-wave-active" : "bg-wave-idle"}`}
+                    style={{ height: Math.max(3, Math.round(3 + lvl * 20)) }}
+                  />
+                ))}
+              </View>
+
+              <Text
+                class="min-w-[36px] text-right text-[14px] text-term-muted"
+                style={{ fontVariant: ["tabular-nums"] }}
+              >
+                {formatClock(voiceSec())}
               </Text>
-            </Button>
 
-            <Button
-              onPress={() => {
-                tapHaptic();
-                if (focused()) Keyboard.dismiss();
-                else field.focus();
-              }}
-              class={`h-11 w-11 items-center justify-center rounded-full border transition-transform duration-150 active:scale-95 ${
-                focused()
-                  ? "border-term-fg bg-term-fg"
-                  : "border-term-glass-border bg-term-glass"
-              }`}
-              style={focused() ? undefined : GLASS_STYLE}
-              testID="kbd-toggle"
-              accessibilityLabel="键盘"
-            >
-              <Icon src={kbdIcon} size={20} class={focused() ? "tint-term-bg" : "tint-term-fg"} />
-            </Button>
+              <Button
+                onPress={confirmVoice}
+                disabled={voiceState() !== "rec"}
+                class="h-[36px] w-[36px] items-center justify-center rounded-full bg-accent transition-transform duration-150 active:scale-95 disabled:opacity-50"
+                accessibilityLabel="完成录音"
+                testID="voice-confirm"
+              >
+                <Icon src={checkIcon} size={17} class="tint-accent-foreground" />
+              </Button>
+            </GlassCapsule>
+          </If>
 
-            {/* Invisible direct-to-terminal input field: zero duplicate text echo */}
-            <Input
-              ref={field}
-              value={burst()}
-              multiline
-              submitBehavior="submit"
-              returnKeyType="send"
-              autoCapitalize="none"
-              autoCorrect={false}
-              onChange={(e) => onInputChange(e.value)}
-              onCompositionChange={(e) => { line.compose(e.composing); sync(); }}
-              onKeyPress={(e) => { if (e.key === "Backspace") line.backspace(); }}
-              onSubmit={send}
-              onFocus={() => focused.set(true)}
-              onBlur={() => focused.set(false)}
-              class="pointer-events-none absolute bottom-0 left-1/2 h-px w-px opacity-0"
-              testID="composer"
-              accessibilityLabel="输入到终端"
-            />
-          </View>
+          <If when={voiceState() === "busy"}>
+            <GlassCapsule tone="term" class="h-[50px] w-full items-center justify-center gap-2 px-4">
+              <Icon src={spinnerIcon} size={16} class="tint-term-muted" />
+              <Text class="text-[14.5px] font-medium text-term-muted">识别中…</Text>
+            </GlassCapsule>
+          </If>
+
+          <If when={!voiceState()}>
+            <GlassCapsule tone="term" class="h-[50px] w-full gap-1 px-1.5">
+              <Popover
+                open={attachOpen()}
+                onOpenChange={(e) => { if (e.open) tapHaptic(); attachOpen.set(e.open); }}
+                placement="top"
+                align="start"
+                offset={12}
+                popupClass={`w-[212px] overflow-hidden rounded-[24px] py-1.5 transition-all duration-150 ${glassFallbackClass("term")}`}
+                popupStyle={GLASS_STYLE}
+                popupStartingClass="opacity-0 scale-95"
+                popupEndingClass="opacity-0 scale-95"
+                trigger={
+                  <View
+                    accessibilityLabel="添加"
+                    testID="pick"
+                    class="h-[38px] w-[38px] items-center justify-center rounded-full active:bg-term-key-press"
+                  >
+                    <Icon src={plusIcon} size={20} class="tint-term-fg" />
+                  </View>
+                }
+              >
+                <View>
+                  <Button
+                    onPress={() => { attachOpen.set(false); tapHaptic(); pick(); }}
+                    class="min-h-[48px] flex-row items-center gap-3.5 px-5 active:bg-term-key"
+                    testID="attach-photo"
+                    accessibilityLabel="照片图库"
+                  >
+                    <Icon src={photoIcon} size={19} class="tint-term-fg" />
+                    <Text class="text-[16px] font-medium text-term-fg">照片图库</Text>
+                  </Button>
+                  <Button
+                    onPress={() => { attachOpen.set(false); tapHaptic(); pasteFromClipboard(); }}
+                    class="min-h-[48px] flex-row items-center gap-3.5 px-5 active:bg-term-key"
+                    testID="attach-paste"
+                    accessibilityLabel="粘贴剪贴板"
+                  >
+                    <Icon src={pasteIcon} size={19} class="tint-term-fg" />
+                    <Text class="text-[16px] font-medium text-term-fg">粘贴剪贴板</Text>
+                  </Button>
+                </View>
+              </Popover>
+
+              <Button
+                onPress={() => { tapHaptic(); field.focus(); }}
+                class="h-full flex-1"
+                accessibilityLabel="输入到终端"
+              />
+
+              <Button
+                onPress={startVoice}
+                class="h-[38px] w-[38px] items-center justify-center rounded-full transition-transform duration-150 active:scale-95 active:bg-term-key-press"
+                testID="voice"
+                accessibilityLabel="语音输入"
+              >
+                <Icon src={micIcon} size={19} class={voiceOk() ? "tint-term-fg" : "tint-term-muted"} />
+              </Button>
+
+              <Button
+                onPress={() => {
+                  tapHaptic();
+                  if (focused()) Keyboard.dismiss();
+                  else field.focus();
+                }}
+                class={`h-[36px] w-[36px] items-center justify-center rounded-full transition-all duration-150 active:scale-95 ${
+                  focused() ? "bg-term-fg" : "bg-term-key"
+                }`}
+                testID="kbd-toggle"
+                accessibilityLabel="键盘"
+              >
+                <Icon src={kbdIcon} size={18} class={focused() ? "tint-term-bg" : "tint-term-fg"} />
+              </Button>
+            </GlassCapsule>
+          </If>
+
+          {/* Invisible direct-to-terminal input field: zero duplicate text echo */}
+          <Input
+            ref={field}
+            value={burst()}
+            multiline
+            submitBehavior="submit"
+            returnKeyType="send"
+            autoCapitalize="none"
+            autoCorrect={false}
+            onChange={(e) => onInputChange(e.value)}
+            onCompositionChange={(e) => { line.compose(e.composing); sync(); }}
+            onKeyPress={(e) => { if (e.key === "Backspace") line.backspace(); }}
+            onSubmit={send}
+            onFocus={() => focused.set(true)}
+            onBlur={() => focused.set(false)}
+            class="pointer-events-none absolute bottom-0 left-1/2 h-px w-px opacity-0"
+            testID="composer"
+            accessibilityLabel="输入到终端"
+          />
         </View>
 
         <FilesSheet

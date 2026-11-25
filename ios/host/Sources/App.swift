@@ -267,6 +267,7 @@ final class ShellController: UIViewController, QLPreviewControllerDataSource {
               AVEncoderBitRateKey: 32_000,
             ]
             let rec = try AVAudioRecorder(url: self.audioURL, settings: settings)
+            rec.isMeteringEnabled = true
             rec.prepareToRecord()
             guard rec.record(forDuration: 120) else {
               reply.reject("无法启动录音")
@@ -278,6 +279,21 @@ final class ShellController: UIViewController, QLPreviewControllerDataSource {
             reply.reject("录音失败：\(error.localizedDescription)")
           }
         }
+      }
+    }
+
+    app.handle("voice.meter") { [weak self] _, reply in
+      DispatchQueue.main.async {
+        guard let rec = self?.recorder, rec.isRecording else {
+          reply.resolve(["level": 0.0])
+          return
+        }
+        rec.updateMeters()
+        let db = rec.averagePower(forChannel: 0)
+        // Map -55 dB..0 dB to 0..1 with slight perceptual curve for crisp waveform bars
+        let linear = max(0.0, min(1.0, Double((db + 55.0) / 55.0)))
+        let level = pow(linear, 1.35)
+        reply.resolve(["level": level])
       }
     }
 

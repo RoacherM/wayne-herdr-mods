@@ -31,7 +31,7 @@ const ALT_ON = enc('\x1b[?1049h');
 const ALT_OFF = enc('\x1b[?1049l');
 const SYNC_WATCH_MS = 250;
 const SYNC_UNLOCK_MS = 600;
-const theme = { background: '#080808', foreground: '#e6e6e1', cursor: '#e6e6e1', selectionBackground: 'rgba(59, 130, 246, 0.35)' };
+const theme = { background: '#000000', foreground: '#f2f2f7', cursor: '#f2f2f7', selectionBackground: 'rgba(10, 132, 255, 0.36)' };
 document.documentElement.style.background = theme.background;
 
 const viewport = document.getElementById('vp');

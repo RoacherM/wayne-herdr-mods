@@ -1,7 +1,7 @@
 import { Clipboard, computed, host, Image, Scroll, signal, Text, View } from "nsh";
 import { Button, Input } from "nsh/base";
 import { addingMac, cancelPair, pairWith, problem, sas, status } from "../conn";
-import { GlassCapsule, Icon, STATUS_TEXT, tapHaptic } from "../ui/controls";
+import { CARD_CURVE, GlassCapsule, Icon, STATUS_TEXT, tapHaptic } from "../ui/controls";
 import arrowRightIcon from "../../assets/arrow-right.svg";
 import herdrIcon from "../../assets/herdr-icon.png";
 import pasteIcon from "../../assets/paste.svg";
@@ -54,7 +54,7 @@ export function PairScreen() {
         else={
           <View class="flex-1 justify-between py-9">
             <View class="flex-1 items-center justify-center gap-4">
-              <View class="h-[76px] w-[76px] overflow-hidden rounded-[22px] border border-glass-border bg-white">
+              <View class="h-[76px] w-[76px] overflow-hidden rounded-[22px] bg-white" style={CARD_CURVE}>
                 <Image src={herdrIcon} style={{ width: 76, height: 76 }} />
               </View>
               <Text class="text-[28px] font-semibold text-foreground">Herdr</Text>
@@ -143,10 +143,10 @@ export function PairScreen() {
       >
         {(code) => (
           <View class="flex-1 items-center justify-center gap-5 py-8">
-            <View class="h-[60px] w-[60px] overflow-hidden rounded-[18px] border border-glass-border bg-white">
+            <View class="h-[60px] w-[60px] overflow-hidden rounded-[18px] bg-white" style={CARD_CURVE}>
               <Image src={herdrIcon} style={{ width: 60, height: 60 }} />
             </View>
-            <View class="w-full items-center justify-center rounded-[24px] bg-card px-6 py-8">
+            <View class="w-full items-center justify-center rounded-[24px] bg-card px-6 py-8" style={CARD_CURVE}>
               <Text
                 class="font-mono text-[42px] font-semibold tracking-[0.14em] text-foreground"
                 style={{ fontVariant: ["tabular-nums"] }}

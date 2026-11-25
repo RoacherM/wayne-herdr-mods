@@ -8,7 +8,7 @@ import {
 } from "../conn";
 import {
   AppSwitch, base, BottomSheet, FilterPill, formatRelTime, GlassCapsule, GlassCircle, Icon,
-  KIND_TEXT, MonogramBadge, ProgIcon, SettingsGroup, SettingsRow, spaceName, STATE_TEXT,
+  KIND_TEXT, MonogramBadge, ProgIcon, RowDivider, SettingsGroup, SettingsRow, spaceName, STATE_TEXT,
   STATUS_TEXT, tapHaptic,
 } from "../ui/controls";
 import bellIcon from "../../assets/bell.svg";
@@ -301,12 +301,12 @@ export function HomeShell(props: {
                 sessions().map((row) => (
                   <Button
                     onPress={() => { tapHaptic(); props.onOpenTerm(row.term.address, "row"); }}
-                    class="flex-row items-start gap-3 border-b border-separator px-[18px] py-[15px] active:bg-secondary/60"
+                    class="flex-row items-start gap-3 border-b border-separator px-[18px] py-[14px] active:bg-secondary/60"
                     testID={`row-${row.term.address}`}
                   >
                     <MonogramBadge label={row.spaceTitle} />
                     <View class="flex-1 gap-1">
-                      <Text class="text-[17px] font-medium text-foreground" style={{ numberOfLines: 1 }}>
+                      <Text class="text-[16.5px] font-semibold tracking-[-0.01em] text-foreground" style={{ numberOfLines: 1 }}>
                         {row.title}
                       </Text>
                       {row.sub ? (
@@ -320,7 +320,7 @@ export function HomeShell(props: {
                     </View>
                     <View class="items-end gap-1.5 pt-0.5">
                       <Text
-                        class="text-[14px] text-muted-foreground"
+                        class="text-[13.5px] text-muted-foreground"
                         style={{ fontVariant: ["tabular-nums"] }}
                       >
                         {row.rightMeta}
@@ -391,7 +391,7 @@ export function HomeShell(props: {
               </View>
             </If>
 
-            <Scroll class="flex-1" contentClass="gap-4 px-4 pt-1" contentStyle={{ paddingBottom: safeArea().bottom + 108 }}>
+            <Scroll class="flex-1" contentClass="gap-5 px-4 pt-1" contentStyle={{ paddingBottom: safeArea().bottom + 108 }}>
               <SettingsGroup title="连接">
                 {matchSetting("当前电脑 mac") ? (
                   <SettingsRow
@@ -401,6 +401,7 @@ export function HomeShell(props: {
                     onPress={() => { tapHaptic(); picker.set("macs"); }}
                   />
                 ) : null}
+                {matchSetting("当前电脑 mac") && matchSetting("已配对电脑 环境") ? <RowDivider /> : null}
                 {matchSetting("已配对电脑 环境") ? (
                   <SettingsRow
                     icon={monitorIcon}
@@ -409,6 +410,7 @@ export function HomeShell(props: {
                     onPress={() => { tapHaptic(); picker.set("macs"); }}
                   />
                 ) : null}
+                {matchSetting("已配对电脑 环境") && matchSetting("通知 推送") ? <RowDivider /> : null}
                 {matchSetting("通知 推送") ? (
                   <SettingsRow
                     icon={bellIcon}
@@ -435,6 +437,7 @@ export function HomeShell(props: {
                     testID="settings-appearance"
                   />
                 ) : null}
+                {matchSetting("外观 深色 浅色 主题") && matchSetting("中继 直连 通道") ? <RowDivider /> : null}
                 {matchSetting("中继 直连 通道") ? (
                   <SettingsRow
                     icon={globeIcon}
@@ -443,6 +446,7 @@ export function HomeShell(props: {
                     showChevron={false}
                   />
                 ) : null}
+                {matchSetting("中继 直连 通道") && matchSetting("发送测试通知") ? <RowDivider /> : null}
                 {matchSetting("发送测试通知") ? (
                   <SettingsRow
                     icon={clockIcon}
@@ -463,6 +467,7 @@ export function HomeShell(props: {
                     testID="add-mac"
                   />
                 ) : null}
+                {matchSetting("配对新电脑 扫码") && matchSetting("移除当前电脑 解绑") ? <RowDivider /> : null}
                 {matchSetting("移除当前电脑 解绑") ? (
                   <SettingsRow
                     icon={trashIcon}

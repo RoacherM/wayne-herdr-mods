@@ -1,7 +1,7 @@
 import { Clipboard, computed, effect, Image, safeArea, Scroll, signal, Text, View } from "nsh";
 import { Button, NavPage } from "nsh/base";
 import { clientLog, fetchPreviewDataUrl, openNativePreview, rpc, status } from "../conn";
-import { fmtBytes, GlassCircle, Icon, tapHaptic } from "../ui/controls";
+import { CARD_CURVE, fmtBytes, GlassCircle, Icon, tapHaptic } from "../ui/controls";
 import chevronIcon from "../../assets/chevron.svg";
 import videoIcon from "../../assets/video.svg";
 
@@ -123,10 +123,10 @@ export function PreviewScreen(props: { rootId: string; path: string; title: stri
   return (
     <NavPage title={props.title} headerVisible={false}>
       <View class="flex-1 bg-background pt-[env(safe-area-inset-top)]">
-        <View class="flex-row items-center gap-3 border-b border-separator px-3.5 py-2.5">
-          <GlassCircle onPress={() => { tapHaptic(); props.onBack(); }} size={40} accessibilityLabel="返回" testID="preview-back">
+        <View class="flex-row items-center gap-3 px-3.5 py-2.5">
+          <GlassCircle onPress={() => { tapHaptic(); props.onBack(); }} size={42} accessibilityLabel="返回" testID="preview-back">
             <View style={{ rotate: "180deg" }}>
-              <Icon src={chevronIcon} size={19} class="tint-foreground" />
+              <Icon src={chevronIcon} size={20} class="tint-foreground" />
             </View>
           </GlassCircle>
           <View class="flex-1 gap-0.5">
