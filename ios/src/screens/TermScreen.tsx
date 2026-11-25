@@ -3,7 +3,7 @@ import type { InputRef, WebViewRef } from "nsh/types";
 import { Button, Input, NavPage, Popover } from "nsh/base";
 import {
   activeTermAddress, clearStreamListener, clientLog, info, linkEpoch, list, notify,
-  paired, recordOp, rpc, sendImage, setStreamListener, status,
+  paired, recordOp, rpc, sendFile, sendImage, setStreamListener, status,
   termDrawn, termOpening, termOutputArrived, termRpcOpened, termTyped, termWebReady,
   transcribeAudio,
 } from "../conn";
@@ -13,7 +13,7 @@ import { agentKeys, combo, keyOfChar, MODS } from "../../../app/src/agent-keys.j
 import { safeHttpUrl } from "../../../app/src/term-select.js";
 import { enqueue, termSession } from "../../../app/src/term-session.js";
 import {
-  base, GLASS_STYLE, GlassCapsule, GlassCircle, glassFallbackClass, Icon, spaceName, tapHaptic,
+  base, GlassCapsule, GlassCircle, glassFallbackClass, glassStyle, Icon, spaceName, tapHaptic,
 } from "../ui/controls";
 import { FilesSheet } from "./FilesSheet";
 import checkIcon from "../../assets/check.svg";
@@ -397,7 +397,7 @@ export function TermScreen(props: {
           uploading.set("剪贴板图片");
           const res = await fetch(img.url);
           const blob = await res.blob();
-          const path = await sendImage(Object.assign(blob, { name: "clipboard.png" }), address);
+          const path = await sendImage(blob, address, "clipboard.png");
           line.commit();
           sync();
           out(imageInput(path, 0, 1).d);
@@ -473,7 +473,7 @@ export function TermScreen(props: {
     try {
       const got = await Picker.pickImages({ multiple: true, limit: 6, maxDimension: 2048, quality: 0.85 });
       for (const [i, g] of got.entries()) {
-        uploading.set(`${i + 1}/${got.length}`);
+        uploading.set(`图片 ${i + 1}/${got.length}`);
         const path = await sendImage(g.file, address);
         line.commit();
         sync();
@@ -482,6 +482,27 @@ export function TermScreen(props: {
       }
     } catch (e: any) {
       flashNotice(`图片没发出去：${e.message}`);
+    } finally {
+      uploading.set("");
+    }
+  }
+
+  async function pickFiles() {
+    try {
+      const got = await Picker.pickFiles({ multiple: true, limit: 6, maxSize: 8 * 1024 * 1024 });
+      const usable = got.filter((f) => f.status === "read" && f.file);
+      const tooBig = got.filter((f) => f.status === "tooLarge");
+      if (tooBig.length) flashNotice(`${tooBig[0].name} 超过 8 MB 上限`, 2600);
+      for (const [i, item] of usable.entries()) {
+        uploading.set(`文件 ${i + 1}/${usable.length}`);
+        const path = await sendFile(item.file!, address, item.name);
+        line.commit();
+        sync();
+        const { d, after } = imageInput(path, i, usable.length);
+        out(d, after);
+      }
+    } catch (e: any) {
+      flashNotice(`文件没发出去：${e.message}`);
     } finally {
       uploading.set("");
     }
@@ -598,7 +619,7 @@ export function TermScreen(props: {
   });
 
   const floatingStatus = computed(() => {
-    if (uploading()) return { text: `上传图片 ${uploading()}…`, spin: true };
+    if (uploading()) return { text: `上传${uploading()}…`, spin: true };
     if (status() !== "ready") return { text: `重连 ${macName()}…`, spin: true };
     if (notice()) return { text: notice(), spin: false };
     return null;
@@ -811,8 +832,8 @@ export function TermScreen(props: {
                 placement="top"
                 align="start"
                 offset={12}
-                popupClass={`w-[212px] overflow-hidden rounded-[24px] py-1.5 transition-all duration-150 ${glassFallbackClass("term")}`}
-                popupStyle={GLASS_STYLE}
+                popupClass={`w-[216px] overflow-hidden rounded-[24px] py-1.5 transition-all duration-150 ${glassFallbackClass("term")}`}
+                popupStyle={glassStyle("term")}
                 popupStartingClass="opacity-0 scale-95"
                 popupEndingClass="opacity-0 scale-95"
                 trigger={
@@ -826,6 +847,15 @@ export function TermScreen(props: {
                 }
               >
                 <View>
+                  <Button
+                    onPress={() => { attachOpen.set(false); tapHaptic(); pickFiles(); }}
+                    class="min-h-[48px] flex-row items-center gap-3.5 px-5 active:bg-term-key"
+                    testID="attach-files"
+                    accessibilityLabel="选择文件"
+                  >
+                    <Icon src={folderOutlineIcon} size={19} class="tint-term-fg" />
+                    <Text class="text-[16px] font-medium text-term-fg">选择文件</Text>
+                  </Button>
                   <Button
                     onPress={() => { attachOpen.set(false); tapHaptic(); pick(); }}
                     class="min-h-[48px] flex-row items-center gap-3.5 px-5 active:bg-term-key"

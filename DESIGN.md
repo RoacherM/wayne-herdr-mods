@@ -53,6 +53,7 @@ iPhone 上的 Herdr App（网页版已停，2026-11-09）──wss /v1/client/<i
 | 停止 | `terminal.interrupt` | 未测 |
 | agent 卡住、结束、退出时推送 | 宿主订阅 `status` / `turn` / `finished` 事件 → Web Push / iOS 原生本地通知 | ✓ |
 | 浏览工作区文件与低带宽预览（代码、文档、图片、视频） | 宿主受限文件沙箱 `files.roots` / `files.list` / `files.open` / `files.slice`（不暴露 `herdr-core` 任意 `file.*`） | ✓ |
+| 发送图片或通用文件到终端（上限 8 MB） | 分块 `upload.put` + `image.put` / `file.put` → `terminal.put`（写入该终端隔离临时目录，随终端销毁） | ✓ |
 
 手机不新建、不关闭终端，也不写 `herdr-app` 布局文档。第一版只看、只打字。
 
@@ -547,7 +548,7 @@ A 部分在 `HC_SESSION=relay-probe` 的独立 core 里自己开一个 `/bin/sh`
 node probe/image-paste.mjs [claude|codex|agy]   # 图片路径粘贴进 agent 输入行，各种写法的结果
 ```
 
-不碰 Herdr：每个 agent 在临时文件夹里自己的 PTY 中启动，只粘贴、打字，不回车，跑完杀掉。会在 agent 的历史里留下这个临时文件夹。结果见「发图片（已实现）」。
+不碰 Herdr：每个 agent 在临时文件夹里自己的 PTY 中启动，只粘贴、打字，不回车，跑完杀掉。会在 agent 的历史里留下这个临时文件夹。结果见「发图片与文件（已实现）」。
 
 ## 还没验证的
 
@@ -613,8 +614,8 @@ node probe/image-paste.mjs [claude|codex|agy]   # 图片路径粘贴进 agent �
 >      - **根治 43% `kick=bad-frame` 断线重连**：实测 `nsh 0.4.0` 原生全局 `WebSocket.send()` 的 Rust 出站通道上限仅 8 条，第 9 条同步抛 `Error: WebSocket outbound queue is full`；此前 `ready` 后同时刷出 `pendingLogs` + `terminals.list` + `term.open` + `board.get` 超过 8 条，且 `app/src/link.js` 在 `ws.send()` 前已调用 `cipher.seal()` 推进 `sendCounter++`，`flushPendingLogs()` 吞错导致 nonce 永久错位，下一帧即被 Mac `kick=bad-frame`。现通过 `ios/src/ws-queue.ts`（由 `ios/src/shim.ts` 接管 `globalThis.WebSocket`）改用 `websocket` 模块的 `WebSocketConnection.write()` 严格单帧 FIFO 串行发送（队列上限 `MAX_QUEUED_FRAMES = 512`，超限主动断开重连）；同时 `app/src/link.js` 对 `ws.send()` 加 `try/catch`，发送异常立即 `drop(..., { reason: 'send_error' })`，防止残留错位密码器。协议不变，新旧混用完全兼容。
 >      - **消除冗余 RPC 与重连突发**：`ios/src/conn.ts` 抽纯 helper `coalesceAsync` 合并并发的 `refresh()`（`terminals.list`），同时在 `ready` 回调里将 `refresh()` 排在 `flushPendingLogs()` 之前；删去 `HomeScreen` / `TermScreen` 挂载时的重复 `wake()`（`conn.ts` 的全局 `lifecycle()` effect 已覆盖所有页面回前台唤醒）。测法：`test/ios-conn.test.mjs`、`test/link-steps.test.mjs`。
 >   7. **T3 Code 风格重构与真·原生 Liquid Glass 质感升级（2026-11-24 / 2026-11-25，nsh 0.6.1，iOS 27）**：
->      - **视觉与材质体系**：对照实机 T3 Code iOS 26/27 截图，深色背景收敛为纯 OLED 黑（`#000000`，`ios/term/term.js` 同色无缝融合）+ `#141416` 微抬分组卡（`borderCurve: "continuous"`、`rounded-[22px]` + 苹果设置页内缩细分隔线 `RowDivider`）；亮色采用 `#f2f2f7` + `#ffffff`；高亮色对齐苹果系统蓝（`#007aff` / `#0a84ff`）。**关键修复（2026-11-25）**：在 iOS 26+/macOS 26+（`HAS_NATIVE_GLASS`）上去掉 `GlassCircle` / `GlassCapsule` / 玻璃 `Popover` 上的不透明灰底与手绘 1px 塑料边框，改用纯净 `glassEffect: "regular"` + `borderCurve: "continuous"`（旧系统回退 `backdropFilter: "blur(24px)"` + 半透底边），让原生 `UIGlassEffect` 折射与菲涅尔斜角高光完全呈现；设置页开关采用 51×31pt iOS 绿色（`bg-ok`）滑块开关（避免 `nsh/mobile` `Switch` 跟随纯白 `theme.primary` 在深色下白底白钮不可见），触觉反馈走 `Haptics.impact("light")`。全部颜色收口到 `ios/theme.json` 语义 token（TSX 零裸十六进制）。
->      - **信息架构与模块拆分**：`ios/src/ui/controls.tsx`（纯原生 Liquid Glass 圆钮/胶囊、2 字母项目色块徽章、筛选胶囊、原生 `nsh/mobile` `Switch` 与 `Sheet` 封装）、`ios/src/screens/PairScreen.tsx`（开屏扫码 + 玻璃粘贴胶囊 + 6 位核对码卡片）、`ios/src/screens/HomeShell.tsx`（底部悬浮 2-Tab 玻璃 Dock「会话 / 设置」+ 会话页右侧圆形新建按钮、顶部连接状态与筛选胶囊、设置页分组卡片 + 原生 `AlertDialog` 解绑确认）、`ios/src/screens/TermScreen.tsx`（无硬横线悬浮顶栏：左上圆形玻璃返回 + 双行标题 + 右上圆形玻璃「文件」按钮；下方极轻玻璃快捷键条 + 单条一体式主玻璃胶囊 `[ + | 轻点唤键盘 | 🎙 | ⌨ ]`，`<Input>` 隐藏直输终端零重复回显；点 `+` 弹出纯 Liquid Glass `<Popover>` 菜单「照片图库 / 粘贴剪贴板」；点 `🎙` 原位切换为实时声波录音胶囊 `[ ✕ | 32 条 AVAudioRecorder 实时音量声波 0:01 | 蓝色圆形 ✓ ]`，由 Swift 宿主 `voice.meter` 80 ms 轮询驱动）、`ios/src/screens/FilesSheet.tsx`（72%/全屏可拖拽半屏文件抽屉 + 极简目录树 + 底部固定悬浮玻璃 `Search files` 搜索条）、`ios/src/screens/PreviewScreen.tsx`（无硬边框顶栏 + 只读代码/图片/音视频/QuickLook 预览）。
+>      - **视觉与材质体系**：对照实机 T3 Code iOS 26/27 截图，App 默认直接锁定纯 OLED 深色模式（`ios/nsh.json` `"appearance": "dark"` + `ios/App.tsx` 启动即 `setColorScheme("dark")`，确保白天系统浅色模式下首页、设置、系统键盘与纯黑终端一致；即使在设置页手动切回浅色，终端页的 Liquid Glass 仍通过 `term-glass-tint` 保持深色熏黑玻璃，绝不发白发灰）。深色画布 `#000000`（`ios/term/term.js` 同色无缝融合）+ `#141416` 微抬分组卡（`borderCurve: "continuous"`、`rounded-[22px]` + 苹果设置页内缩细分隔线 `RowDivider`）；高亮色对齐苹果系统蓝（`#007aff` / `#0a84ff`）。**关键修复（2026-11-25）**：在 iOS 26+/macOS 26+（`HAS_NATIVE_GLASS`）上去掉 `GlassCircle` / `GlassCapsule` / 玻璃 `Popover` 上的不透明灰底与手绘 1px 塑料边框，改用纯净 `glassEffect: "regular"` + `borderCurve: "continuous"`（旧系统回退 `backdropFilter: "blur(24px)"` + 半透底边），让原生 `UIGlassEffect` 折射与菲涅尔斜角高光完全呈现；设置页开关采用 51×31pt iOS 绿色（`bg-ok`）滑块开关（避免 `nsh/mobile` `Switch` 跟随纯白 `theme.primary` 在深色下白底白钮不可见），触觉反馈走 `Haptics.impact("light")`。全部颜色收口到 `ios/theme.json` 语义 token（TSX 零裸十六进制）。
+>      - **信息架构与模块拆分**：`ios/src/ui/controls.tsx`（纯原生 Liquid Glass 圆钮/胶囊、2 字母项目色块徽章、筛选胶囊、原生 `nsh/mobile` `Switch` 与 `Sheet` 封装）、`ios/src/screens/PairScreen.tsx`（开屏扫码 + 玻璃粘贴胶囊 + 6 位核对码卡片）、`ios/src/screens/HomeShell.tsx`（底部悬浮 2-Tab 玻璃 Dock「会话 / 设置」+ 会话页右侧圆形新建按钮、顶部连接状态与筛选胶囊、设置页分组卡片 + 原生 `AlertDialog` 解绑确认）、`ios/src/screens/TermScreen.tsx`（无硬横线悬浮顶栏：左上圆形玻璃返回 + 双行标题 + 右上圆形玻璃「文件」按钮；下方极轻玻璃快捷键条 + 单条一体式主玻璃胶囊 `[ + | 轻点唤键盘 | 🎙 | ⌨ ]`，`<Input>` 隐藏直输终端零重复回显；点 `+` 弹出纯 Liquid Glass `<Popover>` 菜单「选择文件 / 照片图库 / 粘贴剪贴板」；点 `🎙` 原位切换为实时声波录音胶囊 `[ ✕ | 32 条 AVAudioRecorder 实时音量声波 0:01 | 蓝色圆形 ✓ ]`，由 Swift 宿主 `voice.meter` 80 ms 轮询驱动）、`ios/src/screens/FilesSheet.tsx`（72%/全屏可拖拽半屏文件抽屉 + 极简目录树 + 底部固定悬浮玻璃 `Search files` 搜索条）、`ios/src/screens/PreviewScreen.tsx`（无硬边框顶栏 + 只读代码/图片/音视频/QuickLook 预览）。
 >      - **动效清单（Motion Inventory）**：
 >        | 位置 | 触发 | 过渡 | 降动效行为 |
 >        |---|---|---|---|
@@ -711,9 +712,9 @@ npm run ios:dev                        # Mac 上的 iPhone 尺寸窗口（Cataly
 - 注意：每个网站都能调用 `window.nsh.postMessage`，所以 app 收到的页面消息一律当不可信数据，只认带自己发出的 `id` 的回答。
 - 探针只回答能不能做；还没决定做不做。对比 ego lite（Chromium，已装，`ego-browser` skill）：它有真点击和截图，但不能按 Herdr 的需要定制。
 
-## 发图片（已实现）
+## 发图片与文件（已实现）
 
-手机点「+」选图（最多 6 张），或粘贴剪贴板里的图片。大图先在手机上缩到长边 2048px、JPEG 0.85。发送时每张图分块 `upload.put` 传到 Mac，再 `image.put` 调用 herdr-core 的 `terminal.put`：文件落在这个终端自己的文件夹里（终端删掉时一起删），返回路径。单张上限 8 MB（`terminal.put` 的上限）。
+手机点「+」选择文件（`Picker.pickFiles`）、选照片（`Picker.pickImages`，最多 6 个），或粘贴剪贴板里的图片/文字。大图先在手机上缩到长边 2048px、JPEG 0.85。发送时每个文件分块 `upload.put` 传到 Mac，图片走 `image.put`、通用文件走 `file.put`（2026-11-25 新增），同样调用 herdr-core 的 `terminal.put`：文件落在这个终端自己的文件夹里（终端删掉时一起删），返回路径；`file.put` 严格清洗文件名（剥离路径分隔符与点开头，主名仅保留字母/数字/`_`/`-`，扩展名仅限 1–12 位 ASCII 字母数字）。单文件上限 8 MB（`terminal.put` 的上限）。协议兼容：旧手机 + 新宿主照常走 `image.put`；新手机 + 旧宿主在收到 `未知方法 file.put` 时给出明确提示（图片类型自动回退 `image.put`）。测法：`test/file-put.test.mjs`。
 
 路径进程序的输入行：每张图一次 bracketed paste（`ESC[200~路径ESC[201~`，有空格的路径加引号），不另发空格；多张图之间隔 400 ms，最后一张后面不等（`app/src/live-line.js` `imageInput`，网页版和原生 App 共用）。实测（2026-11-07，Claude Code 2.1.316、Codex 0.163.0、agy 1.5.3，`node probe/image-paste.mjs`）：三者都把粘贴的图片路径变成附件，并自己补一个空格。以前 400 ms 后再发一个空格：Codex 里变成两个空格；agy 里是行首多一个空格；而且空格单独晚到，agy 会多一次整段重印（2026-11-07 线上日志，长对话约 825 KB；probe 只看输入行，没测重印）。空格和路径放进同一次写入也不行：Claude Code 里空格会跑到附件前面。在 shell 里粘贴路径，后面不再自动有空格。测法：`test/live-line.test.mjs`。
 

@@ -14,7 +14,8 @@ type Route =
 
 const nav = createNavStack<Route>([{ name: "home" }]);
 const APPEARANCE_KEY = "herdr-appearance";
-const appearance = signal<AppearancePref>("system");
+const appearance = signal<AppearancePref>("dark");
+setColorScheme("dark");
 
 function routeDesc(r: Route): string {
   if (r.name === "term") return `term:${r.address}`;

@@ -1,4 +1,4 @@
-import { host, Image, platform, Text, View } from "nsh";
+import { colorScheme, host, Image, platform, Text, token, View } from "nsh";
 import type { JSX, SheetDetent, ViewStyle } from "nsh/types";
 import { Button, Sheet, Switch as BaseSwitch } from "nsh/base";
 import { Haptics, isAvailable as mobileAvailable } from "nsh/mobile";
@@ -21,6 +21,19 @@ export const GLASS_STYLE: ViewStyle = {
   borderCurve: "continuous",
   backdropFilter: "blur(24px)",
 };
+
+/**
+ * Keeps terminal Liquid Glass smoked dark even if the user explicitly switches the app to Light
+ * Mode in Settings (so native `UIGlassEffect` never turns milky white over `#000000`).
+ */
+export function glassStyle(tone: "default" | "term" = "default", extra?: ViewStyle): ViewStyle {
+  const needsDarkTint = HAS_NATIVE_GLASS && tone === "term" && colorScheme() === "light";
+  return {
+    ...GLASS_STYLE,
+    ...(needsDarkTint ? { glassTintColor: token("term-glass-tint") } : {}),
+    ...extra,
+  };
+}
 
 export const CARD_CURVE: ViewStyle = {
   borderCurve: "continuous",
@@ -193,7 +206,7 @@ export function GlassCircle(props: {
       testID={props.testID}
       accessibilityLabel={props.accessibilityLabel}
       class={`items-center justify-center rounded-full transition-transform duration-150 active:scale-95 ${glassFallbackClass(props.tone)}`}
-      style={{ ...GLASS_STYLE, width: sz, height: sz }}
+      style={glassStyle(props.tone, { width: sz, height: sz })}
     >
       {props.children}
     </Button>
@@ -209,7 +222,7 @@ export function GlassCapsule(props: {
   return (
     <View
       class={`flex-row items-center rounded-full ${glassFallbackClass(props.tone)} ${props.class ?? ""}`}
-      style={{ ...GLASS_STYLE, ...props.style }}
+      style={glassStyle(props.tone, props.style)}
     >
       {props.children}
     </View>

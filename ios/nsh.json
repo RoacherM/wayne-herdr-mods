@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "build": 2,
   "theme": "theme.json",
-  "appearance": "system",
+  "appearance": "dark",
   "capabilities": {
     "network": { "hosts": ["*"] },
     "webview": { "hosts": [] },

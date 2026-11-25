@@ -126,7 +126,7 @@ console.error = (...args: any[]) => {
 
 const TRACKED_RPC = new Set([
   "files.roots", "files.list", "files.open", "files.slice",
-  "term.open", "term.close", "term.new", "voice.done", "image.put",
+  "term.open", "term.close", "term.new", "voice.done", "image.put", "file.put",
 ]);
 
 const RPC_SUMMARIZERS: Record<string, (p: any, res: any, ms: number) => Record<string, any> | null> = {
@@ -352,15 +352,46 @@ async function uploadBytes(bytes: Uint8Array, mime: string): Promise<string> {
   return id as string;
 }
 
+const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+
 /**
  * A picked image → a file beside the terminal on the Mac (upload.put in chunks, then image.put).
  * Returns the path on the Mac.
  */
-export async function sendImage(file: Blob & { name?: string }, address: string) {
+export async function sendImage(file: Blob & { name?: string }, address: string, name?: string) {
+  if (file.size > MAX_UPLOAD_BYTES) throw new Error("图片超过 8 MB 上限");
   const bytes = new Uint8Array(await file.arrayBuffer());
+  if (bytes.length > MAX_UPLOAD_BYTES) throw new Error("图片超过 8 MB 上限");
   const id = await uploadBytes(bytes, file.type || "image/jpeg");
-  const { path } = await rpc("image.put", { id, address, name: file.name || "image" }, 30_000);
+  const { path } = await rpc("image.put", { id, address, name: name || file.name || "image" }, 30_000);
   return path as string;
+}
+
+/**
+ * Any picked file (up to 8 MB) → uploaded in E2E chunks → `file.put` beside the terminal on Mac.
+ * Returns the path on the Mac.
+ */
+export async function sendFile(file: Blob & { name?: string }, address: string, name?: string) {
+  if (file.size > MAX_UPLOAD_BYTES) throw new Error("文件超过 8 MB 上限");
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (bytes.length > MAX_UPLOAD_BYTES) throw new Error("文件超过 8 MB 上限");
+  const mime = file.type || "application/octet-stream";
+  const fileName = name || file.name || "file";
+  const id = await uploadBytes(bytes, mime);
+  try {
+    const { path } = await rpc("file.put", { id, address, name: fileName }, 30_000);
+    return path as string;
+  } catch (err: any) {
+    if (String(err?.message ?? "").includes("未知方法 file.put")) {
+      if (/^image\//.test(mime)) {
+        const { path } = await rpc("image.put", { id, address, name: fileName }, 30_000);
+        return path as string;
+      }
+      rpc("upload.drop", { id }).catch(() => {});
+      throw new Error("Mac 端需要更新后才支持上传文件");
+    }
+    throw err;
+  }
 }
 
 /**

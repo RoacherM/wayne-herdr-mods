@@ -51,6 +51,16 @@ const WHEEL_RE = /^(?:\x1b\[<6[45];\d{1,4};\d{1,4}M|\x1b\[M[`a][\x20-\xff]{2})$/
 const PRESS_MS = 3000;
 export const KEY_RE = /^(?:(?:ctrl|alt|shift|cmd|super|meta)\+)*(?:[a-z0-9]|enter|esc|escape|tab|backspace|space|delete|del|insert|home|end|pageup|pgup|pagedown|pgdn|up|down|left|right|f(?:[1-9]|1[0-2])|[-=[\]\\;',./`])$/i;
 
+/** Strict filename sanitizer for `file.put`: strips path segments, dotfiles, and unsafe chars. */
+export function sanitizeUploadName(raw) {
+  const leaf = String(raw ?? '').replace(/\0/g, '').split(/[\\/]/).pop()?.replace(/^\.+/, '') ?? '';
+  const m = /^(.+?)\.([A-Za-z0-9]{1,12})$/.exec(leaf);
+  const rawStem = m ? m[1] : leaf;
+  const ext = m ? m[2].toLowerCase() : '';
+  const stem = rawStem.replace(/[^\p{L}\p{N}_-]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'file';
+  return ext ? `${stem}.${ext}` : stem;
+}
+
 function logPhoneReady(log, peer, device, paired) {
   const devName = device?.name || device?.id || 'phone';
   log(`wayne-herdr-mods: [phone:${devName}] session.ready cid=${peer.cid} mode=${paired ? 'pair' : 'resume'}`);
@@ -747,6 +757,14 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
       const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp', 'image/heic': 'heic' }[upload.mime] ?? 'jpg';
       const stem = String(p.name ?? '').replace(/\.[^.]*$/, '').replace(/[^\p{L}\p{N}_-]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'image';
       const r = await call('terminal.put', { terminal: addressOf(p), name: `${stem}.${ext}`, data: upload.bytes.toString('base64') });
+      return { path: r.path, bytes: r.bytes };
+    },
+    // General files (up to MAX_UPLOAD_BYTES = 8 MB): same herdr-core `terminal.put` sandbox beside
+    // the terminal, strict basename/extension sanitization (DESIGN.md「发图片与文件」).
+    'file.put': async (peer, p) => {
+      const upload = peer.uploads.take(p.id);
+      const name = sanitizeUploadName(p.name);
+      const r = await call('terminal.put', { terminal: addressOf(p), name, data: upload.bytes.toString('base64') });
       return { path: r.path, bytes: r.bytes };
     },
     'push.subscribe': async (peer, p) => {

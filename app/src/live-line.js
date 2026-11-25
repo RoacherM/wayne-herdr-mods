@@ -25,7 +25,7 @@ export const IMAGE_GAP_MS = 400; // between images: the agent reads the file bef
 /**
  * An uploaded image's path, as image `i` of `n`: one bracketed paste (quoted if it has spaces) and
  * the pause after it. Nothing else goes with it: Claude Code, Codex and agy turn the path into an
- * attachment and add their own space (DESIGN.md「发图片（已实现）」).
+ * attachment and add their own space (DESIGN.md「发图片与文件（已实现）」).
  */
 export const imageInput = (path, i, n) => ({
   d: pasteText(/\s/.test(path) ? `"${path}"` : path),

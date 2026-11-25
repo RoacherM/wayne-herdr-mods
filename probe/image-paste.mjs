@@ -1,5 +1,5 @@
 // Needs: python3, and the agents to test on PATH (claude, codex, agy), signed in. No Herdr, no relay.
-// How agents take an image path pasted into their input line (DESIGN.md「发图片（已实现）」): each agent
+// How agents take an image path pasted into their input line (DESIGN.md「发图片与文件（已实现）」): each agent
 // runs in its own PTY (100x30) in a temp folder with a small PNG; we paste the path per mode, type
 // "XY", and print the input line as @xterm/headless draws it. Nothing is submitted.
 //   node probe/image-paste.mjs [claude|codex|agy ...]
