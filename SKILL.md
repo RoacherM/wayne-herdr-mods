@@ -1,14 +1,14 @@
 ---
 name: wayne-herdr-mods
-description: "Wayne 的 Herdr 套件：用 iPhone 上的 Herdr App 操作这台 Mac 上 Herdr 的终端（配对手机、看谁在线、移除手机），以及 Herdr.app 里我们自己的界面（布局 main-preview、标签栏、窗格顶栏、文件面板、「手机」窗口）。用户提到手机连 Mac、配对手机、herdr-relay、wayne-herdr-mods，或要改 Herdr.app 的这套界面时使用。"
+description: "Wayne 的 Herdr 套件：用 iPhone 上的 Herdr App 操作这台 Mac 上 Herdr 的终端（配对手机、看谁在线、移除手机），以及 Herdr.app 里的「手机」配对弹窗与补充 agent 图标。用户提到手机连 Mac、配对手机、herdr-relay、wayne-herdr-mods 时使用。"
 ---
 
 # wayne-herdr-mods
 
 两部分：
 
-- **手机**：后台服务（launchd 常驻）把 Herdr 的终端通过中继端到端加密地给手机网页。手机打开终端时，终端换成手机的大小；回到 Mac 上打字，就换回 Mac 的大小。
-- **Herdr.app 里的界面**：仓库 `herdr-app/` 和 `~/.config/herdr-app/` 一一对应。标签栏右上角的手机图标打开「手机」窗口。
+- **手机**：后台服务（launchd 常驻）把 Herdr 的终端通过中继端到端加密地给手机 App。手机打开终端时，终端换成手机的大小；回到 Mac 上打字，就换回 Mac 的大小。
+- **Herdr.app 里的精简 Mod**：仓库 `herdr-app/` 只保留 `mods/wayne-phones/`（「手机」弹窗，按 `⌘⇧P` 搜「手机」或跑 `wayne-herdr-mods pair` 打开）与 `programs.json` / `agent-icons/`，直接使用 Herdr.app 原生 `main` 布局（自带 Files 与 Changes/Diff）。
 
 命令是 `wayne-herdr-mods`。不存在就是没装，见「安装」。（旧名 herdr-relay，2026-11-04 改名，旧命令已删。）
 
@@ -24,7 +24,7 @@ wayne-herdr-mods ctl status   # 同样的信息，JSON（脚本用这个）
 
 ## 配对一台手机
 
-配对只在 Herdr.app 里做：标签栏右上角的手机图标打开「手机」窗口，点「配对新手机」。要人做的：用 Herdr App 扫码，核对手机和 Mac 上的 6 位数字，一样就点「允许」。
+配对只在 Herdr.app 里做：按 `⌘⇧P` 搜「手机」打开弹窗点「配对新手机」，或直接运行 `wayne-herdr-mods pair`。要人做的：用 Herdr App 扫码，核对手机和 Mac 上的 6 位数字，一样就点「允许」。
 
 你可以替人把二维码摆出来：
 
@@ -65,16 +65,16 @@ wayne-herdr-mods metrics                   # 同样的内容，打开一个报�
 
 ## 改 Herdr.app 的界面
 
-源文件在仓库的 `herdr-app/`（`layouts/main-preview.json`、`mods/my-tabs/`、`mods/my-pane/`、`mods/my-files/`、`mods/wayne-phones/`）。改仓库里的，不要只改 `~/.config/herdr-app/` 里的：下次安装会覆盖。
+源文件在仓库的 `herdr-app/`（`mods/wayne-phones/`、`programs.json`、`agent-icons/`）。改仓库里的，不要只改 `~/.config/herdr-app/` 里的：下次安装会覆盖。
 
 ```sh
-npm run build && node dist/wayne-herdr-mods.mjs install   # 只写改了的文件，Herdr 自动重新加载
-herdr-app check ~/.config/herdr-app/mods/my-tabs           # 检查一个 mod
+npm run build && node dist/wayne-herdr-mods.mjs install   # 只写改了的文件并清理旧 mod，Herdr 自动重新加载
+herdr-app check ~/.config/herdr-app/mods/wayne-phones      # 检查 mod
 herdr-app status                                           # errors 里有加载失败的 mod
 herdr-app do mod.open --name wayne-phones                  # 打开或关上「手机」窗口
 ```
 
-mod 怎么写：`~/.config/herdr-app/AGENTS.md`。`my-tabs`、`my-files` 复制自 Herdr 0.1.12 的 `tabs`、`files`，不会跟着 Herdr 更新。
+mod 怎么写：`~/.config/herdr-app/AGENTS.md`。不再 fork Herdr 内置的 `tabs`、`pane`、`files`，直接使用原生布局。
 
 ## 安装
 

@@ -10,36 +10,45 @@ import * as herdrMod from '../host/herdr-files.js';
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const herdrRoot = join(repoRoot, 'herdr-app');
 
-test('readHerdrFiles bundles every mod main.js into self-contained ESM and omits helper modules', () => {
+test('readHerdrFiles bundles relay-only wayne-phones mod and omits retired UI mods/layouts', () => {
   const files = herdrMod.readHerdrFiles(herdrRoot);
-  assert.equal('mods/wayne-board/main.js' in files, false, 'retired wayne-board is absent');
-  assert.equal('mods/my-files/state.js' in files, false, 'inlined helper state.js is omitted');
-  assert.equal('mods/my-files/preview.js' in files, false, 'inlined helper preview.js is omitted');
-
-  const filesJs = files['mods/my-files/main.js'];
-  assert.equal(typeof filesJs, 'string');
-  assert.equal(/^\s*import\b.*\.\/state\.js/m.test(filesJs), false, 'no unresolved ./state.js import');
-  assert.equal(/^\s*import\b.*\.\/preview\.js/m.test(filesJs), false, 'no unresolved ./preview.js import');
-  assert.match(filesJs, /from\s+["']gpui-kit["']/);
-  assert.match(filesJs, /from\s+["']gpui-base["']/);
-  assert.match(filesJs, /from\s+["']herdr["']/);
-  assert.match(filesJs, /\bFilePreview\b/, 'inlines ./preview.js');
+  for (const retired of [
+    'mods/wayne-board/main.js',
+    'mods/my-files/main.js',
+    'mods/my-pane/main.js',
+    'mods/my-tabs/main.js',
+    'layouts/main-preview.json',
+    'layouts/main-preview.svg',
+  ]) {
+    assert.equal(retired in files, false, `retired file absent: ${retired}`);
+  }
 
   const phonesJs = files['mods/wayne-phones/main.js'];
+  assert.equal(typeof phonesJs, 'string');
+  assert.match(phonesJs, /from\s+["']gpui-kit["']/);
+  assert.match(phonesJs, /from\s+["']gpui-base["']/);
+  assert.match(phonesJs, /from\s+["']herdr["']/);
   assert.match(phonesJs, /from\s+["'](?:node:)?fs\/promises["']/, 'keeps Node built-ins external');
+
+  const manifest = JSON.parse(files['mods/wayne-phones/mod.json']);
+  assert.equal(manifest.place, 'none');
+  assert.ok(Array.isArray(manifest.palette) && manifest.palette.length > 0, 'registered in command palette');
+  assert.equal(manifest.palette[0].command, 'mod.open');
+  assert.deepEqual(manifest.palette[0].args, { name: 'wayne-phones' });
 });
 
-test('syncHerdrDir removes retired wayne-board dir and stale duplicate SVGs idempotently', () => {
+test('syncHerdrDir installs relay-only mods and cleans retired UI mods/layouts idempotently', () => {
   const tmp = mkdtempSync(join(tmpdir(), 'herdr-bundle-'));
   try {
     const appDir = join(tmp, 'installed-herdr-app');
     const stalePaths = [
       join(appDir, 'mods', 'wayne-board', 'main.js'),
-      join(appDir, 'mods', 'wayne-board', 'board.svg'),
-      join(appDir, 'mods', 'my-files', 'state.js'),
-      join(appDir, 'mods', 'my-files', 'file.svg'),
-      join(appDir, 'mods', 'my-pane', 'close.svg'),
-      join(appDir, 'mods', 'my-tabs', 'win-min.svg'),
+      join(appDir, 'mods', 'my-files', 'main.js'),
+      join(appDir, 'mods', 'my-pane', 'main.js'),
+      join(appDir, 'mods', 'my-tabs', 'main.js'),
+      join(appDir, 'data', 'my-files', 'cache.json'),
+      join(appDir, 'layouts', 'main-preview.json'),
+      join(appDir, 'layouts', 'main-preview.svg'),
     ];
     for (const p of stalePaths) {
       mkdirSync(dirname(p), { recursive: true });
@@ -50,18 +59,22 @@ test('syncHerdrDir removes retired wayne-board dir and stale duplicate SVGs idem
     herdrMod.syncHerdrDir(appDir, files);
     herdrMod.syncHerdrDir(appDir, files); // idempotent when unchanged
 
-    assert.equal(existsSync(join(appDir, 'mods', 'wayne-board')), false, 'retired wayne-board dir removed');
-    for (const p of stalePaths) assert.equal(existsSync(p), false, `stale path removed: ${p}`);
-    assert.equal(existsSync(join(appDir, 'mods', 'my-files', 'main.js')), true);
-    assert.equal(existsSync(join(appDir, 'mods', 'my-tabs', 'main.js')), true);
-    assert.equal(existsSync(join(appDir, 'mods', 'my-pane', 'main.js')), true);
+    for (const p of [
+      join(appDir, 'mods', 'wayne-board'),
+      join(appDir, 'mods', 'my-files'),
+      join(appDir, 'mods', 'my-pane'),
+      join(appDir, 'mods', 'my-tabs'),
+      join(appDir, 'data', 'my-files'),
+      join(appDir, 'layouts', 'main-preview.json'),
+      join(appDir, 'layouts', 'main-preview.svg'),
+    ]) {
+      assert.equal(existsSync(p), false, `retired path removed: ${p}`);
+    }
     assert.equal(existsSync(join(appDir, 'mods', 'wayne-phones', 'main.js')), true);
+    assert.equal(existsSync(join(appDir, 'mods', 'wayne-phones', 'mod.json')), true);
     assert.equal(existsSync(join(appDir, 'programs.json')), true);
-    assert.deepEqual(
-      JSON.parse(readFileSync(join(appDir, 'layouts', 'main-preview.json'), 'utf8')).children[1].children[1].children[1].content,
-      { mod: 'my-files' },
-      'panel is a direct my-files block without stack wrapper',
-    );
+    const progs = JSON.parse(readFileSync(join(appDir, 'programs.json'), 'utf8'));
+    assert.ok(progs.programs.droid, 'programs.json merged');
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

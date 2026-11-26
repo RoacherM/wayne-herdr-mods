@@ -119,64 +119,36 @@ iPhone 上的 Herdr App（网页版已停，2026-11-09）──wss /v1/client/<i
 - 二维码写成 `~/.config/herdr-app/data/wayne-phones/qr-<到期时间>.svg` 再显示（`image()` 只读文件）。不写进 mod 目录：那里的文件一变 mod 就重新加载。
 - 为什么不放进「设置」：Herdr.app 的设置页只有固定的几节，每次启动重写，mod 加不进去；要加只能改 Herdr.app 本身。所以入口是标签栏上的图标。
 
-## Herdr.app 里的界面（2026-11-04）
+## Herdr.app 里的界面（2026-11-26 精简为纯中继）
 
-手机网页和 Mac 上的 Herdr.app 是同一套东西。我们在 Herdr.app 里改的界面也放在这个仓库，`herdr-app/` 的目录结构和 `~/.config/herdr-app/` 一样：
+Herdr.app 0.1.18 原生 `main` 布局已经自带 `files` 文件树与 `changes`（diffs）右侧面板、`tabs` 标签栏和 `pane` 窗格顶栏。因此 2026-11-26 移除了过去复制自 0.1.12/0.1.13 的 `layouts/main-preview.*`、`mods/my-files/`、`mods/my-pane/` 与 `mods/my-tabs/`，不再 fork 内置界面，直接跟着 Herdr.app 原生布局自动更新。
 
-| 文件 | 是什么 | 从哪来 |
+现在 `herdr-app/` 只保留中继必需的两部分：
+
+| 文件 | 是什么 | 入口 / 作用 |
 |---|---|---|
-| `layouts/main-preview.json`、`.svg` | 窗口布局：在 Herdr 自带的 `main` 上换了标签栏（`my-tabs`）、窗格顶栏（`my-pane`），右侧栏 `panel` 直接放单块 `my-files`（2026-11-24 去掉不可达的 `changes` 与已移除的 `board` 堆叠层） | 复制自 `main` |
-| `mods/my-pane/` | 窗格框的顶栏：标签里只有一个窗格（且没放大）时不显示放大按钮（放大没东西可盖）；文件标签显示文件名和所在文件夹，不显示「my-files」；支持 Herdr 0.1.17 `p.name` 重命名；`blocked` 与 `done` 统一用状态圆点（2026-11-24 去掉 `"Needs you"` 文字胶囊）；直接复用内置 `mods/pane/*.svg` 与 `mods/files/file.svg` | 复制自 `pane` 0.1.13 |
-| `mods/my-tabs/` | 标签栏：右上角只留「+」、手机图标、文件面板图标（按 space 记忆开/关布尔值，2026-11-24 去掉观测面板按钮与 Windows 窗口按钮）。标签的图标是你在这个标签里最后点进的 agent（2026-11-05 改：原来是标签里第一个 agent，一个标签里有 Claude Code 和 agy 时会显示错）。只有窗口当前的窗格有 `focused`，所以每个标签自己记住。agent 退出后前台回到 shell，图标就是终端（2026-11-05 改，见「agent 退出后的图标」） | 复制自 `tabs` 0.1.12 |
-| `mods/my-files/` | 文件面板：只放文件树，每个窗格（window）各记一份展开的文件夹；点文件就把它开成一个 Herdr 标签（见下面「文件面板：每个窗格一份，文件开成 Herdr 标签」）。「复制路径」在树的每一行（悬停、右键）；「复制全文」2026-11-06 去掉（用户：没用）。`TextView.markdown` 的选区色绘制在文字上层，必须用带透明度的 `#rrggbb59`（约 35% alpha），否则实色选区会盖死选中的文字。纯逻辑在 `state.js`（`test/my-files-state.test.mjs`），文件标签预览在 `preview.js`，图标直接复用内置 `mods/files/*.svg`（仅保留自定义 `path` / `check` / `open`） | 复制自 `files` 0.1.12 |
-| `mods/wayne-phones/` | 「手机」窗口和它的图标 `phone.svg`（极简文案，无教学段落与已停用 PWA 残余） | 新写 |
+| `mods/wayne-phones/` | 「手机」配对与语音 Key 弹窗（`mod.json`、`main.js`） | 通过 `mod.json` 的 `palette` 注册进 Herdr 命令面板（`⌘⇧P` 搜「手机 / phone / pair / relay」），或终端执行 `wayne-herdr-mods pair` 直接打开 |
+| `programs.json`、`agent-icons/` | 补充 Herdr 内置表里没有的 agent 图标（`droid`、`devin`、`dim`） | 通过 Herdr 官方扩展点 `programs.json` 合并写入，不修改任何内置 mod |
 
 ### agent 退出后的图标（2026-11-05）
 
-- 现象：epi 退出后，标签栏和手机列表仍显示 epi 的图标。
-- 原因（`herdr-core` / Herdr.app，2026-11-05 实测）：agent 用 OSC 7501 报的状态在它退出后还留着。t25 前台是 `zsh`，状态仍是 `app=epi state=done`；Herdr.app 的 `panes()` 也仍给 `program.key=epi, agent=true`。
+- 现象：epi 退出后，手机列表仍显示 epi 的图标。
+- 原因（`herdr-core` / Herdr.app，2026-11-05 实测）：agent 用 OSC 7501 报的状态在它退出后还留着。t25 前台是 `zsh`，状态仍是 `app=epi state=done`。
 - 规则：前台进程是 shell（`zsh`、`bash`、`fish`、`sh` 等）时，agent 已经退出，忽略它留下的 `app`。
-  - 标签栏 `my-tabs`：用 `terminals()` 的 `foreground.name` 判断；这样的窗格显示 `icons/shell.svg` 和 shell 的名字。
   - 手机列表 `host/terminals.js` 的 `project()`：`app` 为 `null`，图标是 `shell`。状态点不变。
 - 活着的 agent 前台都是自己（`claude`、`agy`、`node …/epi`），不受影响。`dev/fake-desktop.mjs` 的假 agy 因此改用编译出的 `agy` 程序跑，不再用 `/bin/sh`。
 
-- 改界面就改仓库里的文件，再运行 `npm run build && node dist/wayne-herdr-mods.mjs install`。构建时 `host/herdr-files.js`（`readHerdrFiles`）用 `esbuild.buildSync` 把每个 `mods/*/main.js`（如内联 `my-files/state.js` 与 `preview.js`）打成自包含 ESM（保留 `gpui-kit`、`gpui-base`、`herdr` 与 Node 内置模块为 external，跳过已内联的同目录辅助 `.js`），`install`（`syncHerdrDir`）写入 `~/.config/herdr-app/` 并自动递归清理废弃目录与孤儿文件（`STALE_HERDR_FILES`，含已退役的 `mods/wayne-board` 与已去重的重复 SVG），内容没变的文件不写（写了 Herdr 会重新加载那个 mod）。在 Herdr.app 里直接改的文件，下次 install 会被覆盖，要先复制回仓库。
-- install 不切换布局。换一台 Mac，要在 Herdr 里选一次 `main-preview`（`herdr-app do layout.switch --name main-preview`）。
+- 改界面就改仓库里的文件，再运行 `npm run build && node dist/wayne-herdr-mods.mjs install`。构建时 `host/herdr-files.js`（`readHerdrFiles`）用 `esbuild.buildSync` 把每个 `mods/*/main.js` 打成自包含 ESM（保留 `gpui-kit`、`gpui-base`、`herdr` 与 Node 内置模块为 external），`install`（`syncHerdrDir`）写入 `~/.config/herdr-app/` 并自动递归清理废弃目录与文件（`STALE_HERDR_FILES`，含已退役的 `mods/wayne-board`、`mods/my-files`、`mods/my-pane`、`mods/my-tabs`、`data/my-files`、`layouts/main-preview.*`），内容没变的文件不写（写了 Herdr 会重新加载那个 mod）。
 - 不放进来的：Herdr 自带的布局和 mod（每次启动重写），Herdr 自己写的 `gpui-kit.d.ts`、`jsconfig.json`，个人设置 `settings.json`、`keys.json`。
-- 不加快捷键；2026-11-04 一次安装加在 `keys.json` 的 ⌘⇧M，搬配置时删掉。
-- `wayne-herdr-mods uninstall` 只删「手机」窗口，布局和标签栏留着（那时标签栏的手机图标点了没反应）。
-- 复制来的 mod 不跟着 Herdr 更新。Herdr 改了 `tabs` 或 `files`，要自己对比 `cloned_from` 的版本再合进来。
-
-### 文件面板：每个窗格一份，文件开成 Herdr 标签（2026-11-06）
-
-- 现象：在一个 tab 里打开 `build.mjs` 预览，换到别的 tab 或同一 tab 的另一个窗格，看到的还是它。
-- 原因：`files` 0.1.12 记状态（展开的文件夹、预览的文件）用的键是文件夹路径。同一文件夹下的所有窗格共用一份。
-- 规则：键里加上窗格（`state.js` 的 `locate`、`windowOf`）。窗格就是 tab 里的一个 window；布局里的终端块没有窗格，用 `terminal:<地址>` 代替。焦点在文件标签上时，面板是打开它的那个窗口的（`from`）。
-- 点击规则（2026-11-06 第三版，用户选的）：面板只放文件树。点树里的文件，就把它开成一个 **Herdr 标签**，和终端标签排在同一条标签栏里。
-  - 用 Herdr 自己的概念：`tab.new {name, mod: "my-files", props: {file, on?}}` 是「只有一个 mod 窗格的标签（a file, a board）」（herdr-app 0.1.13 AGENTS.md）。只有一个窗格的标签不画窗格框（`lone` 默认 false），所以没有分屏 / 放大 / 关闭这排按钮。
-  - 同一个文件再点：切到已有的那个标签（`tab.select`），只找当前 space 的标签。文件标签记在 `shared("my-files/tabs")`（`{ [tab]: {file, root, on, from} }`）；`tab.new` 不返回 id，用前后标签列表的差找新标签（`newTabId`，没出现就每 50 ms 再看，最多 20 次）。关掉的标签下次写入时删掉（`withFileTab`）。
-  - 回终端：点终端的标签。关文件：标签上的 ×。都是 Herdr 自己的，my-files 不再画 ⤢ / ⤡。
-  - 文件标签里的 markdown 链接指向别的文件：也开成标签。树里高亮当前标签的文件。
-  - 别的机器上的文件：`props.on` 带上机器名，预览在那台机器上读。
-- 试过不做：
-  - 第一版：面板里也能预览，开着全窗口视图时点文件才进全窗口。同一次点击有两种结果，用户觉得怪。
-  - 第二版：在当前 tab 拆出一个 `my-files` 窗格并 `pane.zoom` 盖住终端，里面再画一排自己的文件标签和 ⤢ / ⤡。结果是标签套标签：Herdr 的窗格框（分屏、放大、关闭）在上面，自己的标签和 ⤡ 在下面，面板里还有一个 ⤡（2026-11-06 用户截图）。根因是没用 Herdr 的「标签」概念。
-  - 把文件「拖」进终端对话框（2026-11-06）。herdr-app 0.1.13 的 mod 没有拖拽源（`gpui-kit.d.ts` 只有接 Finder 文件的 `on_drop` 和挪停靠面板的 `drag_tab`），也没有「打字但不回车」的命令（`hc send` / `terminal.send` 必定回车，hc 0.1.18）。退而做的「插入到终端」（文件放剪贴板 + `run("terminal.paste")`）用户试了有问题，已去掉。要做真拖拽得等 Herdr.app 给 mod 加拖拽源。
-- 文件标签只有一层顶栏（2026-11-06，用户截图：文件标签里还有窗格框的放大按钮，且新标签插在当前标签后面）：
-  - 布局框住每个窗格，只有一个窗格也框（`lone: true`，Herdr 自带的 `main` 也这样），框的顶栏原来是 Herdr 的 `pane` mod。换成我们的 `my-pane`：文件名、文件夹，悬停时分屏和关闭；标签里有别的窗格时才有放大。
-  - my-files 在文件标签里不再画自己的标题行和边框，只留一行靠右的「预览 / 源码」和「用默认 App 打开」。面板顶栏没有按钮。
-  - `tab.new` 把新标签放在当前标签后面；记下新标签后 `tab.move {id, index: 最后}` 挪到最右。
-- 已验证（herdr-app 0.1.13，2026-11-06）：`herdr-app check` 通过；`test/my-files-state.test.mjs` 测找标签、忘掉关掉的标签、新标签 id、文件标签有焦点时面板不跳。**没验证**：真窗口里点文件开出标签、再点切回去（规则：不替用户点 live 窗口）。测试时不要往用户正在用的窗口发 `tab.new` / `pane.split`：两次调用之间焦点可能换到别的 tab（2026-11-06 一次分屏落进了用户的 tab 4，当场撤掉）。
+- `wayne-herdr-mods uninstall` 删除 `mods/wayne-phones` 与 `data/wayne-phones`，保留 Herdr 原生布局与 `programs.json`。
 
 ### 图标跟着 Herdr.app（2026-11-06）
 
 手机上的程序图标和 Herdr.app 侧栏、标签栏一样，新的 agent 不用在这里一个个加。
 
-- Herdr.app 每个终端是什么程序、用哪个图标、要不要着色，只有它自己知道（内置程序表 + 用户的 `programs.json`）。常驻的标签栏 `my-tabs` 每 2 秒把 `terminals()` 里本机终端的 `program`（`key`、`icon`、`tint`）写进 `shared("wayne-herdr-mods.programs")`，内容没变不写。Herdr 把 `shared` 存在 `~/.config/herdr-app/shared.json`。
-- 宿主（`host/terminals.js`）读这个文件（按修改时间缓存，`watchFile` 2 秒一查，变了就推给手机）：终端的图标 key 用 Herdr 的答案，图标文件和着色也用 Herdr 的；手机已经会用宿主发来的 `icons`。
-- Herdr 没开、或者答案还没写到时退回旧做法：agent 报告的 `app` 或前台程序名，经 `ALIASES` 和 Herdr 自带 `new-menu` 缓存的 agent 表（`shared("new-menu.agents")` 的 `run` → `key`，`tint`）换成 key，再找 `icons/<key>.svg`。
-- 前台是 shell 时一律是 shell 图标，不管 Herdr 上次怎么说（见上面「agent 退出后的图标」）。
-- Herdr 不认识的 agent（droid、devin、dim，2026-11-09）走 Herdr 自己的扩展点 `programs.json`：仓库带 `herdr-app/programs.json` 和 `herdr-app/agent-icons/`，`install` 把我们的 key 合并进用户的 `programs.json`（用户自己的项和其它字段不动；文件不是合法 JSON 就原样留着，stderr 提醒一次）。图标来自 ACP agent registry（`https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json`，2026-11-09；LobeHub 没有 droid、factory、dimcode，2026-11-06 unpkg `@lobehub/icons-static-svg` 404）。`run` 还让它们进 Herdr 的「+」菜单。Herdr 认了 key 后，侧栏、标签栏、手机和 iOS 都自动跟上。加新 agent：把它的 ACP svg 放进 `herdr-app/agent-icons/`、`programs.json` 加一项，`install` 后再跑 `node ios/build-term.mjs`。
+- 宿主（`host/terminals.js`）读取 `~/.config/herdr-app/shared.json`（按修改时间缓存，`watchFile` 2 秒一查）里 Herdr.app 内置 `new-menu` 缓存的 agent 表（`shared("new-menu.agents")` 的 `run` → `key`，`icon`、`tint`），以及 `programs.json`、`ALIASES` 和 `icons/<key>.svg`（也兼容旧端可能写入的 `shared("wayne-herdr-mods.programs")`）；手机直接使用宿主发来的 `icons`。
+- 前台是 shell 时一律是 shell 图标，不管上次报过什么（见上面「agent 退出后的图标」）。
+- Herdr 不认识的 agent（droid、devin、dim，2026-11-09）走 Herdr 自己的扩展点 `programs.json`：仓库带 `herdr-app/programs.json` 和 `herdr-app/agent-icons/`，`install` 把我们的 key 合并进用户的 `programs.json`（用户自己的项和其它字段不动；文件不是合法 JSON 就原样留着，stderr 提醒一次）。图标来自 ACP agent registry（`https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json`，2026-11-09）。`run` 还让它们进 Herdr 的「+」菜单。Herdr 认了 key 后，侧栏、标签栏、手机和 iOS 都自动跟上。加新 agent：把它的 ACP svg 放进 `herdr-app/agent-icons/`、`programs.json` 加一项，`install` 后再跑 `node ios/build-term.mjs`。
 - 终端页顶栏中间显示这个图标，不再显示 agent 的名字（名字只给读屏，`aria-label`）。图标 key 变了才换（列表刷新很频繁）。测法：`dev/fake-desktop.mjs` + 无头 iPhone 打开 claude 和 zsh 终端，顶栏分别是 Claude 图标和终端图标（2026-11-06）。
 
 ## 子 Agent 观测面板（已于 2026-11-24 移除）

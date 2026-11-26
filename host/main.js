@@ -62,10 +62,10 @@ async function serve() {
 }
 
 // ------------------------------------------------------------------ Herdr.app ---
-// Our part of Herdr.app lives in the repo's herdr-app/ (DESIGN.md「Herdr.app 里的界面」): the layout
-// main-preview, its tab bar my-tabs (with the phone icon) and file panel my-files, and the 手机
-// dialog, the mod wayne-phones. `install` writes it into ~/.config/herdr-app; the repo is where to edit.
-// `uninstall` takes the dialog away and leaves the layout.
+// Our part of Herdr.app lives in the repo's herdr-app/ (DESIGN.md「Herdr.app 里的界面」): the 手机
+// dialog (mods/wayne-phones, registered in the command palette) plus extra agent icons/programs.json.
+// Herdr.app's native `main` layout already provides tabs, panes, files and diffs.
+// `install` writes it into ~/.config/herdr-app and cleans retired mods; the repo is where to edit.
 const MOD = 'wayne-phones';
 const herdrHome = () => process.env.HERDR_APP_HOME || join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'herdr-app');
 // eslint-disable-next-line no-undef
@@ -89,7 +89,7 @@ function openInHerdr() {
   if (!existsSync(join(herdrHome(), 'mods', MOD, 'main.js'))) throw new Error('Herdr.app 里还没有「手机」窗口：先在仓库里运行 node dist/wayne-herdr-mods.mjs install');
   let st;
   try { st = JSON.parse(execFileSync('herdr-app', ['status'], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] })); }
-  catch { throw new Error('Herdr.app 没有打开：打开它，点标签栏右上角的手机图标'); }
+  catch { throw new Error('Herdr.app 没有打开：先打开 Herdr.app，再用 ⌘⇧P 搜「手机」或重跑 wayne-herdr-mods pair'); }
   if (!JSON.stringify(st.overlays ?? []).includes(MOD)) execFileSync('herdr-app', ['do', 'mod.open', '--name', MOD], { timeout: 5000, stdio: 'ignore' });
 }
 
@@ -118,7 +118,7 @@ async function devices() {
     return;
   }
   const v = await controlCall(dataDir, 'status');
-  if (!v.devices.length) { console.log('还没有配对的设备。在 Herdr.app 里点标签栏右上角的手机图标配对。'); return; }
+  if (!v.devices.length) { console.log('还没有配对的设备。运行 wayne-herdr-mods pair 或在 Herdr.app 按 ⌘⇧P 搜「手机」配对。'); return; }
   for (const d of v.devices) {
     console.log(`${d.id.slice(0, 8)}  ${d.name.padEnd(16)}  ${d.online ? '在线' : '离线'}  推送${d.push ? '开' : '关'}  上次 ${fmtAgo(d.lastSeen)}`);
   }
@@ -187,9 +187,9 @@ async function install() {
   }
   const mod = installMod();
   rmSync(join(dataDir, 'board.json'), { force: true });
-  const herdr = mod ? `\n  Herdr  ${mod}（布局 main-preview；标签栏右上角的手机图标打开「手机」窗口）` : '';
+  const herdr = mod ? `\n  Herdr  ${mod}（已安装「手机」弹窗与 agent 图标；按 ⌘⇧P 搜「手机」或运行 wayne-herdr-mods pair 打开）` : '';
   const old = moved.length ? `\n\n从 herdr-relay 搬过来：\n${moved.map((m) => `  ${m}`).join('\n')}` : '';
-  console.log(`已安装：\n  程序   ${target}\n  命令   ${binPath}\n  自启动 ${plistPath}\n  日志   ${logPath}${herdr}\n  Skill  ${skill}${old}\n\n配对：在 Herdr.app 里点标签栏右上角的手机图标。`);
+  console.log(`已安装：\n  程序   ${target}\n  命令   ${binPath}\n  自启动 ${plistPath}\n  日志   ${logPath}${herdr}\n  Skill  ${skill}${old}\n\n配对：运行 wayne-herdr-mods pair，或在 Herdr.app 按 ⌘⇧P 搜「手机」。`);
 }
 
 // ------------------------------------------------------------------ the old name --

@@ -1,5 +1,5 @@
 // The repo's herdr-app/ folder: our part of ~/.config/herdr-app (DESIGN.md「Herdr.app 里的界面」).
-// Read as { "mods/my-tabs/main.js": text, … }. Files Herdr.app writes itself are not ours.
+// Read as { "mods/wayne-phones/main.js": text, … }. Files Herdr.app writes itself are not ours.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { builtinModules, createRequire } from 'node:module';
 import { dirname, join, relative } from 'node:path';
@@ -10,22 +10,13 @@ const MOD_ENTRY_RE = /^mods\/[^/]+\/main\.js$/;
 const MOD_HELPER_JS_RE = /^mods\/[^/]+\/.+\.js$/;
 export const STALE_HERDR_FILES = Object.freeze([
   'mods/wayne-board',
+  'mods/my-files',
+  'mods/my-pane',
+  'mods/my-tabs',
   'data/my-files',
-  'mods/my-files/state.js',
-  'mods/my-files/preview.js',
-  'mods/my-files/chevron-down.svg',
-  'mods/my-files/chevron-right.svg',
-  'mods/my-files/file.svg',
-  'mods/my-files/folder.svg',
-  'mods/my-pane/close.svg',
-  'mods/my-pane/split-down.svg',
-  'mods/my-pane/split-right.svg',
-  'mods/my-pane/zoom.svg',
-  'mods/my-pane/unzoom.svg',
-  'mods/my-tabs/win-min.svg',
-  'mods/my-tabs/win-max.svg',
-  'mods/my-tabs/win-restore.svg',
-  'mods/my-tabs/win-close.svg',
+  'layouts/main-preview.json',
+  'layouts/main-preview.svg',
+  'mods/wayne-phones/phone.svg',
 ]);
 const MOD_EXTERNALS = [
   'gpui-kit',

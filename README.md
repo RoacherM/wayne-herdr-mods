@@ -3,12 +3,12 @@
 > **一部手机，多台电脑实时同步；全程端到端加密。**  
 > **One iPhone. Every Mac in sync. End-to-end encrypted.**
 
-`wayne-herdr-mods` 把 Mac 上的 [Herdr.app](https://herdr.dev) 扩展成一套 **PC + iOS 多端协同架构**。你在桌面前用 `main-preview` 布局并行跑 Claude Code、Codex 和 Antigravity；离开座位拿起 iPhone，多台 Mac 的终端画面、Agent 提问通知、按住说话和快捷键都在同一个原生 App 里实时同步。
+`wayne-herdr-mods` 把 Mac 上的 [Herdr.app](https://herdr.dev) 扩展成一套 **PC + iOS 多端协同架构**。桌面端直接用 Herdr.app 原生布局（自带终端、文件树和 Diff），离开座位拿起 iPhone，多台 Mac 的终端画面、Agent 提问通知、按住说话和快捷键都在同一个原生 App 里实时同步。
 
 ```
 ┌───────────────────────────┐                  ┌───────────────────────────────────┐
 │  iPhone (Native iOS / PWA) │ ◀── WebRTC ────▶ │  Mac 1 · Mac Studio (Herdr.app)   │
-│  · 多台 Mac 胶囊一键切换    │     直连优先      │  · main-preview / my-tabs / files │
+│  · 多台 Mac 胶囊一键切换    │     直连优先      │  · 原生 main 布局（Files / Diff） │
 │  · 后台并行监听状态通知     │                  │  · wayne-phones 扫码配对与语音    │
 │  · 按住说话 / 终端自适应    │ ◀── E2E wss ───▶ │  Mac 2 · MacBook Pro (Herdr.app)  │
 └───────────────────────────┘   Cloudflare DO  └───────────────────────────────────┘
@@ -16,12 +16,12 @@
 
 ---
 
-## PC 端：Herdr.app 桌面工作台 (`herdr-app/` + `host/`)
+## PC 端：Herdr.app 中继弹窗与后台服务 (`herdr-app/` + `host/`)
 
 ![PC 端 Herdr.app 多窗格与手机配对界面](docs/pc-herdr-mock.png)
 
-- **自定义桌面界面 (`herdr-app/`)**：安装即写入 `~/.config/herdr-app/`，包含 `main-preview`（左主窗格 + 右侧副窗格与 `my-files` 文件树）、`my-tabs` 标签栏和 `my-pane` 窗格头。
-- **`wayne-phones` 配对弹窗**：点标签栏右上角的手机图标即可打开。扫码配对时，手机与 Mac 当面核对由公钥与握手随机数派生的 6 位 SAS 校验码，防中间人攻击。
+- **精简纯中继 Mod (`herdr-app/`)**：不改动 Herdr.app 原生布局（保留官方自动更新的 `tabs`、`pane`、`files` 与 `changes` Diff 面板），只安装 `wayne-phones` 配对弹窗和 `programs.json` / `agent-icons/`（`droid`、`devin`、`dim`）。
+- **`wayne-phones` 配对弹窗**：在 Herdr.app 按 `⌘⇧P` 搜「手机 / phone / pair」，或在终端运行 `wayne-herdr-mods pair` 即可打开。扫码配对时，手机与 Mac 当面核对由公钥与握手随机数派生的 6 位 SAS 校验码，防中间人攻击。
 - **双通道传输 (`host/service.js` + `host/rtc-link.js`)**：优先建立 WebRTC DataChannel 点对点直连（局域网延迟约 6 ms）；直连未通时自动回退 Cloudflare Worker + Durable Object 中继，一帧不丢。
 
 ---
@@ -50,7 +50,7 @@ node dist/wayne-herdr-mods.mjs install  # 安装 CLI、LaunchAgent、Herdr.app �
 wayne-herdr-mods voice key              # 可选：将火山引擎语音识别 API Key 存入钥匙串
 ```
 
-配对手机：在 Mac 的 `Herdr.app` 里点击标签栏右上角的 **手机图标** ▸ **「配对新手机」**，用手机扫码并在 Mac 上核对 6 位数字确认。
+配对手机：在 Mac 终端运行 `wayne-herdr-mods pair`，或在 `Herdr.app` 里按 `⌘⇧P` 搜 **「手机」** ▸ **「配对新手机」**，用手机扫码并在 Mac 上核对 6 位数字确认。
 
 ### 2. iOS 原生 App (`ios/`)
 
@@ -66,7 +66,7 @@ wayne-herdr-mods voice key              # 可选：将火山引擎语音识别 A
 
 | 目录 | 职责 |
 |---|---|
-| `herdr-app/` | `Herdr.app` 桌面端布局与 Mod（`main-preview`、`my-tabs`、`my-files`、`wayne-phones`） |
+| `herdr-app/` | `Herdr.app` 精简纯中继 Mod（`wayne-phones` 弹窗、`programs.json` 与 `agent-icons/`） |
 | `host/` | Mac 后台常驻服务、WebRTC 直连（`rtc-link.js`）、终端同步（`phones.js`）与 CLI |
 | `ios/` | 基于 `nsh` + Swift 宿主的原生 iOS App（`App.tsx`、多 Mac 连接、原生录音/扫码/通知） |
 | `app/` | 手机浏览器端 PWA（与 `ios/` 共用终端渲染、按键流与加密协议） |

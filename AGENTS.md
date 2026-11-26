@@ -10,7 +10,7 @@
 | `host/` | Mac 常驻服务与 `wayne-herdr-mods` CLI | 代码跑在 Mac Node.js 进程里，负责连接 `herdr-core` / 中继 / 钥匙串吗？ |
 | `relay/` | Cloudflare Worker + Durable Object | 代码跑在 Cloudflare 边缘、且只转发密文或托管静态页吗？ |
 | `shared/` | 手机与 Mac 共用的纯逻辑（`e2e.js`、`coast.js`、`wheel.js`、`pieces.js`） | 双端都要用且不依赖 Node/DOM 专有 API 吗？ |
-| `herdr-app/` | `Herdr.app` 自定义布局与 mod（`main-preview`、`my-tabs`、`my-pane`、`my-files`、`wayne-phones`） | 是装进 `~/.config/herdr-app/` 的界面配置或 mod 吗？ |
+| `herdr-app/` | `Herdr.app` 中继弹窗与补充图标（`wayne-phones`、`programs.json`、`agent-icons/`） | 是装进 `~/.config/herdr-app/` 的配对弹窗或程序图标吗？（原生布局自带 files/changes，不再 fork） |
 | `test/` | 单测与全链路协议测试 | 不预先起任何服务就能跑通吗？需要中继时用 `test/local-relay.mjs` 起临时实例 |
 | `dev/` | 无头 Chrome 冒烟（`*-smoke.mjs`）、`fake-desktop.mjs`、`bench.mjs`、`asks.mjs` | 需要起无头浏览器、假桌面或跑分吗？文件第 1 行写明前置条件 |
 | `probe/` | `herdr-core` 行为探针（`sync.mjs` 等） | 是在验证外部二进制/协议的未知行为吗？ |
