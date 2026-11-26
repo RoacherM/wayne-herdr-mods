@@ -16,12 +16,12 @@ async function ctl(method, params = {}) {
 }
 
 function ago(ms) {
-  if (!ms) return "从未连接";
+  if (!ms) return "Never connected";
   const s = Math.round((Date.now() - ms) / 1000);
-  if (s < 60) return "刚刚";
-  if (s < 3600) return `${Math.floor(s / 60)} 分钟前`;
-  if (s < 86400) return `${Math.floor(s / 3600)} 小时前`;
-  return `${Math.floor(s / 86400)} 天前`;
+  if (s < 60) return "Just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
 }
 
 const hhmm = (ms) => {
@@ -31,8 +31,9 @@ const hhmm = (ms) => {
 
 function statusSummary(v) {
   const relayOk = v.relay === "online", coreOk = v.core === "online";
-  if (relayOk && coreOk) return { ok: true, text: `在线 · ${v.terminals} 个终端` };
-  const parts = [relayOk ? null : `中继 ${v.relay}`, coreOk ? null : `core ${v.core}`, `${v.terminals} 个终端`].filter(Boolean);
+  const terms = `${v.terminals} ${v.terminals === 1 ? "terminal" : "terminals"}`;
+  if (relayOk && coreOk) return { ok: true, text: `Online · ${terms}` };
+  const parts = [relayOk ? null : `Relay ${v.relay}`, coreOk ? null : `Core ${v.core}`, terms].filter(Boolean);
   return { ok: false, text: parts.join(" · ") };
 }
 
@@ -45,7 +46,7 @@ export default class Phones extends View {
     this.removing = null;
     this.known = null;
     this.closed = false;
-    this.keyInput = InputState.new({ placeholder: "火山引擎 API Key" });
+    this.keyInput = InputState.new({ placeholder: "Volcengine API Key" });
     this.keyInput.set_masked(true);
     this.changingKey = false;
     this.heard = null;
@@ -89,7 +90,7 @@ export default class Phones extends View {
     const added = this.known ? v.devices.find((d) => !this.known.has(d.id)) : null;
     if (added) {
       this.known = null;
-      notify({ title: "已配对", body: added.name, level: "success" });
+      notify({ title: "Paired", body: added.name, level: "success" });
     }
     await this.syncQr(v.pairing.offer);
     this.v = v;
@@ -121,8 +122,8 @@ export default class Phones extends View {
     const t = theme();
     const v = this.v;
     const root = v_flex().id("wayne-phones").size_full().min_h(0).p(18).gap(14).bg(t.popover).text_size(13).text_color(t.foreground)
-      .child(div().text_size(15).font_semibold().child("手机"));
-    if (!v) return root.child(div().text_color(this.error ? t.blocked : t.muted).child(this.error || "读取中…"));
+      .child(div().text_size(15).font_semibold().child("Phones"));
+    if (!v) return root.child(div().text_color(this.error ? t.blocked : t.muted).child(this.error || "Loading…"));
 
     const st = statusSummary(v);
     root.child(h_flex().gap(6).items_center().text_size(12).text_color(t.muted)
@@ -135,7 +136,7 @@ export default class Phones extends View {
     if (offer) return root.child(this.offerCard(offer));
     return root
       .child(this.deviceList(v.devices))
-      .child(h_flex().justify_end().child(this.btn("pair", "配对新手机", "primary", this.act("pair", async () => {
+      .child(h_flex().justify_end().child(this.btn("pair", "Pair phone", "primary", this.act("pair", async () => {
         this.known = new Set(v.devices.map((d) => d.id));
         await this.show(await ctl("pair.start"));
       }))))
@@ -144,20 +145,20 @@ export default class Phones extends View {
 
   deviceList(devices) {
     const t = theme();
-    if (!devices.length) return div().text_color(t.dim).child("无已配对手机");
+    if (!devices.length) return div().text_color(t.dim).child("No paired phones");
     return v_flex().gap(2).children(devices.map((d) => {
       const asking = this.removing === d.id;
       return h_flex().id(`dev-${d.id}`).h(42).px(10).gap(10).items_center().rounded(8).hover((s) => s.bg(t.hover))
         .child(div().size(8).rounded_full().flex_none().bg(d.online ? t.done : t.dim))
         .child(v_flex().flex_1().min_w(0)
           .child(div().truncate().child(d.name))
-          .child(div().text_size(11.5).text_color(t.dim).child(d.online ? "在线" : ago(d.lastSeen))))
+          .child(div().text_size(11.5).text_color(t.dim).child(d.online ? "Online" : ago(d.lastSeen))))
         .child(div().id(`rm-${d.id}`).px(8).py(4).rounded(6).text_size(12).cursor_pointer()
           .text_color(asking ? t.blocked : t.muted).hover((s) => s.bg(t.raised))
           .on_click(asking
             ? this.act(`rm-${d.id}`, async () => { this.removing = null; await this.show(await ctl("devices.remove", { id: d.id })); })
             : (_e, cx) => { this.removing = d.id; cx.notify(); })
-          .child(asking ? "确认移除" : "移除"));
+          .child(asking ? "Confirm" : "Remove"));
     }));
   }
 
@@ -165,12 +166,12 @@ export default class Phones extends View {
     const t = theme();
     const card = v_flex().gap(8).pt(12).border_t_1().border_color(t.border)
       .child(h_flex().items_center().gap(6)
-        .child(div().flex_1().font_semibold().child("语音"))
-        .child(div().text_size(12).text_color(tail ? t.done : t.dim).child(tail ?? "未开启")));
+        .child(div().flex_1().font_semibold().child("Voice"))
+        .child(div().text_size(12).text_color(tail ? t.done : t.dim).child(tail ?? "Off")));
     if (!tail || this.changingKey) {
       const save = this.act("voice-save", async () => {
         const key = this.keyInput.value().trim();
-        if (!key) throw new Error("请输入 Key");
+        if (!key) throw new Error("Enter an API key");
         await this.show(await ctl("voice.set", { key }));
         this.keyInput.set_value("");
         this.changingKey = false;
@@ -178,19 +179,19 @@ export default class Phones extends View {
       });
       return card.child(h_flex().gap(8).items_center()
         .child(div().flex_1().child(Input.new(this.keyInput)))
-        .when(this.changingKey, (el) => el.child(this.btn("voice-keep", "取消", "secondary", (_e, cx) => {
+        .when(this.changingKey, (el) => el.child(this.btn("voice-keep", "Cancel", "secondary", (_e, cx) => {
           this.changingKey = false;
           this.keyInput.set_value("");
           cx.notify();
         })))
-        .child(this.btn("voice-save", "保存", "primary", save)));
+        .child(this.btn("voice-save", "Save", "primary", save)));
     }
     return card
-      .when(Boolean(this.heard), (el) => el.child(div().text_size(12).text_color(t.muted).child(`${this.heard.text || "（空）"} · ${this.heard.ms} ms`)))
+      .when(Boolean(this.heard), (el) => el.child(div().text_size(12).text_color(t.muted).child(`${this.heard.text || "(empty)"} · ${this.heard.ms} ms`)))
       .child(h_flex().justify_end().gap(8)
-        .child(this.btn("voice-off", "关闭", "secondary", this.act("voice-off", async () => { this.heard = null; await this.show(await ctl("voice.off")); })))
-        .child(this.btn("voice-change", "换 Key", "secondary", (_e, cx) => { this.changingKey = true; cx.notify(); }))
-        .child(this.btn("voice-test", "试一次", "primary", this.act("voice-test", async () => { this.heard = await ctl("voice.test"); }))));
+        .child(this.btn("voice-off", "Turn off", "secondary", this.act("voice-off", async () => { this.heard = null; await this.show(await ctl("voice.off")); })))
+        .child(this.btn("voice-change", "Change key", "secondary", (_e, cx) => { this.changingKey = true; cx.notify(); }))
+        .child(this.btn("voice-test", "Test", "primary", this.act("voice-test", async () => { this.heard = await ctl("voice.test"); }))));
   }
 
   offerCard(offer) {
@@ -198,10 +199,10 @@ export default class Phones extends View {
     return v_flex().gap(12).items_center()
       .child(this.qr
         ? div().p(10).rounded(10).bg("#ffffff").child(image(this.qr.path).size(220))
-        : div().size(240).flex().items_center().justify_center().text_color(t.muted).child("生成中…"))
+        : div().size(240).flex().items_center().justify_center().text_color(t.muted).child("Generating…"))
       .child(h_flex().w_full().items_center()
-        .child(div().flex_1().text_size(12).text_color(t.dim).child(`${hhmm(offer.expiresAt)} 前有效`))
-        .child(this.btn("cancel", "取消", "secondary", this.act("cancel", async () => { this.known = null; await this.show(await ctl("pair.cancel")); }))));
+        .child(div().flex_1().text_size(12).text_color(t.dim).child(`Valid until ${hhmm(offer.expiresAt)}`))
+        .child(this.btn("cancel", "Cancel", "secondary", this.act("cancel", async () => { this.known = null; await this.show(await ctl("pair.cancel")); }))));
   }
 
   requestCard(request) {
@@ -213,7 +214,7 @@ export default class Phones extends View {
       .child(div().text_size(14).child(request.name))
       .child(div().text_size(30).font_semibold().child(`${request.sas.slice(0, 3)} ${request.sas.slice(3)}`))
       .child(h_flex().justify_end().gap(8)
-        .child(this.btn("deny", "拒绝", "secondary", decide(false)))
-        .child(this.btn("allow", "允许", "primary", decide(true))));
+        .child(this.btn("deny", "Deny", "secondary", decide(false)))
+        .child(this.btn("allow", "Allow", "primary", decide(true))));
   }
 }

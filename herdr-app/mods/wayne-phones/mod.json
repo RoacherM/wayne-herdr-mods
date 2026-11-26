@@ -1,13 +1,13 @@
 {
   "place": "none",
-  "title": "手机",
+  "title": "Phones",
   "overlay": { "kind": "dialog", "width": 440 },
   "palette": [
     {
-      "title": "手机 · 配对与状态",
+      "title": "Phones: Pair & Status",
       "command": "mod.open",
       "args": { "name": "wayne-phones" },
-      "words": "phone relay pair ios 手机 配对 中继"
+      "words": "phone relay pair ios mobile"
     }
   ]
 }
