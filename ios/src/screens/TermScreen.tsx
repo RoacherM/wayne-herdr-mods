@@ -9,7 +9,7 @@ import {
 } from "../conn";
 import { TERM_HTML } from "../term-html";
 import { imageInput, LiveLine, PASTE_LF, pasteText } from "../../../app/src/live-line.js";
-import { agentKeys, combo, keyOfChar, MODS } from "../../../app/src/agent-keys.js";
+import { agentKeys } from "../../../app/src/agent-keys.js";
 import { safeHttpUrl } from "../../../app/src/term-select.js";
 import { enqueue, termSession } from "../../../app/src/term-session.js";
 import {
@@ -30,22 +30,16 @@ import spinnerIcon from "../../assets/spinner.svg";
 import xIcon from "../../assets/x.svg";
 
 const KEYBAR_FRONT: [string, string][] = [
-  ["Esc", "\x1b"], ["↑", "up"], ["↓", "down"], ["⏎", "\r"], ["⇧Tab", "\x1b[Z"], ["^C", "\x03"],
+  ["⌘V", "paste"], ["Esc", "\x1b"], ["⏎", "\r"], ["↑", "up"], ["↓", "down"], ["^C", "\x03"], ["⇧Tab", "\x1b[Z"],
 ];
 const KEYBAR_BACK: [string, string][] = [
-  ["←", "left"], ["→", "right"], ["Tab", "\t"], ["⌘V", "paste"], ["\\n", PASTE_LF],
-  ["1", "1"], ["2", "2"], ["3", "3"], ["y", "y"], ["n", "n"], ["^D", "\x04"], ["^R", "\x12"], ["^L", "\x0c"],
+  ["\\n", PASTE_LF], ["Tab", "\t"], ["←", "left"], ["→", "right"],
 ];
-const NAME_OF: Record<string, string> = {
-  "\x1b": "esc", left: "left", up: "up", down: "down", right: "right", "\r": "enter", "\t": "tab",
-  "1": "1", "2": "2", "3": "3", y: "y", n: "n",
-};
-const MOD_LABELS: Record<string, string> = { ctrl: "^", alt: "⌥", shift: "⇧" };
 const ARROWS: Record<string, string> = { up: "A", down: "B", right: "C", left: "D" };
 const REPEAT = new Set(["up", "down", "left", "right"]);
 const MAX_VOICE_MS = 60_000;
-const WAVE_BARS = 32;
-const WAVE_POLL_MS = 80;
+const WAVE_BARS = 44;
+const WAVE_POLL_MS = 60;
 const PAGE_READY_FALLBACK_MS = 1500;
 const WEB_PING_MS = 600;
 const MAX_WEB_RECOVERS = 3;
@@ -77,7 +71,6 @@ export function TermScreen(props: {
   const voiceSec = signal(0);
   const waveBars = signal<number[]>(emptyWave());
   const attachOpen = signal(false);
-  const mods = signal<string[]>([]);
   const litKey = signal("");
   const filesOpen = signal(false);
   const webReady = signal(false);
@@ -370,16 +363,8 @@ export function TermScreen(props: {
   const named = computed(() => Boolean(info()?.keys));
   const agentShortcuts = computed(() => (named() ? agentKeys(term()) : []));
 
-  function toggleMod(m: string) {
-    tapHaptic();
-    const cur = mods();
-    mods.set(cur.includes(m) ? cur.filter((x) => x !== m) : [...cur, m]);
-  }
-  function clearMods() { if (mods().length) mods.set([]); }
-
   function pressNamed(names: string | string[], label = "") {
     const klist = Array.isArray(names) ? names : [names];
-    clearMods();
     if (label) lightKey(label);
     tapHaptic();
     line.commit();
@@ -419,11 +404,6 @@ export function TermScreen(props: {
   }
 
   function key(label: string, seq: string) {
-    if (mods().length && NAME_OF[seq]) {
-      pressNamed(combo(new Set(mods()), NAME_OF[seq]), label);
-      return;
-    }
-    clearMods();
     lightKey(label);
     if (seq === "paste") { pasteFromClipboard(); return; }
     tapHaptic();
@@ -450,10 +430,6 @@ export function TermScreen(props: {
   }
 
   function send() {
-    if (mods().length && named()) {
-      pressNamed(combo(new Set(mods()), "enter"), "⏎");
-      return;
-    }
     tapHaptic();
     line.submit();
     notice.set("");
@@ -461,11 +437,6 @@ export function TermScreen(props: {
   }
 
   function onInputChange(val: string) {
-    if (mods().length && val.length === burst().length + 1) {
-      const ch = val.slice(-1);
-      const k = keyOfChar(ch);
-      if (k) { pressNamed(combo(new Set(mods()), k)); sync(); return; }
-    }
     line.set(val);
     sync();
   }
@@ -535,14 +506,16 @@ export function TermScreen(props: {
         if (gen !== voiceGen) return;
         voiceSec.set(Math.floor((Date.now() - recStartedAt) / 1000));
       }, 250);
-      voiceMeterTimer = setInterval(() => {
+      const sampleMeter = () => {
         if (gen !== voiceGen) return;
         host.call<{ level?: number }>("voice.meter").then((r) => {
           if (disposed || gen !== voiceGen || voiceState() !== "rec") return;
           const level = typeof r?.level === "number" ? Math.max(0, Math.min(1, r.level)) : 0;
           waveBars.update((prev) => [...prev.slice(1), level]);
         }).catch(() => {});
-      }, WAVE_POLL_MS);
+      };
+      sampleMeter();
+      voiceMeterTimer = setInterval(sampleMeter, WAVE_POLL_MS);
       voiceLimitTimer = setTimeout(() => {
         if (gen === voiceGen && voiceState() === "rec") confirmVoice();
       }, MAX_VOICE_MS);
@@ -733,7 +706,7 @@ export function TermScreen(props: {
                 <Icon src={xIcon} size={17} class="tint-term-fg" />
               </Button>
 
-              <View class="h-full flex-1 flex-row items-center justify-end gap-[3px] overflow-hidden px-1">
+              <View class="h-full flex-1 flex-row items-center justify-between overflow-hidden px-1.5">
                 {waveBars().map((lvl) => (
                   <View
                     class={`w-[2.5px] rounded-full ${lvl > 0.06 ? "bg-wave-active" : "bg-wave-idle"}`}
@@ -858,23 +831,6 @@ export function TermScreen(props: {
                     <Text class="text-[12.5px] font-medium text-term-fg">{label}</Text>
                   </Button>
                 ))}
-                {named()
-                  ? MODS.map((m) => {
-                      const active = mods().includes(m);
-                      return (
-                        <Button
-                          onPress={() => toggleMod(m)}
-                          class={`h-[29px] min-w-[30px] items-center justify-center rounded-full px-2.5 active:bg-term-key-press ${
-                            active ? "bg-term-fg" : "bg-term-key"
-                          }`}
-                        >
-                          <Text class={`text-[12.5px] font-medium ${active ? "text-term-bg" : "text-term-fg"}`}>
-                            {MOD_LABELS[m]}
-                          </Text>
-                        </Button>
-                      );
-                    })
-                  : null}
                 {KEYBAR_BACK.map(([label, seq]) => (
                   <Button
                     onPress={() => onKeyPress(label, seq)}

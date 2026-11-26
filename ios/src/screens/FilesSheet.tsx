@@ -1,4 +1,4 @@
-import { computed, effect, safeArea, Scroll, signal, Text, View } from "nsh";
+import { computed, effect, List, safeArea, signal, Text, View } from "nsh";
 import { Button, Input } from "nsh/base";
 import { clientLog, rpc, status } from "../conn";
 import { BottomSheet, GlassCapsule, Icon, tapHaptic } from "../ui/controls";
@@ -148,75 +148,86 @@ function FileTreeList(props: {
 }) {
   const m = props.model;
   return (
-    <Scroll class="flex-1" contentStyle={{ paddingBottom: props.bottomPadding ?? 96 }}>
-      {m.err() ? (
-        <View class="mx-5 mb-2 rounded-2xl bg-bad/15 px-4 py-3">
+    <View class="min-h-0 flex-1">
+      <If when={Boolean(m.err())}>
+        <View class="mx-5 mb-2 flex-none rounded-2xl bg-bad/15 px-4 py-3">
           <Text class="text-[13.5px] text-bad">{m.err()}</Text>
         </View>
-      ) : null}
+      </If>
 
-      {m.loading() ? (
-        <View class="items-center justify-center py-14">
+      <If when={m.loading()}>
+        <View class="flex-1 items-center justify-center py-14">
           <Text class="text-[14.5px] text-muted-foreground">加载中…</Text>
         </View>
-      ) : m.rows().length ? (
-        <View>
-          {m.rows().map((row) => (
-            <Button
-              onPress={() => {
-                if (row.item.dir) {
-                  m.toggleFolder(row.item.path);
-                } else {
-                  tapHaptic();
-                  clientLog("info", "files.tap_file", {
-                    rootId: m.activeRoot(),
-                    path: row.item.path,
-                    size: row.item.size,
-                    kind: row.item.kind,
-                  });
-                  props.onOpenFile(m.activeRoot(), row.item.path, row.item.name);
-                }
-              }}
-              style={{ paddingLeft: 20 + row.depth * 20, paddingRight: 20 }}
-              class="min-h-[44px] flex-row items-center gap-2.5 py-2 active:bg-secondary/60"
-              testID={`file-${row.item.path}`}
-            >
-              <View class="w-3.5 items-center justify-center">
-                {row.item.dir ? (
-                  <Icon
-                    src={row.isOpen ? chevronDownIcon : chevronIcon}
-                    size={12}
-                    class="tint-idle"
-                  />
-                ) : null}
-              </View>
-              <Icon
-                src={row.item.dir ? folderOutlineIcon : fileDocIcon}
-                size={17}
-                class="tint-muted-foreground"
-              />
-              <Text class="flex-1 text-[16px] text-foreground-soft" style={{ numberOfLines: 1 }}>
-                {row.item.name}
-              </Text>
-              {row.isLoading ? (
-                <Text class="text-[12px] text-muted-foreground">…</Text>
-              ) : null}
-              {!row.item.dir && row.mark ? (
-                <Text class={`font-mono text-[12px] font-semibold ${MARK_COLOR[row.mark] ?? "text-warn"}`}>
-                  {row.mark}
-                </Text>
-              ) : null}
-            </Button>
-          ))}
-        </View>
-      ) : (
-        <View class="items-center justify-center py-12">
+      </If>
+
+      <If when={!m.loading() && m.rows().length === 0}>
+        <View class="flex-1 items-center justify-center py-12">
           <Text class="text-[14.5px] text-muted-foreground">
             {m.query().trim() ? "无匹配文件" : "空目录"}
           </Text>
         </View>
-      )}
-    </Scroll>
+      </If>
+
+      <If when={!m.loading() && m.rows().length > 0}>
+        <List
+          each={m.rows()}
+          keyExtractor={(r) => r.item.path}
+          estimatedItemSize={44}
+          class="min-h-0 flex-1"
+          contentStyle={{ paddingBottom: props.bottomPadding ?? 36 }}
+        >
+          {(row) => (
+            <Button
+              onPress={() => {
+                const r = row();
+                if (r.item.dir) {
+                  m.toggleFolder(r.item.path);
+                } else {
+                  tapHaptic();
+                  clientLog("info", "files.tap_file", {
+                    rootId: m.activeRoot(),
+                    path: r.item.path,
+                    size: r.item.size,
+                    kind: r.item.kind,
+                  });
+                  props.onOpenFile(m.activeRoot(), r.item.path, r.item.name);
+                }
+              }}
+              style={{ paddingLeft: 20 + row().depth * 20, paddingRight: 20 }}
+              class="min-h-[44px] flex-row items-center gap-2.5 py-2 active:bg-secondary/60"
+              testID={`file-${row().item.path}`}
+            >
+              <View class="w-3.5 items-center justify-center">
+                <If when={row().item.dir}>
+                  <Icon
+                    src={row().isOpen ? chevronDownIcon : chevronIcon}
+                    size={12}
+                    class="tint-idle"
+                  />
+                </If>
+              </View>
+              <Icon
+                src={row().item.dir ? folderOutlineIcon : fileDocIcon}
+                size={17}
+                class="tint-muted-foreground"
+              />
+              <Text class="flex-1 text-[16px] text-foreground-soft" style={{ numberOfLines: 1 }}>
+                {row().item.name}
+              </Text>
+              <If when={row().isLoading}>
+                <Text class="text-[12px] text-muted-foreground">…</Text>
+              </If>
+              <If when={!row().item.dir && Boolean(row().mark)}>
+                <Text class={`font-mono text-[12px] font-semibold ${MARK_COLOR[row().mark] ?? "text-warn"}`}>
+                  {row().mark}
+                </Text>
+              </If>
+            </Button>
+          )}
+        </List>
+      </If>
+    </View>
   );
 }
 
@@ -247,7 +258,7 @@ export function FilesSheet(props: {
       onClose={props.onClose}
       title="Files"
       subtitle={model.rootName() || props.subtitle}
-      detents={[{ fraction: 0.72 }, "large"]}
+      detents={["large"]}
       accessibilityLabel="文件"
       footer={
         <View class="px-[18px] pt-2" style={{ paddingBottom: safeArea().bottom + 12 }}>
@@ -281,7 +292,7 @@ export function FilesSheet(props: {
           props.onClose();
           props.onOpenFile(rootId, path, title);
         }}
-        bottomPadding={24}
+        bottomPadding={36}
       />
     </BottomSheet>
   );

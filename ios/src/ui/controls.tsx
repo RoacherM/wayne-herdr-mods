@@ -357,8 +357,8 @@ export function BottomSheet(props: {
       onOpenChange={(e) => { if (!e.open) props.onClose(); }}
       footer={props.footer}
     >
-      <View class="flex-1">
-        <View class="flex-row items-center justify-between gap-3 px-5 pt-1.5 pb-3.5">
+      <View class="min-h-0 flex-1 overflow-hidden">
+        <View class="flex-none flex-row items-center justify-between gap-3 px-5 pt-1.5 pb-3.5">
           <View class="flex-1 gap-0.5">
             <Text class="text-[19px] font-semibold text-foreground" style={{ numberOfLines: 1 }}>
               {props.title}
