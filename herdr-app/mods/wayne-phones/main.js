@@ -46,7 +46,7 @@ export default class Phones extends View {
     this.removing = null;
     this.known = null;
     this.closed = false;
-    this.keyInput = InputState.new({ placeholder: "Volcengine API Key" });
+    this.keyInput = InputState.new({ placeholder: "Gemini API Key" });
     this.keyInput.set_masked(true);
     this.changingKey = false;
     this.heard = null;

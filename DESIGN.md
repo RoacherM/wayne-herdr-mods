@@ -533,23 +533,23 @@ node probe/image-paste.mjs [claude|codex|agy]   # 图片路径粘贴进 agent �
 
 ## 语音输入（已实现）
 
-不用手机自带的语音识别。手机只录音，音频经过同一条端到端加密通道传到 Mac。Mac 调用火山引擎「豆包语音 · 录音文件识别极速版」转成文字。中继只看到密文。API Key 只存在 Mac 上，手机和中继都拿不到。
+不用手机自带的语音识别。手机只录音，音频经过同一条端到端加密通道传到 Mac。Mac 调用官方 `gemini-api` CLI（2026-11-26 切换，`v0.5.0`、`gemini-3.5-transcribe`）转成文字。手机端（`ios/` / `app/`）协议完全不变；中继只看到密文；Gemini API Key 只存在 Mac 上，手机和中继都拿不到。
 
 ```
-手机 MediaRecorder ──分块 voice.put（E2E）──▶ 中继（密文）──▶ Mac 宿主
-   ▲                                                           │ ffmpeg → ogg/opus 16 kHz 单声道
-   │                                                           │ POST openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash
-   └──────── 文字填进发送框，你改完再点发送 ◀──────────────────┘
+手机录音 ──分块 voice.put（E2E）──▶ 中继（密文）──▶ Mac 宿主
+   ▲                                                 │ ffmpeg → wav 16 kHz 单声道
+   │                                                 │ gemini-api transcribe -m gemini-3.5-transcribe
+   └──────── 文字填进发送框，你改完再点发送 ◀────────┘
 ```
 
 | 部分 | 做法 |
 |---|---|
-| 手机录音 | 发送框左边加麦克风键：按住说话，松开结束，上滑取消。iOS Safari 录出 `audio/mp4`，Chrome 录出 `audio/webm`。限 120 秒。 |
+| 手机录音 | 发送框左边加麦克风键：按住说话，松开结束，上滑取消。限 120 秒。 |
 | 传输 | 分块 `voice.put {id, offset, total, mime, data}`，每块 48 KB，走现有加密通道。 |
-| 转码 | Mac 用 ffmpeg 转成 ogg/opus 16 kHz 单声道：极速版文档列的格式里没有 webm，iOS 的 mp4 也不确定是否直收，统一转码最稳。 |
-| 识别 | 极速版：一次 POST 直接返回结果，没有提交再轮询。头：`X-Api-Key`（新版控制台的 Key）或 `X-Api-App-Key` + `X-Api-Access-Key`（旧版），`X-Api-Resource-Id: volc.bigasr.auc_turbo`，`X-Api-Request-Id`（UUID），`X-Api-Sequence: -1`。体：`audio.data`（base64）+ `audio.format`，`request.model_name: "bigmodel"`，`enable_itn`、`enable_punc`。结果状态在响应头 `X-Api-Status-Code`：`20000000` 成功，`20000003` 静音。 |
-| 热词 | 带上编程词和当前终端的项目名、文件名。具体字段（`request.context` 或 `corpus`）以真实请求为准，未验证。 |
-| 密钥 | 「手机」窗口的「语音输入」一节，或 `wayne-herdr-mods voice key`（从标准输入读入），都存进 macOS 钥匙串（`security add-generic-password`），不进 state.json、不进日志。窗口经 `ctl voice.set / voice.test / voice.off` 交给后台服务，`status` 只带 Key 末 4 位（`voice: "…32e5"`），`voice.available()` 内存缓存 60 秒并在 `voice.set` / `voice.off` 立即刷新，避免每次手机握手拉起 `/usr/bin/security` 子进程（~22ms）。新 Key 下一次识别就生效；手机要重新连接才显示麦克风键。命令行 `voice key / off` 在后台服务运行时也走 `ctl`（Key 走 0600 的控制 socket），没运行时直接写钥匙串。 |
+| 转码 | Mac 用 ffmpeg 转成 16 kHz 单声道 16-bit wav，统一兼容 iOS `audio/mp4` 与 Chrome `audio/webm`。 |
+| 识别 | 调用 `gemini-api transcribe -i in.wav --format text --no-speakers --no-timestamps --out out.txt --no-interactive --timeout <N>s -m gemini-3.5-transcribe`（可通过 `WAYNE_HERDR_MODS_GEMINI_MODEL` 覆盖模型）。Key 经子进程环境变量 `GEMINI_API_KEY` 传入并设 `GEMINI_NO_KEYRING=1`，绝不出现在命令行参数里；退出码 `3` 识别为 `kind: 'auth'`。 |
+| 拼写还原 | `gemini-3.5-transcribe` 的 `transcription_config` 不带热词表，保留本地 `fixWords()`（内置开发词 + `~/.config/wayne-herdr-mods/voice-words.txt` + 当前终端目录名）把识别结果里的英文/文件名还原为准确拼写。 |
+| 密钥 | 「Phones」弹窗的 Voice 一节，或 `wayne-herdr-mods voice key`（从标准输入读入），存进 macOS 钥匙串（`service: wayne-herdr-mods.voice`、`account: gemini`），也支持环境变量 `GEMINI_API_KEY` / `WAYNE_HERDR_MODS_GEMINI_KEY`，不进 `state.json` 或日志。`status` 只带 Key 末 4 位。 |
 - Key 出现在哪里（2026-11-06 独立审查后改）：`security` 从标准输入读 Key（`-w` 放最后，它问两遍，macOS 27.0 实测），不在它的参数里。工具失败时的报错只写工具名、退出码和它的 stderr，不写参数（Node 原本的报错带整条命令行，钥匙串锁着时会把 Key 显示在窗口里；`test/voice.test.mjs` 测这一条）。还剩一处：Herdr mod 的 `exec` 没有标准输入，mod 也不能写 `~/.config/wayne-herdr-mods/`（沙箱只给自己的目录，2026-11-06 用探针 mod 实测），所以窗口把 Key 放在 `wayne-herdr-mods ctl voice.set` 的参数里。这个进程活约 1 秒；这期间这台 Mac 上任何本地账户都能用 `ps` 看到（`/bin/ps` 是 setuid root），记录进程命令行的监控软件也会记下。单人用的 Mac 可以接受；介意的话用命令行 `voice key`，它从终端读 Key。
 - 状态只显示 Key 末 4 位；8 位以下的 Key 一位也不显示。「试一次」朗读固定的句子，20 秒内结束（mod 的 `exec` 最多等 30 秒）。没配 key 时 `ready` 里 `voice: false`，手机不显示麦克风键。 |
 | 结果 | `voice.done {id}` 返回文字，填进发送框，不自动发。 |

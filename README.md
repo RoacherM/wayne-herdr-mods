@@ -33,7 +33,7 @@
 - **一部手机连多台 Mac (`ios/src/conn.ts`)**：`Storage["herdr-relay"]` 保存所有已配对电脑并复用同一把手机端密钥（`deviceSecret`）。首页顶部胶囊栏常驻显示每台 Mac 的实时在线绿点与 **「＋ 配对新电脑」** 入口；后台对非当前 Mac 维持轻量加密连接（`bgLinks`），随时秒切。
 - **状态变化原生通知 (`ios/host/Sources/App.swift`)**：基于 `UNUserNotificationCenter` 与后台任务保活，任何一台已配对 Mac 上的 Agent 进入 `blocked`（等你确认 / 提问）、`done`（完成任务）、`error`（出错）或退出时立即弹窗，点击通知自动切到对应 Mac 并打开该终端。
 - **手机与桌面自动接力布局 (`term.fit`)**：手机打开终端时自动按手机屏幕列数与行数重排画面；回到 Mac 敲任意键，终端立即恢复桌面尺寸，无需手动切换。
-- **Agent 专属快捷键与按住说话**：底部键盘栏按当前终端运行的程序（Claude Code、Codex、Antigravity）动态挂载快捷键（`^⏎`、`⌥M`、`⇧Tab` 等），配合 `LiveLine` 实时按键流与火山引擎极速版语音识别，像在 Mac 键盘前一样回答问题。
+- **Agent 专属快捷键与按住说话**：底部键盘栏按当前终端运行的程序（Claude Code、Codex、Antigravity）动态挂载快捷键（`^⏎`、`⌥M`、`⇧Tab` 等），配合 `LiveLine` 实时按键流与 `gemini-api`（`gemini-3.5-transcribe`）语音识别，像在 Mac 键盘前一样回答问题。
 - **零信任端到端加密 (`shared/e2e.js`)**：全程使用 `X25519` 密钥协商与 `XSalsa20-Poly1305`（NaCl box）认证加密，每条方向独立递增 64 位序号防重放；中继服务器只转发密文，拿不到任何明文或密钥。
 
 ---
@@ -47,7 +47,7 @@ npm install
 npm run relay:deploy                    # 可选：部署到你自己的 Cloudflare 账号
 npm run build
 node dist/wayne-herdr-mods.mjs install  # 安装 CLI、LaunchAgent、Herdr.app 界面与 Agent Skill
-wayne-herdr-mods voice key              # 可选：将火山引擎语音识别 API Key 存入钥匙串
+wayne-herdr-mods voice key              # 可选：将 Gemini API Key 存入钥匙串（需已装 gemini-api）
 ```
 
 配对手机：在 Mac 终端运行 `wayne-herdr-mods pair`，或在 `Herdr.app` 里按 `⌘⇧P` 搜 **「手机」** ▸ **「配对新手机」**，用手机扫码并在 Mac 上核对 6 位数字确认。

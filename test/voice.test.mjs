@@ -1,35 +1,45 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fixWords, keyTail, recognize, run } from '../host/voice.js';
+import { readFile, writeFile } from 'node:fs/promises';
+import { fixWords, keyTail, MODEL, recognize, run } from '../host/voice.js';
 import { createUploads, MAX_UPLOAD_BYTES } from '../host/uploads.js';
 import { startRecording } from '../app/src/voice.js';
 
-const res = (status, code, body = '{}', extra = {}) => new Response(body, { status, headers: { 'x-api-status-code': code, 'x-tt-logid': 'L1', ...extra } });
-
-test('submit then poll until done; key and hotwords in the request', async () => {
+test('gemini-api transcribe runs with key in env only, reads text output, and applies fixWords', async () => {
   const calls = [];
-  const replies = [res(200, '20000000'), res(200, '20000001'), res(200, '20000002'), res(200, '20000000', JSON.stringify({ result: { text: ' 跑一遍 npm test ' } }))];
-  const fetchImpl = async (url, init) => { calls.push({ url, init }); return replies.shift(); };
-  const r = await recognize(Buffer.from('RIFF'), { key: 'K', words: ['npm', 'phones.js'], fetchImpl, sleep: async () => {} });
-  assert.equal(r.text, '跑一遍 npm test');
-  assert.match(calls[0].url, /\/submit$/);
-  assert.equal(calls[0].init.headers['X-Api-Key'], 'K');
-  assert.equal(calls[0].init.headers['X-Api-Resource-Id'], 'volc.seedasr.auc');
-  assert.equal(calls[0].init.headers['X-Api-Sequence'], '-1');
-  const ids = new Set(calls.map((c) => c.init.headers['X-Api-Request-Id']));
-  assert.equal(ids.size, 1, 'submit and every query share one request id');
-  const body = JSON.parse(calls[0].init.body);
-  assert.equal(body.audio.format, 'wav');
-  assert.equal(body.audio.data, Buffer.from('RIFF').toString('base64'));
-  assert.deepEqual(JSON.parse(body.request.corpus.context), { hotwords: [{ word: 'npm' }, { word: 'phones.js' }] });
-  assert.equal(calls.length, 4);
+  const runImpl = async (bin, args, _input, opts) => {
+    calls.push({ bin, args, opts });
+    const inPath = args[args.indexOf('-i') + 1];
+    const outPath = args[args.indexOf('--out') + 1];
+    assert.deepEqual(await readFile(inPath), Buffer.from('RIFF'));
+    await writeFile(outPath, ' 帮我跑一遍 NPM Test 和 phones js \n');
+    return Buffer.from(`${outPath}\n`);
+  };
+  const r = await recognize(Buffer.from('RIFF'), { key: 'GEM-KEY-123', words: ['npm', 'test', 'phones.js'], geminiBin: '/fake/gemini-api', runImpl });
+  assert.equal(r.text, '帮我跑一遍 npm test 和 phones.js');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].bin, '/fake/gemini-api');
+  assert.ok(calls[0].args.includes('transcribe'));
+  assert.ok(calls[0].args.includes('--no-speakers'));
+  assert.ok(calls[0].args.includes('--no-timestamps'));
+  assert.ok(calls[0].args.includes('--no-interactive'));
+  assert.equal(calls[0].args[calls[0].args.indexOf('--format') + 1], 'text');
+  assert.equal(calls[0].args[calls[0].args.indexOf('-m') + 1], MODEL);
+  assert.ok(!calls[0].args.join(' ').includes('GEM-KEY-123'), 'API key never passed on CLI argv');
+  assert.equal(calls[0].opts.env.GEMINI_API_KEY, 'GEM-KEY-123');
+  assert.equal(calls[0].opts.env.GEMINI_NO_KEYRING, '1');
 });
 
-test('silence is empty text; errors name the cause', async () => {
-  const silent = [res(200, '20000000'), res(200, '20000003')];
-  assert.equal((await recognize(Buffer.alloc(4), { key: 'K', fetchImpl: async () => silent.shift(), sleep: async () => {} })).text, '');
-  await assert.rejects(recognize(Buffer.alloc(4), { key: 'K', fetchImpl: async () => res(401, '45000010', '', { 'x-api-message': 'invalid auth' }), sleep: async () => {} }), (e) => e.kind === 'auth' && /API Key/.test(e.message));
-  await assert.rejects(recognize(Buffer.alloc(4), { key: null }), (e) => e.kind === 'no_key');
+test('silence is empty text; auth and missing-key errors are classified cleanly', async () => {
+  const emptyRun = async (_bin, args) => { await writeFile(args[args.indexOf('--out') + 1], '   \n'); return Buffer.alloc(0); };
+  assert.equal((await recognize(Buffer.alloc(4), { key: 'K', geminiBin: '/fake/gemini-api', runImpl: emptyRun })).text, '');
+
+  const authFail = async () => { throw Object.assign(new Error('exit 3'), { code: 3, stderr: 'invalid API key' }); };
+  await assert.rejects(
+    recognize(Buffer.alloc(4), { key: 'K', geminiBin: '/fake/gemini-api', runImpl: authFail }),
+    (e) => e.kind === 'auth' && /Gemini API Key/.test(e.message),
+  );
+  await assert.rejects(recognize(Buffer.alloc(4), { key: null, geminiBin: '/fake/gemini-api' }), (e) => e.kind === 'no_key');
 });
 
 test('uploads reassemble in order, once, within size', () => {

@@ -37,7 +37,7 @@ const HELP = `wayne-herdr-mods — 在 iPhone 上的 Herdr App 里操作 Herdr.a
   wayne-herdr-mods metrics     手机体验记录的报告页（--days N 看几天，默认 7；--json 只出数字；--no-open 不打开）
   wayne-herdr-mods install     安装：命令、开机自启、Herdr.app 的界面、agent skill（旧的 herdr-relay 配置一起搬过来）
   wayne-herdr-mods uninstall   全部移除（保留密钥和设备）
-  wayne-herdr-mods voice key   设置火山语音识别的 API Key（存进钥匙串）
+  wayne-herdr-mods voice key   设置 Gemini API Key（存进钥匙串，走 gemini-api transcribe）
   wayne-herdr-mods voice test  用一段 Mac 朗读的中文试一次识别
   wayne-herdr-mods voice off   删除 API Key，关掉语音输入
   wayne-herdr-mods --skill     给 agent 看的用法（SKILL.md）`;
@@ -217,14 +217,6 @@ async function migrateOld() {
   }
   const oldLog = join(home, 'Library', 'Logs', `${OLD}.log`);
   if (existsSync(oldLog) && !existsSync(logPath)) { renameSync(oldLog, logPath); moved.push(`日志 → ${logPath}`); }
-  const security = (...a) => execFileSync('/usr/bin/security', a, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  let oldKey = null;
-  try { oldKey = security('find-generic-password', '-s', `${OLD}.voice`, '-a', KEYCHAIN.account, '-w'); } catch {}
-  if (oldKey) {
-    if (!(await readKey())) await saveKey(oldKey);
-    security('delete-generic-password', '-s', `${OLD}.voice`, '-a', KEYCHAIN.account);
-    moved.push(`语音识别 Key：钥匙串 ${OLD}.voice → ${KEYCHAIN.service}`);
-  }
   for (const p of [join(binDir, OLD), join(herdrHome(), 'mods', OLD), join(herdrHome(), 'data', OLD)]) {
     if (existsSync(p)) { rmSync(p, { recursive: true, force: true }); moved.push(`删掉 ${p}`); }
   }
@@ -274,7 +266,7 @@ async function voiceCmd() {
     let key = args[1];
     if (!key) {
       if (process.stdin.isTTY) {
-        process.stdout.write('粘贴火山引擎控制台的 API Key（输入不显示），回车：');
+        process.stdout.write('粘贴 Gemini API Key（输入不显示），回车：');
         key = await readHidden();
       } else {
         key = (await new Promise((r) => { let b = ''; process.stdin.on('data', (d) => (b += d)).on('end', () => r(b)); })).trim();
