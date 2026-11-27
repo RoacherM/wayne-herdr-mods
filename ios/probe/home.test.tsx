@@ -27,6 +27,7 @@ test("inbox groups by what each terminal needs", async () => {
   // The address is not shown as a time.
   expect(t.some((s) => /^t(?=[0-9a-z]*[0-9])[0-9a-z]{2,4}$/.test(s))).toBe(false);
 
+  await app.press("id:home-search");
   await app.type("id:home-search-input", "approve");
   await app.wait(300);
   expect(app.texts()).toContain("Approve plan");

@@ -70,6 +70,7 @@ export function HomeShell(props: {
 }) {
   const tab = signal<HomeTab>("sessions");
   const filterSpaceId = signal<string>("ALL");
+  const searchOpen = signal<boolean>(false);
   const query = signal<string>("");
   const setSearchOpen = signal<boolean>(false);
   const setQuery = signal<string>("");
@@ -267,6 +268,19 @@ export function HomeShell(props: {
                 </Button>
               </View>
               <GlassCircle
+                onPress={() => {
+                  tapHaptic();
+                  const next = !searchOpen();
+                  searchOpen.set(next);
+                  if (!next) query.set("");
+                }}
+                size={44}
+                accessibilityLabel="搜索"
+                testID="home-search"
+              >
+                <Icon src={searchOpen() ? xIcon : searchIcon} size={19} class="tint-foreground" />
+              </GlassCircle>
+              <GlassCircle
                 onPress={() => { tapHaptic(); picker.set("new-term"); }}
                 size={46}
                 accessibilityLabel="新建终端"
@@ -278,6 +292,7 @@ export function HomeShell(props: {
 
             <Scroll class="flex-1" contentStyle={{ paddingBottom: safeArea().bottom + 104 }} keyboardDismissMode="on-drag">
               <View class="gap-3 px-4 pt-3">
+                <If when={searchOpen()}>
                 <View class="h-12 flex-row items-center gap-2.5 rounded-full bg-card px-4" style={{ borderCurve: "continuous" }}>
                   <Icon src={searchIcon} size={17} class="tint-muted-foreground" />
                   <Input
@@ -296,6 +311,7 @@ export function HomeShell(props: {
                     </Button>
                   ) : null}
                 </View>
+                </If>
                 {spaces().length > 1 ? (
                   <View class="flex-row">
                     <FilterPill

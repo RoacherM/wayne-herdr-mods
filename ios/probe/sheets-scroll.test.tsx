@@ -15,7 +15,7 @@ test("list sheets reach their last row", async () => {
   await app.waitFor("id:new-term", { timeout: 20000 });
   await app.wait(1500);
   await app.screenshot("/tmp/shots/home.png");
-  for (let i = 0; i < 4; i++) await app.scroll("id:home-search-input", 700);
+  for (let i = 0; i < 4; i++) await app.scroll("id:filter-space", 700);
   await app.wait(600);
   await app.screenshot("/tmp/shots/home-end.png");
 
