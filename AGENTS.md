@@ -46,7 +46,7 @@ npm run relay:dev                                  # 起本地中继（127.0.0.1
 node dev/bench.mjs                                 # 模拟跑分（需先 build + relay:dev），慢 20% 以上退出码为 1
 node dev/asks.mjs --show                           # 查看本机捕获的 blocked 提问屏幕样本
 npm run build && node dist/wayne-herdr-mods.mjs install  # 构建并同步命令、LaunchAgent、Herdr.app 界面与 skill
-ios/host/install.sh                                # 原生 App 装到真 iPhone（npm run ios:dev 只跑模拟器）；手机要解锁
+BUNDLE_ID=com.byronwayne.herdr ios/host/install.sh <UDID>  # 原生 App 无线装到真 iPhone（不插线；npm run ios:dev 只跑模拟器）；手机要解锁，见「教训」
 ```
 
 ## 4. 必须遵守的 6 条规则
@@ -63,6 +63,8 @@ ios/host/install.sh                                # 原生 App 装到真 iPhone
 处理 [docs/issues/INDEX.md](docs/issues/INDEX.md) 时：只自动认领 `status: ready` 的条目；按卡内 `verify` 先跑出 Red → 改代码跑出 Green → 提交并更新 [DESIGN.md](DESIGN.md) → 将状态改为 `done` 并删除已 `done` 的单张 `docs/issues/I-*.md`。
 
 ## 6. 教训
+
+- **更新手机版本：不插线，直接无线装到已配对的 iPhone，标识用手机上已装的那个**：先 `xcrun devicectl list devices` 找 `available (paired)` 的真机 UDID，再 `xcrun devicectl device info apps --device <UDID> | rg -i herdr` 查已装 App 的 bundle ID（这台 Mac 是 `com.byronwayne.herdr`），然后 `BUNDLE_ID=<它> ios/host/install.sh <UDID>`，装完看 `wayne-herdr-mods devices` 里手机回到「在线」。不要让用户插线，也不要用脚本默认的 `com.roacherm.herdr`（它属于别的开发者团队，这台 Mac 签名报 `Failed Registering Bundle Identifier`）。覆盖同一个 bundle ID 才能保住手机里的配对。原因：2026-11-27 用这条路一次装好，用户确认这是要的做法（agy 之前做不到）。
 
 - **Herdr.app 里新加的界面，原型要画出它在窗口里的位置和它显示谁的数据**：默认做成侧栏、只看当前窗格里的 agent，不开全屏标签、不铺所有 agent。用户说「全局」「全部」这类范围词时，先对照他前面给的单位（如 session based）再定范围。原因：2026-11-12 观测面板的原型只确认了画法，装上后「全屏」和「显示所有 agent」都被否，布局重写。
 - **界面极简图标风格与零夹带**：只实现用户明确确认的节点与交互，不顺手加筛选/缩放/跳转按钮或未勾选的数据行；顶栏、节点类型和空状态优先靠图形、SVG 图标和纯数字自解释，不写教学式说明句、文字胶囊或兜底假摘要（「已 38m」「暂无…派发后自动显示…」「↗ 派发」「已完成」）。原因：2026-11-12 观测面板先后因擅加按钮/决策行和堆叠说明性文字被连续打回。
