@@ -11,6 +11,7 @@ Agent 自动处理规则：只认领 `Ready` 栏的条目；修完用 `git commi
 
 | ID | 优先级 | 领域 | 标题 |
 |---|---|---|---|
+| [I-009](I-009-ios-double-selection-menu.md) | P1 | iOS 选区 | 长按选中仍同时出现 WebView 自带 Copy/Translate 菜单与终端选区（附用户截图） |
 
 ## 2. Needs Decision（等用户拍板）
 
