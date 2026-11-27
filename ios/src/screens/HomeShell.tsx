@@ -7,15 +7,16 @@ import {
   type Saved, type Space, type Terminal,
 } from "../conn";
 import {
-  AppSwitch, base, BottomSheet, FilterPill, formatRelTime, GlassCapsule, GlassCircle, Icon,
-  KIND_TEXT, MonogramBadge, ProgIcon, RowDivider, SettingsGroup, SettingsRow, spaceName, STATE_TEXT,
-  STATUS_TEXT, tapHaptic,
+  AppSwitch, base, BottomSheet, CardDivider, DockTab, FilterPill, fitDetent, formatRelTime, GlassCapsule,
+  GlassCircle, Icon, KIND_TEXT, ListCard, MonogramBadge, RowDivider, SectionHeader, SessionRow,
+  SettingsGroup, SettingsRow, spaceName, STATUS_TEXT, tapHaptic,
 } from "../ui/controls";
 import bellIcon from "../../assets/bell.svg";
 import brushIcon from "../../assets/brush.svg";
 import chatFilledIcon from "../../assets/chat-filled.svg";
 import chatIcon from "../../assets/chat.svg";
 import checkIcon from "../../assets/check.svg";
+import chevronDownIcon from "../../assets/chevron-down.svg";
 import clockIcon from "../../assets/clock.svg";
 import composeIcon from "../../assets/compose.svg";
 import gearIcon from "../../assets/gear.svg";
@@ -45,10 +46,22 @@ type SessionItem = {
   spaceId: string;
   spaceTitle: string;
   title: string;
-  sub: string;
-  urgent: boolean;
-  rightMeta: string;
+  note: string;
+  where: string;
+  badge: { label: string; tone: "warn" | "bad" } | null;
+  time: string;
 };
+
+/** The inbox's groups, in the order they need you (DESIGN.md「原生 App 首页（收件箱）（2026-11-27）」). */
+type Group = "needs" | "done" | "working" | "idle";
+const GROUPS: { id: Group; title: string }[] = [
+  { id: "needs", title: "需要你" },
+  { id: "done", title: "完成" },
+  { id: "working", title: "工作中" },
+  { id: "idle", title: "空闲" },
+];
+const groupOf = (t: Terminal): Group =>
+  t.state === "blocked" || t.state === "error" ? "needs" : t.state === "done" ? "done" : t.state === "working" ? "working" : "idle";
 
 export function HomeShell(props: {
   appearance: () => AppearancePref;
@@ -57,7 +70,6 @@ export function HomeShell(props: {
 }) {
   const tab = signal<HomeTab>("sessions");
   const filterSpaceId = signal<string>("ALL");
-  const searchOpen = signal<boolean>(false);
   const query = signal<string>("");
   const setSearchOpen = signal<boolean>(false);
   const setQuery = signal<string>("");
@@ -85,11 +97,11 @@ export function HomeShell(props: {
   const macName = computed(() => paired()?.desktopName ?? info()?.desktopName ?? "Mac");
   const isOnline = computed(() => status() === "ready" && (!list().core || list().core === "online"));
   const headerTitle = computed(() => {
-    if (status() === "ready" && list().core && list().core !== "online") return "herdr 未运行";
+    if (status() === "ready" && list().core && list().core !== "online") return `${macName()} · herdr 未运行`;
     if (status() === "connecting") return `重连 ${macName()}…`;
     if (status() === "offline") return `${macName()} 离线`;
     if (status() === "error") return problem() || "连接出错";
-    return macName();
+    return `${macName()} · ${connVia() === "direct" ? "局域网直连" : "已连接"}`;
   });
 
   const spaces = computed(() => {
@@ -131,29 +143,39 @@ export function HomeShell(props: {
       const what = t.app || t.program || "shell";
       const title = cwdBase && cwdBase !== spTitle ? `${spTitle} · ${cwdBase}` : spTitle || what;
       const st = t.state ?? "idle";
-      const urgent = st === "blocked" || st === "error";
-      const statusHint = st === "blocked" ? (KIND_TEXT[t.kind ?? ""] ?? STATE_TEXT.blocked) : "";
-      const sub = t.msg && st !== "idle"
-        ? t.msg
-        : statusHint || (what !== title ? what : "");
+      const badge = st === "blocked"
+        ? { label: KIND_TEXT[t.kind ?? ""] ?? "需要你", tone: "warn" as const }
+        : st === "error" ? { label: "出错", tone: "bad" as const } : null;
+      const note = t.msg && st !== "idle" ? t.msg : "";
 
-      if (q && !`${title} ${spTitle} ${sub} ${what} ${t.address}`.toLowerCase().includes(q)) continue;
+      if (q && !`${title} ${spTitle} ${note} ${what} ${t.address}`.toLowerCase().includes(q)) continue;
 
       rows.push({
         term: t,
         spaceId: spId,
         spaceTitle: spTitle,
         title,
-        sub,
-        urgent,
-        rightMeta: formatRelTime(t.statusMs) || t.address,
+        note,
+        where: what,
+        badge,
+        time: formatRelTime(t.statusMs),
       });
     }
-
-    // Urgent (blocked/error) first, then working, then rest
-    const rank = (s: SessionItem) => (s.urgent ? 0 : s.term.state === "working" ? 1 : 2);
-    rows.sort((a, b) => rank(a) - rank(b));
     return rows;
+  });
+
+  /** The rows by group, newest change first within a group; empty groups are left out. */
+  const groups = computed(() => {
+    const by = new Map<Group, SessionItem[]>();
+    for (const r of sessions()) {
+      const g = groupOf(r.term);
+      if (!by.has(g)) by.set(g, []);
+      by.get(g)!.push(r);
+    }
+    return GROUPS.filter((g) => by.has(g.id)).map((g) => ({
+      ...g,
+      rows: by.get(g.id)!.sort((a, b) => (b.term.statusMs ?? 0) - (a.term.statusMs ?? 0)),
+    }));
   });
 
   async function createTerminalIn(sp: Space) {
@@ -221,125 +243,103 @@ export function HomeShell(props: {
     <NavPage title={macName()} headerVisible={false}>
       <View class="relative flex-1 bg-background pt-[env(safe-area-inset-top)]">
 
-        {/* ==================== TAB 1: SESSIONS (Screenshot 1) ==================== */}
+        {/* ==================== TAB 1: SESSIONS (inbox) ==================== */}
         <If when={tab() === "sessions"}>
           <View class="flex-1">
-            <View class="flex-row items-center justify-between gap-2.5 px-[18px] pt-1.5 pb-3">
-              <Button
-                onPress={() => { if (desktops().length > 1) { tapHaptic(); picker.set("env"); } }}
-                class="flex-1 flex-row items-center gap-2"
-                testID="status"
-                accessibilityLabel={headerTitle()}
-              >
-                <Icon
-                  src={isOnline() ? wifiIcon : wifiOffIcon}
-                  size={17}
-                  class={isOnline() ? "tint-ok" : "tint-muted-foreground"}
-                />
-                <Text
-                  class={`flex-1 text-[20px] font-semibold ${isOnline() ? "text-foreground" : "text-muted-foreground"}`}
-                  style={{ numberOfLines: 1 }}
+            <View class="flex-row items-center gap-3 pt-2 pr-4 pb-1 pl-5">
+              <View class="flex-1 gap-1">
+                <Text class="text-[32px] font-bold tracking-[-0.02em] text-foreground">会话</Text>
+                <Button
+                  onPress={() => { tapHaptic(); picker.set("env"); }}
+                  class="flex-row items-center gap-1.5 self-start active:opacity-60"
+                  testID="status"
+                  accessibilityLabel={`${headerTitle()}，切换电脑`}
                 >
-                  {headerTitle()}
-                </Text>
-              </Button>
-
+                  <Icon
+                    src={isOnline() ? wifiIcon : wifiOffIcon}
+                    size={14}
+                    class={isOnline() ? "tint-ok" : "tint-muted-foreground"}
+                  />
+                  <Text class="text-[14px] text-muted-foreground" style={{ numberOfLines: 1 }}>
+                    {headerTitle()}
+                  </Text>
+                  <Icon src={chevronDownIcon} size={11} class="tint-muted-foreground" />
+                </Button>
+              </View>
               <GlassCircle
-                onPress={() => {
-                  tapHaptic();
-                  const next = !searchOpen();
-                  searchOpen.set(next);
-                  if (!next) query.set("");
-                }}
-                size={44}
-                accessibilityLabel="搜索"
-                testID="home-search"
+                onPress={() => { tapHaptic(); picker.set("new-term"); }}
+                size={46}
+                accessibilityLabel="新建终端"
+                testID="new-term"
               >
-                <Icon src={searchIcon} size={20} class="tint-foreground" />
+                <Icon src={composeIcon} size={20} class="tint-foreground" />
               </GlassCircle>
             </View>
 
-            <If when={searchOpen()}>
-              <View class="px-[18px] pb-3">
-                <GlassCapsule class="h-11 gap-2.5 px-3.5">
+            <Scroll class="flex-1" contentStyle={{ paddingBottom: safeArea().bottom + 104 }} keyboardDismissMode="on-drag">
+              <View class="gap-3 px-4 pt-3">
+                <View class="h-12 flex-row items-center gap-2.5 rounded-full bg-card px-4" style={{ borderCurve: "continuous" }}>
                   <Icon src={searchIcon} size={17} class="tint-muted-foreground" />
                   <Input
                     value={query()}
                     onChange={(e) => query.set(e.value)}
-                    placeholder="搜索会话或工作区"
+                    placeholder="跳到某个终端…"
                     autoCapitalize="none"
                     autoCorrect={false}
+                    returnKeyType="search"
                     class="flex-1 text-[16px] text-foreground"
                     testID="home-search-input"
                   />
                   {query() ? (
-                    <Button onPress={() => query.set("")} class="h-7 w-7 items-center justify-center rounded-full">
+                    <Button onPress={() => query.set("")} class="h-8 w-8 items-center justify-center rounded-full active:bg-secondary" accessibilityLabel="清空">
                       <Icon src={xIcon} size={14} class="tint-muted-foreground" />
                     </Button>
                   ) : null}
-                </GlassCapsule>
+                </View>
+                {spaces().length > 1 ? (
+                  <View class="flex-row">
+                    <FilterPill
+                      label={selectedSpaceName()}
+                      active={filterSpaceId() !== "ALL"}
+                      onPress={() => { tapHaptic(); picker.set("project"); }}
+                      testID="filter-space"
+                    />
+                  </View>
+                ) : null}
               </View>
-            </If>
 
-            <View class="flex-row items-center gap-2.5 px-[18px] pb-3">
-              <FilterPill
-                label={desktops().length > 1 ? macName() : "全部电脑"}
-                active={desktops().length > 1}
-                onPress={() => { tapHaptic(); picker.set("env"); }}
-                testID="filter-env"
-              />
-              <FilterPill
-                label={selectedSpaceName()}
-                active={filterSpaceId() !== "ALL"}
-                onPress={() => { tapHaptic(); picker.set("project"); }}
-                testID="filter-space"
-              />
-            </View>
-
-            <Scroll class="flex-1" contentStyle={{ paddingBottom: safeArea().bottom + 104 }}>
-              {sessions().length ? (
-                sessions().map((row) => (
-                  <Button
-                    onPress={() => { tapHaptic(); props.onOpenTerm(row.term.address, "row"); }}
-                    class="flex-row items-start gap-3 border-b border-separator px-[18px] py-[14px] active:bg-secondary/60"
-                    testID={`row-${row.term.address}`}
-                  >
-                    <MonogramBadge label={row.spaceTitle} />
-                    <View class="flex-1 gap-1">
-                      <Text class="text-[16.5px] font-semibold tracking-[-0.01em] text-foreground" style={{ numberOfLines: 1 }}>
-                        {row.title}
-                      </Text>
-                      {row.sub ? (
-                        <Text
-                          class={`text-[13.5px] ${row.urgent ? "text-warn" : "text-muted-foreground"}`}
-                          style={{ numberOfLines: 1 }}
-                        >
-                          {row.sub}
-                        </Text>
-                      ) : null}
-                    </View>
-                    <View class="items-end gap-1.5 pt-0.5">
-                      <Text
-                        class="text-[13.5px] text-muted-foreground"
-                        style={{ fontVariant: ["tabular-nums"] }}
-                      >
-                        {row.rightMeta}
-                      </Text>
-                      <View class="flex-row items-center gap-1.5">
-                        {row.urgent ? (
-                          <View class="h-1.5 w-1.5 rounded-full bg-warn" />
-                        ) : row.term.state === "working" ? (
-                          <View class="h-1.5 w-1.5 rounded-full bg-accent" />
-                        ) : null}
-                        <ProgIcon t={row.term} size={14} tone="muted" />
-                      </View>
-                    </View>
-                  </Button>
+              {groups().length ? (
+                groups().map((g) => (
+                  <View>
+                    <SectionHeader title={g.title} count={g.rows.length} />
+                    <ListCard>
+                      {g.rows.map((row, i) => (
+                        <View>
+                          {i > 0 ? <CardDivider /> : null}
+                          <SessionRow
+                            avatar={row.spaceTitle}
+                            title={row.title}
+                            note={row.note}
+                            noteTone={row.badge?.tone ?? "muted"}
+                            where={row.where}
+                            term={row.term}
+                            badge={row.badge}
+                            mark={g.id === "done" ? "unread" : g.id === "working" ? "working" : null}
+                            time={row.time}
+                            onPress={() => { tapHaptic(); props.onOpenTerm(row.term.address, "row"); }}
+                            testID={`row-${row.term.address}`}
+                          />
+                        </View>
+                      ))}
+                    </ListCard>
+                  </View>
                 ))
               ) : (
-                <View class="items-center justify-center py-16">
+                <View class="items-center justify-center gap-2 py-20">
                   <Text class="text-[15px] text-muted-foreground">
-                    {status() === "ready" ? "暂无终端" : STATUS_TEXT[status()] ?? "连接中…"}
+                    {query().trim()
+                      ? "没有匹配的终端"
+                      : status() === "ready" ? "暂无终端" : STATUS_TEXT[status()] ?? "连接中…"}
                   </Text>
                 </View>
               )}
@@ -347,11 +347,11 @@ export function HomeShell(props: {
           </View>
         </If>
 
-        {/* ==================== TAB 2: SETTINGS (Screenshot 2) ==================== */}
+        {/* ==================== TAB 2: SETTINGS ==================== */}
         <If when={tab() === "settings"}>
           <View class="flex-1">
-            <View class="flex-row items-center justify-between px-[18px] pt-1.5 pb-3">
-              <Text class="text-[23px] font-semibold text-foreground">设置</Text>
+            <View class="flex-row items-center justify-between pt-2 pr-4 pb-3 pl-5">
+              <Text class="text-[32px] font-bold tracking-[-0.02em] text-foreground">设置</Text>
               <GlassCapsule class="h-[42px] gap-0.5 px-1">
                 <Button
                   onPress={() => { tapHaptic(); picker.set("appearance"); }}
@@ -482,53 +482,28 @@ export function HomeShell(props: {
           </View>
         </If>
 
-        {/* ==================== FLOATING BOTTOM LIQUID GLASS DOCK (2 tabs: Sessions | Settings) ==================== */}
+        {/* ==================== FLOATING LIQUID GLASS DOCK (会话 | 设置) ==================== */}
         <View
-          class="absolute right-[18px] left-[18px] flex-row items-center justify-between"
-          style={{ bottom: safeArea().bottom + 12 }}
+          class="absolute right-0 left-0 items-center"
+          style={{ bottom: safeArea().bottom + 10 }}
         >
-          <GlassCapsule class="h-[60px] w-[192px] p-[5px]">
-            <Button
+          <GlassCapsule class="h-[62px] w-[208px] gap-1 p-[5px]">
+            <DockTab
+              icon={chatIcon}
+              activeIcon={chatFilledIcon}
+              label="会话"
+              active={tab() === "sessions"}
               onPress={() => { tapHaptic(); tab.set("sessions"); }}
-              class={`h-[50px] flex-1 items-center justify-center rounded-full transition-colors duration-150 ${
-                tab() === "sessions" ? "bg-glass-active" : ""
-              }`}
-              accessibilityLabel="会话"
               testID="tab-sessions"
-            >
-              <Icon
-                src={tab() === "sessions" ? chatFilledIcon : chatIcon}
-                size={21}
-                class={tab() === "sessions" ? "tint-accent" : "tint-foreground"}
-              />
-            </Button>
-
-            <Button
+            />
+            <DockTab
+              icon={gearIcon}
+              label="设置"
+              active={tab() === "settings"}
               onPress={() => { tapHaptic(); refreshNotifyStatus(); tab.set("settings"); }}
-              class={`h-[50px] flex-1 items-center justify-center rounded-full transition-colors duration-150 ${
-                tab() === "settings" ? "bg-glass-active" : ""
-              }`}
-              accessibilityLabel="设置"
               testID="settings"
-            >
-              <Icon
-                src={gearIcon}
-                size={21}
-                class={tab() === "settings" ? "tint-accent" : "tint-foreground"}
-              />
-            </Button>
+            />
           </GlassCapsule>
-
-          <If when={tab() === "sessions"}>
-            <GlassCircle
-              onPress={() => { tapHaptic(); picker.set("new-term"); }}
-              size={60}
-              accessibilityLabel="新建终端"
-              testID="new-term"
-            >
-              <Icon src={composeIcon} size={21} class="tint-foreground" />
-            </GlassCircle>
-          </If>
         </View>
 
         {/* ==================== PICKER BOTTOM SHEETS ==================== */}
@@ -536,7 +511,7 @@ export function HomeShell(props: {
           open={picker() === "env" || picker() === "macs"}
           onClose={() => picker.set(null)}
           title="已配对电脑"
-          detents={[{ fraction: 0.48 }, "large"]}
+          detents={fitDetent(desktops().length, 52, 58)}
         >
           <Scroll class="flex-1" contentClass="pb-8">
             {desktops().map((d: Saved) => {
@@ -574,7 +549,7 @@ export function HomeShell(props: {
           open={picker() === "project"}
           onClose={() => picker.set(null)}
           title="选择工作区"
-          detents={[{ fraction: 0.52 }, "large"]}
+          detents={fitDetent(spaces().length + 1, 50)}
         >
           <Scroll class="flex-1" contentClass="pb-8">
             <Button
@@ -592,6 +567,7 @@ export function HomeShell(props: {
                   picker.set(null);
                 }}
                 class="min-h-[50px] flex-row items-center justify-between px-5 active:bg-secondary/60"
+                testID={`space-${s.space.id}`}
               >
                 <Text class="text-[16.5px] text-foreground">{s.name}</Text>
                 {filterSpaceId() === s.space.id ? <Icon src={checkIcon} size={18} class="tint-accent" /> : null}
@@ -604,7 +580,7 @@ export function HomeShell(props: {
           open={picker() === "new-term"}
           onClose={() => picker.set(null)}
           title="新建终端"
-          detents={[{ fraction: 0.52 }, "large"]}
+          detents={fitDetent(spaces().length, 50)}
         >
           <Scroll class="flex-1" contentClass="pb-8">
             {spaces().map((s) => (

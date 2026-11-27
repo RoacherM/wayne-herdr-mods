@@ -175,6 +175,7 @@ function FileTreeList(props: {
           keyExtractor={(r) => r.item.path}
           estimatedItemSize={44}
           class="min-h-0 flex-1"
+          testID="files-list"
           contentStyle={{ paddingBottom: props.bottomPadding ?? 36 }}
         >
           {(row) => (

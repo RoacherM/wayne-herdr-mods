@@ -1,4 +1,4 @@
-import { colorScheme, host, Image, platform, Text, token, View } from "nsh";
+import { colorScheme, host, Image, platform, safeArea, Text, token, View, windowSize } from "nsh";
 import type { JSX, SheetDetent, ViewStyle } from "nsh/types";
 import { Button, Sheet, Switch as BaseSwitch } from "nsh/base";
 import { Haptics, isAvailable as mobileAvailable } from "nsh/mobile";
@@ -6,6 +6,7 @@ import type { Space, Terminal } from "../conn";
 import { PROG_ICONS } from "../prog-icons";
 import chevronDownIcon from "../../assets/chevron-down.svg";
 import chevronIcon from "../../assets/chevron.svg";
+import spinnerIcon from "../../assets/spinner.svg";
 import xIcon from "../../assets/x.svg";
 
 const MAJOR_OS = Number(String(platform.version ?? "0").split(".")[0]) || 0;
@@ -137,15 +138,16 @@ function hashSeed(str: string): number {
   return Math.abs(h);
 }
 
-export function MonogramBadge(props: { label: string }) {
+export function MonogramBadge(props: { label: string; size?: "sm" | "md" }) {
   const idx = hashSeed(props.label) % BADGE_CLASSES.length;
   const [bgCls, fgCls] = BADGE_CLASSES[idx];
+  const md = props.size === "md";
   return (
     <View
-      class={`mt-0.5 h-7 w-7 items-center justify-center rounded-[8px] ${bgCls}`}
+      class={`items-center justify-center ${md ? "h-10 w-10 rounded-[11px]" : "mt-0.5 h-7 w-7 rounded-[8px]"} ${bgCls}`}
       style={CARD_CURVE}
     >
-      <Text class={`text-[11px] font-bold tracking-[0.02em] ${fgCls}`}>{monogramOf(props.label)}</Text>
+      <Text class={`${md ? "text-[14px]" : "text-[11px]"} font-bold tracking-[0.02em] ${fgCls}`}>{monogramOf(props.label)}</Text>
     </View>
   );
 }
@@ -329,6 +331,148 @@ export function SettingsRow(props: {
       {inner}
     </Button>
   );
+}
+
+/** A list's section title, on the list's leading spine (inside the card's inset). */
+export function SectionHeader(props: { title: string; count?: number }) {
+  return (
+    <View class="flex-row items-baseline gap-1.5 px-6 pt-6 pb-2">
+      <Text class="text-[14px] font-semibold text-muted-foreground">{props.title}</Text>
+      {props.count != null && props.count > 1 ? (
+        <Text class="text-[13px] text-idle" style={{ fontVariant: ["tabular-nums"] }}>{String(props.count)}</Text>
+      ) : null}
+    </View>
+  );
+}
+
+/** A grouped card of rows: the rows' press wash stays inside its corners. */
+export function ListCard(props: { children?: JSX.Element }) {
+  return (
+    <View class="mx-4 overflow-hidden rounded-[22px] bg-card" style={CARD_CURVE}>
+      {props.children}
+    </View>
+  );
+}
+
+/** The divider between two rows of a card, from the text's spine (after the 40pt avatar). */
+export function CardDivider() {
+  return <View class="mr-4 ml-[70px] h-px bg-separator" />;
+}
+
+/** "Needs you" and the like: text on its status color, never color alone. */
+export function StateBadge(props: { label: string; tone: "warn" | "bad" }) {
+  return (
+    <View class={`h-[26px] items-center justify-center rounded-[8px] px-2.5 ${props.tone === "bad" ? "bg-bad/15" : "bg-warn/15"}`} style={CARD_CURVE}>
+      <Text class={`text-[13px] font-semibold ${props.tone === "bad" ? "text-bad" : "text-warn"}`} style={{ numberOfLines: 1 }}>
+        {props.label}
+      </Text>
+    </View>
+  );
+}
+
+const NOTE_TONE = { muted: "text-muted-foreground", warn: "text-warn", bad: "text-bad" } as const;
+
+/** A terminal in the inbox: avatar · title + what it says / where it runs · state and time. */
+export function SessionRow(props: {
+  avatar: string;
+  title: string;
+  note?: string;
+  noteTone?: "muted" | "warn" | "bad";
+  where: string;
+  term: Terminal;
+  badge?: { label: string; tone: "warn" | "bad" } | null;
+  mark?: "unread" | "working" | null;
+  time: string;
+  onPress: () => void;
+  testID?: string;
+}) {
+  const noteCls = props.note ? NOTE_TONE[props.noteTone ?? "muted"] : NOTE_TONE.muted;
+  return (
+    <Button
+      onPress={props.onPress}
+      testID={props.testID}
+      accessibilityLabel={[props.title, props.badge?.label, props.note].filter(Boolean).join("，")}
+      class="min-h-[68px] flex-row items-center gap-3.5 px-4 py-3 transition-colors duration-100 active:bg-secondary"
+    >
+      <MonogramBadge label={props.avatar} size="md" />
+      <View class="min-w-0 flex-1 gap-1">
+        <Text class="text-[16.5px] font-semibold tracking-[-0.01em] text-card-foreground" style={{ numberOfLines: 1 }}>
+          {props.title}
+        </Text>
+        <View class="flex-row items-center gap-1.5">
+          <ProgIcon t={props.term} size={13} tone="muted" />
+          <Text class={`flex-1 text-[14px] ${noteCls}`} style={{ numberOfLines: 1 }}>
+            {props.note || props.where}
+          </Text>
+        </View>
+      </View>
+      <View class="flex-row items-center gap-2.5">
+        {props.badge ? <StateBadge label={props.badge.label} tone={props.badge.tone} /> : null}
+        {props.mark === "unread" ? <View class="h-2 w-2 rounded-full bg-accent" accessibilityLabel="完成" /> : null}
+        {props.mark === "working" ? <Spinner /> : null}
+        {props.time ? (
+          <Text class="min-w-[30px] text-right text-[13.5px] text-muted-foreground" style={{ fontVariant: ["tabular-nums"] }}>
+            {props.time}
+          </Text>
+        ) : null}
+      </View>
+    </Button>
+  );
+}
+
+/** A small turning ring: something is working. Rests with reduced motion. */
+export function Spinner() {
+  return (
+    <View
+      class="h-3.5 w-3.5 motion-safe:animate-spin"
+      accessibilityLabel="工作中"
+    >
+      <Image src={spinnerIcon} class="tint-accent" style={{ width: 14, height: 14 }} />
+    </View>
+  );
+}
+
+/** One tab of the floating dock: icon over label, the chosen one on a lifted pill. */
+export function DockTab(props: {
+  icon: any;
+  activeIcon?: any;
+  label: string;
+  active: boolean;
+  onPress: () => void;
+  testID?: string;
+}) {
+  return (
+    <Button
+      onPress={props.onPress}
+      testID={props.testID}
+      accessibilityLabel={props.label}
+      selected={props.active}
+      class="h-[52px] flex-1 items-center justify-center gap-0.5 rounded-full transition-all duration-150 active:scale-95 selected:bg-glass-active"
+    >
+      <Icon
+        src={props.active && props.activeIcon ? props.activeIcon : props.icon}
+        size={21}
+        class={props.active ? "tint-accent" : "tint-foreground"}
+      />
+      <Text class={`text-[11px] font-medium ${props.active ? "text-accent" : "text-foreground"}`}>{props.label}</Text>
+    </Button>
+  );
+}
+
+/** A sheet's header (grabber + title row) and the room under its last row, in points. */
+const SHEET_CHROME = 86;
+
+/**
+ * One detent as tall as a list sheet's rows, at most 88% of the screen. A sheet whose panel is
+ * taller than the detent it rests at hides the panel's bottom below the screen, and its list cannot
+ * scroll there: with `[{ fraction: 0.52 }, "large"]` and 14 workspaces the last 5 could not be reached
+ * (2026-11-27, iOS 27 simulator). A single detent makes the panel exactly what shows, so the list
+ * scrolls only when its rows do not fit.
+ */
+export function fitDetent(rows: number, rowHeight: number, extra = 0): SheetDetent[] {
+  const want = SHEET_CHROME + extra + rows * rowHeight + safeArea().bottom;
+  const max = Math.round(windowSize().height * 0.88);
+  return [{ height: Math.max(220, Math.min(want, max)) }];
 }
 
 export function BottomSheet(props: {

@@ -665,6 +665,37 @@ npm run ios:dev                        # Mac 上的 iPhone 尺寸窗口（Cataly
 
 拼写还原：识别后，把结果里和热词只差大小写、或者只差空格/点/横线的地方，改回热词原样（只改整词，`testing` 不会被改）。只对 `SPELL` 表和你自己的词生效；`Node`、`push` 这类普通词只当提示、不强改。你的词写在 `~/.config/wayne-herdr-mods/voice-words.txt`，一行一个，`#` 开头是注释；终端所在文件夹名自动加入。
 
+## 原生 App 首页（收件箱）（2026-11-27）
+
+照 [herdr.dev/mobile](https://herdr.dev/mobile/) 的 Inbox 改（用户给的参考，2026-11-27）。文件：`ios/src/screens/HomeShell.tsx`，控件在 `ios/src/ui/controls.tsx`（`SectionHeader`、`ListCard`、`CardDivider`、`SessionRow`、`StateBadge`、`Spinner`、`DockTab`、`fitDetent`）。
+
+- **顶部**：大标题「会话」（32pt 粗体），下面一行是电脑名和连接（`ByronWayne的MacBook Pro · 局域网直连`，点开「已配对电脑」切换或配对）；右边圆形玻璃键「新建终端」。搜索框常驻在列表顶上（「跳到某个终端…」，搜标题、工作区、消息、程序、地址），不用先点放大镜。工作区不止一个时才显示工作区筛选胶囊。原来的「全部电脑」胶囊去掉了：电脑切换放在状态行。
+- **按要你做什么分组**，顺序固定：需要你（`blocked`、`error`）→ 完成（`done`）→ 工作中（`working`）→ 空闲；组内按状态变化时间新到旧；空组不显示。每组一张圆角卡片（`rounded-[22px] bg-card`），卡内分隔线从文字起点开始。组名后面是数量（只有 1 个时不写）。
+- **一行**：40pt 工作区色块 · 标题（工作区 · 目录）+ 第二行（程序图标 + agent 说的话；没有就写程序名）· 右边状态和时间。需要你的那行有文字徽章（`等你确认` / `在问你` / `要登录`，别的 `blocked` 写「需要你」，`error` 写「出错」），不只靠颜色；完成是蓝点；工作中是转圈（减弱动态效果时不转）。右边不再显示终端地址（`t1j6` 之类对人没用）。
+- **底栏**：居中的玻璃胶囊，两个带字的标签「会话」「设置」；新建终端挪到顶部，底栏右边不再放圆钮。设置页标题同样是 32pt 大标题。
+
+**列表弹窗的高度（修 bug）。** 以前「新建终端」「选择工作区」「已配对电脑」用 `detents={[{ fraction: 0.52 }, "large"]}`：nsh 的弹窗面板一直和最大的档位一样高，停在小档位时只是往下放，面板下半截在屏幕外；列表以为自己放得下，不能滑。14 个工作区时最后 5 个够不到，往上拖也拖不出来（2026-11-27 iOS 27 模拟器复现：停在 agent-forge）。现在这三个用 `fitDetent(行数, 行高)`：一个档位，高度 = 标题区 + 行数 × 行高 + 底部安全区，最多屏幕的 88%。面板就是看得到的那么高，放不下时列表自己滑。新加列表弹窗也用它，不要再给列表弹窗配「半屏 + 全屏」两档。文件弹窗本来就是一档 `large`，能滑到底（同一次验证：`~` 下 135 项滑到最后一项）。
+
+动态效果：
+
+| 变化 | 做法 | 减弱动态效果 |
+|---|---|---|
+| 按下一行 | 背景加深到 `secondary`，100 ms，不缩放 | 同样（只是颜色） |
+| 按下圆钮、底栏标签 | 缩到 0.95，150 ms | 系统处理 |
+| 切换底栏标签 | 选中底色淡入淡出（`selected:bg-glass-active`，150 ms）；内容直接换 | 同样 |
+| 工作中 | 转圈（`motion-safe:animate-spin`） | 停住 |
+| 行在组之间移动（状态变了） | 不动画：状态一秒可能变好几次，动起来反而乱 | — |
+| 弹窗开关 | nsh `Sheet` 自己的滑入滑出 | nsh 处理 |
+| 首页 ↔ 终端页 | UIKit 原生导航 | 系统处理 |
+
+测法（要先 `npm run relay:dev`、`node dev/fake-desktop.mjs`，再跑 `node dev/many-spaces.mjs <fake-desktop 的数据目录>`：加 12 个工作区，并把一条新配对链接写进 `ios/probe/link.json`；链接配过一次就失效，每次测试前重跑）：
+```sh
+cd ios && nsh test probe/home.test.tsx                       # 无界面：分组顺序、徽章、搜索、不显示地址（旧代码上失败）
+cd ios && nsh test probe/sheets-scroll.test.tsx --target ios  # 模拟器：三个列表弹窗滑到最后一行 + 深浅色截图，/tmp/shots/
+cd ios && nsh test probe/files-scroll.test.tsx --target ios   # 模拟器：文件弹窗滑到最后一项
+```
+模拟器里点配对页的箭头键没反应（键盘挡着），测试里用 `submit("id:pair-link")`。`ios/App.test.tsx` 在这次改动前就已经过不了（还在找旧首页的文字），没有修。
+
 ## 内置浏览器：nsh 探针（2026-11-06）
 
 问题：能不能像 dsh 的 `browser-use-plugin`（0.1.1）那样，做一个人和 agent 共用的浏览器？dsh 的做法：Electron 界面里放一个 `<webview>`，agent 的 `browser_*` 工具经长轮询交给拥有它的渲染进程执行，人在侧栏看到每一步。
