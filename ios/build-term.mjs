@@ -16,7 +16,9 @@ const html = `<!doctype html><html><head><meta charset="utf-8">
 <style>${css}
 html,body{margin:0;height:100%;overflow:hidden;-webkit-text-size-adjust:100%;-webkit-touch-callout:none}
 #vp{position:absolute;inset:0;overflow:auto;-webkit-overflow-scrolling:touch;padding:4px 6px;box-sizing:border-box;-webkit-touch-callout:none}
-#host{width:max-content}
+#host{width:max-content;-webkit-user-select:none;user-select:none}
+/* The terminal has its own selection (xterm) and a system menu via SelectionMenu; the WebView's
+   built-in DOM selection would otherwise show a second highlight and its own Copy/Translate menu. */
 #sel-ui{position:fixed;inset:0;pointer-events:none;z-index:20;display:none}
 .sel-h{position:absolute;width:36px;height:44px;pointer-events:auto;touch-action:none;transform:translate(-50%,0)}
 .sel-h i{position:absolute;left:50%;width:2px;margin-left:-1px;background:#0a84ff;border-radius:1px}
