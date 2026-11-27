@@ -811,7 +811,6 @@ export function TermScreen(props: {
                 </View>
               </Popover>
 
-              <View class="mx-0.5 h-[18px] w-px bg-term-glass-border" />
 
               <Scroll
                 horizontal
@@ -857,7 +856,6 @@ export function TermScreen(props: {
                 ))}
               </Scroll>
 
-              <View class="mx-0.5 h-[18px] w-px bg-term-glass-border" />
 
               <Button
                 onPress={startVoice}
