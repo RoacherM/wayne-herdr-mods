@@ -115,6 +115,10 @@ export function TermScreen(props: {
     if (pageReady && web) web.postMessage(m);
     else toPage.push(m);
   };
+  // The system selection menu (Swift SelectionMenu) acts on the page's selection.
+  const offSelAction = host.available()
+    ? host.on("selection.action", (d: any) => post({ t: "selAction", action: d?.action }))
+    : null;
   function clearPing() {
     clearTimeout(pingTimer);
     pingTimer = 0;
@@ -292,6 +296,7 @@ export function TermScreen(props: {
   }
 
   cleanup(() => {
+    offSelAction?.();
     disposed = true;
     voiceGen++;
     clientLog("info", "term.cleanup", { address, s: sid() });
@@ -337,6 +342,8 @@ export function TermScreen(props: {
       appCursor.set(Boolean(m.appCursor));
     } else if (m.t === "atLatest") {
       atLatest.set(Boolean(m.on));
+    } else if (m.t === "selMenu") {
+      if (host.available()) host.call("selection.menu", m).catch(() => {});
     } else if (m.t === "more") {
       session.send({ type: "more", have: m.have });
     } else if (m.t === "wheel" && sid() !== null) {

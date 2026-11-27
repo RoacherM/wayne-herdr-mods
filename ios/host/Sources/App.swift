@@ -155,6 +155,7 @@ final class ShellController: UIViewController, QLPreviewControllerDataSource {
   private let audioURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("herdr-voice.m4a")
   private let previewDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("herdr-previews", isDirectory: true)
   private var currentPreviewURL: URL?
+  private let selectionMenu = SelectionMenu()
 
   private func safePreviewURL(_ rawName: String) -> URL {
     let base = URL(fileURLWithPath: rawName).lastPathComponent
@@ -206,7 +207,27 @@ final class ShellController: UIViewController, QLPreviewControllerDataSource {
     }
   }
 
+  /// The page's selection rect (CSS points, the WebView fills `app`) → the system menu.
+  private func handleSelectionMenu(_ args: Any?) {
+    let dict = args as? [String: Any] ?? [:]
+    guard dict["show"] as? Bool == true else { selectionMenu.hide(); return }
+    let r = dict["rect"] as? [String: Any] ?? [:]
+    func num(_ key: String, _ fallback: Double) -> Double { (r[key] as? NSNumber)?.doubleValue ?? fallback }
+    let rect = CGRect(x: num("x", 0), y: num("y", 0), width: max(1, num("w", 1)), height: max(1, num("h", 1)))
+    selectionMenu.show(in: app, rect: rect, url: dict["url"] as? Bool ?? false)
+  }
+
   private func registerHostHandlers() {
+    selectionMenu.onAction = { [weak self] action in
+      DispatchQueue.main.async {
+        self?.app.send("selection.action", ["action": action])
+      }
+    }
+    app.handle("selection.menu") { [weak self] args, reply in
+      self?.handleSelectionMenu(args)
+      reply.resolve(nil)
+    }
+
     app.handle("haptic") { _, reply in
       UIImpactFeedbackGenerator(style: .light).impactOccurred()
       reply.resolve(nil)

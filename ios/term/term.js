@@ -229,9 +229,6 @@ function layout() {
 const selUi = document.getElementById('sel-ui');
 const selStartEl = document.getElementById('sel-s');
 const selEndEl = document.getElementById('sel-e');
-const selBarEl = document.getElementById('sel-bar');
-const selCopyBtn = document.getElementById('sel-copy');
-const selOpenBtn = document.getElementById('sel-open');
 
 let sel = null; // { start: { row, col }, end: { row, col }, url }
 let lpAnchor = null;
@@ -256,6 +253,7 @@ function clearSel() {
   sel = null;
   xterm.clearSelection();
   if (selUi) selUi.style.display = 'none';
+  post({ t: 'selMenu', show: false });
 }
 
 function placeHandle(el, x, y, cellH, edge) {
@@ -290,16 +288,13 @@ function renderSel() {
   placeHandle(selStartEl, sx, sy, cell.height, 'start');
   placeHandle(selEndEl, ex, ey, cell.height, 'end');
 
+  // The menu is the system's (Swift SelectionMenu): the page only says where the selection is.
   const url = sel.url || safeHttpUrl(xterm.getSelection());
-  if (selOpenBtn) selOpenBtn.hidden = !url;
-  const midX = sel.start.row === sel.end.row ? (sx + ex) / 2 : Math.min(window.innerWidth - 20, Math.max(20, (sx + ex) / 2));
-  const barW = url ? 128 : 68;
-  const clampedX = Math.max(barW / 2 + 8, Math.min(window.innerWidth - barW / 2 - 8, midX));
-  const aboveY = sy - 50;
-  const belowY = ey + cell.height + 24;
-  const barY = aboveY >= 8 ? aboveY : Math.min(window.innerHeight - 44, Math.max(8, belowY));
-  selBarEl.style.left = `${clampedX}px`;
-  selBarEl.style.top = `${barY}px`;
+  const menuRect = {
+    x: Math.min(sx, ex), y: Math.min(sy, ey),
+    w: Math.max(cell.width, Math.abs(ex - sx)), h: Math.abs(ey - sy) + cell.height,
+  };
+  post({ t: 'selMenu', show: true, rect: menuRect, url: Boolean(url) });
 }
 
 function applySel(start, end, url = null) {
@@ -350,21 +345,23 @@ function bindHandle(el, edge) {
 bindHandle(selStartEl, 'start');
 bindHandle(selEndEl, 'end');
 
-const stopBarTouch = (e) => e.stopPropagation();
-selBarEl?.addEventListener('touchstart', stopBarTouch, { passive: true });
-selBarEl?.addEventListener('touchend', stopBarTouch, { passive: true });
-selCopyBtn?.addEventListener('click', (e) => {
-  e.stopPropagation();
-  const text = xterm.getSelection();
-  clearSel();
-  if (text) post({ t: 'copy', text });
-});
-selOpenBtn?.addEventListener('click', (e) => {
-  e.stopPropagation();
-  const url = sel?.url || safeHttpUrl(xterm.getSelection());
-  clearSel();
-  if (url) post({ t: 'openUrl', url });
-});
+/** The system menu's action (Swift → nsh → page): copy, select all, open the link. */
+function selAction(action) {
+  if (action === 'copy') {
+    const text = xterm.getSelection();
+    clearSel();
+    if (text) post({ t: 'copy', text });
+  } else if (action === 'open') {
+    const url = sel?.url || safeHttpUrl(xterm.getSelection());
+    clearSel();
+    if (url) post({ t: 'openUrl', url });
+  } else if (action === 'all') {
+    const b = xterm.buffer.active;
+    xterm.selectAll();
+    sel = { start: { row: 0, col: 0 }, end: { row: Math.max(0, b.length - 1), col: cols - 1 }, url: null };
+    renderSel();
+  }
+}
 
 viewport.addEventListener('scroll', () => {
   if (sel) renderSel();
@@ -652,6 +649,8 @@ window.addEventListener('message', (e) => {
   } else if (m.t === 'typing' || m.t === 'toLatest') {
     clearSel();
     toLatest();
+  } else if (m.t === 'selAction') {
+    selAction(m.action);
   } else if (m.t === 'ping') {
     post({ t: 'pong', id: m.id });
   }

@@ -469,6 +469,7 @@ Claude Code 自己怎么回应（`probe/wheel-batch.mjs`：复制一个旧会话
 **点击链接与长按选中文本（2026-11-24，`app/src/term-select.js`、`ios/term/term.js`、`ios/host/Sources/App.swift`）。**
 - 单击终端内的 OSC 8 超链接或普通/跨行折行的 `http://` / `https://` 链接：短高亮反馈后通过 Swift 宿主 `url.open`（`UIApplication.shared.open`）直接打开，不弹出键盘；JS 与 Swift 双端白名单仅允许 `http` / `https`，拒绝 `javascript:` / `file:` 等协议。
 - 长按（380 ms，震动反馈）任意非空文字或链接：按 xterm 缓冲区坐标选中该词或整条链接（长按后直接拖动可继续扩选），显示起止蓝点拖动手柄（拖近上下边缘自动滚动）与「复制」（选中链接时并列「打开」）操作条；选中期间暂停自动跟随滚底，点外部取消选中且不弹键盘，点「复制」写入系统剪贴板并在顶栏副标题闪示「已复制」。纯逻辑单测：`test/term-select.test.mjs`。
+- **操作菜单改用 iOS 系统样式（2026-11-27）**：终端是画出来的字符格子，不是 UITextView，选区高亮和拖动手柄仍由页面画；但弹出的菜单用 `UIEditMenuInteraction`（`ios/host/Sources/SelectionMenu.swift`）：复制 / 全选 /（有链接时）打开链接。链路：页面 `renderSel()` 只发 `{t:'selMenu', show, rect, url}`（rect 是选区在 WebView 里的 CSS 点坐标，WebView 铺满 NshAppView）→ `TermScreen` `host.call("selection.menu")` → Swift 展示系统菜单；用户点选后 Swift `app.send("selection.action")` → `host.on` → 页面 `selAction`（复制走原有 `copy` 写剪贴板，全选 `xterm.selectAll()`，打开链接走 `url.open`）。页面不再自绘「复制」按钮。
 
 首屏可能比 `term.open` 的回复先到。页面在拿到流编号前先把输出存起来，拿到后再放（「终端会话状态机」的 `early`）。
 
