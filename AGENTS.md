@@ -64,7 +64,8 @@ BUNDLE_ID=com.byronwayne.herdr ios/host/install.sh <UDID>  # 原生 App 无线�
 
 ## 6. 教训
 
-- **更新手机版本：不插线，直接无线装到已配对的 iPhone，标识用手机上已装的那个**：先 `xcrun devicectl list devices` 找 `available (paired)` 的真机 UDID，再 `xcrun devicectl device info apps --device <UDID> | rg -i herdr` 查已装 App 的 bundle ID（这台 Mac 是 `com.byronwayne.herdr`），然后 `BUNDLE_ID=<它> ios/host/install.sh <UDID>`，装完看 `wayne-herdr-mods devices` 里手机回到「在线」。不要让用户插线，也不要用脚本默认的 `com.roacherm.herdr`（它属于别的开发者团队，这台 Mac 签名报 `Failed Registering Bundle Identifier`）。覆盖同一个 bundle ID 才能保住手机里的配对。原因：2026-11-27 用这条路一次装好，用户确认这是要的做法（agy 之前做不到）。
+- **更新手机版本：不插线，直接无线装到已配对的 iPhone，标识用手机上已装的那个**：这台手机 UDID 固定是 **`00008160-000951C13E80000A`**（Byron Wayne’s iPhone，CoreDevice id `6828A90A-106B-57A1-86BF-69DD5B4F15CD`），直接用，不要每次重新找。先 `xcrun devicectl device info apps --device 00008160-000951C13E80000A | rg -i herdr` 查已装 App 的 bundle ID（这台 Mac 是 `com.byronwayne.herdr`），然后 `BUNDLE_ID=com.byronwayne.herdr ios/host/install.sh 00008160-000951C13E80000A`，装完看 `wayne-herdr-mods devices` 里手机回到「在线」。不要用脚本默认的 `com.roacherm.herdr`（属于别的开发者团队，签名报 `Failed Registering Bundle Identifier`）；覆盖同一个 bundle ID 才能保住手机里的配对。
+  **`devicectl` 显示 `unavailable` 时按这个顺序来，不要一上来就叫用户插线**：① 手机解锁、和 Mac 同一个 Wi-Fi；② 打开 Xcode 自带的 DeviceHub（`open -a "/Applications/Xcode.app/Contents/Applications/DeviceHub.app"`）唤起连接；③ `xcrun devicectl manage pair --device 00008160-000951C13E80000A` 重新配对（DeviceHub 会显示 Waiting to pair，手机上允许）；④ 还不行才说明无线配对记录已失效，需要插一次 USB 重建（2026-11-27 就是走到这一步才恢复，插一次后无线立即可用）。原因：2026-11-27 用户两次纠正「不要插线」「直接用 UDID 就行」，之前反复让用户插线是错的。
 
 - **Herdr.app 里新加的界面，原型要画出它在窗口里的位置和它显示谁的数据**：默认做成侧栏、只看当前窗格里的 agent，不开全屏标签、不铺所有 agent。用户说「全局」「全部」这类范围词时，先对照他前面给的单位（如 session based）再定范围。原因：2026-11-12 观测面板的原型只确认了画法，装上后「全屏」和「显示所有 agent」都被否，布局重写。
 - **界面极简图标风格与零夹带**：只实现用户明确确认的节点与交互，不顺手加筛选/缩放/跳转按钮或未勾选的数据行；顶栏、节点类型和空状态优先靠图形、SVG 图标和纯数字自解释，不写教学式说明句、文字胶囊或兜底假摘要（「已 38m」「暂无…派发后自动显示…」「↗ 派发」「已完成」）。原因：2026-11-12 观测面板先后因擅加按钮/决策行和堆叠说明性文字被连续打回。
