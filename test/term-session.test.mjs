@@ -416,3 +416,23 @@ test('viewLost while opening discards stale opened reply and waits for fresh Web
   const { effects: openFx } = step(afterLink, { type: 'view' });
   assert.equal(of(openFx, 'rpc', 'term.open').length, 1);
 });
+
+// --- older history (DESIGN.md「往回翻历史」)
+test('more: a live stream asks the Mac for twice what the page has; otherwise nothing is sent or kept', () => {
+  const r = step(live(), { type: 'more', have: 150.7 });
+  assert.deepEqual(r.effects, [{ type: 'notify', m: 'term.more', p: { s: 7, have: 150 } }]);
+  for (const st of [initial('t1'), run([{ type: 'link', ready: true }, { type: 'view' }]).st, { ...live(), linkReady: false }, { ...live(), sized: false }]) {
+    const x = step(st, { type: 'more', have: 150 });
+    assert.deepEqual(x.effects, [], st.phase);
+    assert.deepEqual(x.state, st, 'not kept for later');
+  }
+});
+
+test('more: the open says how much history the first paint brings; fresh paints carry hist and older', () => {
+  const o = run([{ type: 'link', ready: true }, { type: 'fit', fit: F }, { type: 'view' }, opened(7, 1, { hist: 150 })]);
+  assert.equal(of(o.effects, 'view')[0].msg.hist, 150);
+  const out = (msg) => of(step(o.st, { type: 'stream', msg: { ev: 'out', s: 7, d: 'AA==', ...msg } }).effects, 'view')[0].msg;
+  assert.deepEqual(out({ fresh: true, hist: 600, older: true }), { t: 'out', d: 'AA==', fresh: true, w: undefined, hist: 600, older: true });
+  assert.deepEqual(out({ fresh: true, hist: 150 }), { t: 'out', d: 'AA==', fresh: true, w: undefined, hist: 150, older: false });
+  assert.deepEqual(out({}), { t: 'out', d: 'AA==', fresh: false, w: undefined }, 'ordinary output carries no paint fields');
+});

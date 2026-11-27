@@ -5,7 +5,8 @@
  * Phone → host, after the handshake:
  *   {id, m, p}   a call, answered by {id, ok, r | e}
  *   {m, p}       a notification, no answer (term.input, term.ack: these are hot paths; term.coast:
- *                the coast after a flick, see shared/coast.js)
+ *                the coast after a flick, see shared/coast.js; term.more {s, have}: older history,
+ *                DESIGN.md「往回翻历史」)
  * Host → phone:
  *   {ev, ...}    terminals (list changed), out (terminal bytes), closed (stream over), size (the
  *                terminal's new grid, in order with out: the repaint at that size follows)
@@ -27,6 +28,11 @@ import { MAX_BYTES as MAX_VOICE_BYTES } from './voice.js';
 
 const MAX_STREAMS = 4; // per phone
 const HISTORY_LINES = 150; // scrollback sent with the first paint (keeps relay opens snappy)
+// Older history on request (term.more, DESIGN.md「往回翻历史」): each ask doubles what the phone has,
+// at least this much (a direct link takes 2000 rows, about 130 KB, at once; the relay ~7 KB/s at
+// worst gets a smaller first step), at most HISTORY_MAX (herdr-core kept ~2760 rows, 2026-11-27).
+const HISTORY_STEP = { direct: 2000, relay: 600 };
+const HISTORY_MAX = 5000;
 const OUT_MERGE_MS = 4; // terminal output merged this long into one message
 // A program printing its whole history again (reprint()): up to this, sent as it is; beyond, the
 // view attaches again for a fresh paint once the program has been quiet this long (at most MAX).
@@ -238,9 +244,9 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
     const t = terminals.get(address);
     if (!t || t.state !== 'live') throw new Error(`没有正在运行的终端 ${address}`);
     const id = nextStream++;
-    const stream = { id, address, core, device: peer.device?.id, channel: null, typer: null, fit, sized: false, cols: t.cols, rows: t.rows, resizedAt: fit && lead ? Date.now() : null, out: [], outW: null, outTimer: null, awaitingPaint: 'open', lastLargeLogAt: 0, stopped: false };
     // Scrolling, as the Mac sees it (scroll-watch.js), to the same records as the phone's.
     const via = /^(?:rtc|lan):/.test(String(peer.cid)) ? 'direct' : 'relay';
+    const stream = { id, address, core, via, device: peer.device?.id, channel: null, typer: null, fit, sized: false, cols: t.cols, rows: t.rows, hist: HISTORY_LINES, resizedAt: fit && lead ? Date.now() : null, out: [], outW: null, outTimer: null, awaitingPaint: 'open', lastLargeLogAt: 0, stopped: false };
     stream.record = (e) => metrics?.put(peer.device, { ctx: { src: 'mac' }, events: [{ t: Date.now(), via, ...e }] }).catch(() => {});
     stream.watch = scrollWatch({ record: stream.record });
     stream.flush = () => {
@@ -262,10 +268,14 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
         stream.awaitingPaint = '';
       }
       // w: the phone's wheel steps the program had when these bytes began (the phone's lag, DESIGN.md「滑动延迟」).
-      // fresh: a new view's first paint (reprint()); the phone drops its history before it.
-      event(peer, 'out', { s: id, d: bytes.toString('base64'), w: stream.outW, ...(fresh ? { fresh: true } : {}) });
+      // fresh: a new view's first paint (reprint(), more()); the phone drops its history before it.
+      // hist: the history rows that paint brings; older: it is the same screen with more history
+      // (more()), so the phone keeps the reader where they were.
+      const extra = fresh ? { fresh: true, hist: stream.hist, ...(stream.older ? { older: true } : {}) } : {};
+      event(peer, 'out', { s: id, d: bytes.toString('base64'), w: stream.outW, ...extra });
       stream.outW = null;
       stream.fresh = false;
+      stream.older = false;
       stream.watch.sent(bytes.length);
     };
     stream.stop = (reason = 'closed') => {
@@ -310,7 +320,7 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
     if (!stream.sized) { stream.cols = now.cols; stream.rows = now.rows; }
     if (fit && !stream.sized) refit(peer, stream, null, true); // an older core cannot tell the view its size in step
     logStream(log, peer, 'stream.open', { s: id, addr: address, grid: `${now.cols}x${now.rows}`, fit: fitStr(fit), lead, sized: stream.sized });
-    return { s: id, cols: now.cols, rows: now.rows, sized: stream.sized };
+    return { s: id, cols: now.cols, rows: now.rows, sized: stream.sized, hist: HISTORY_LINES };
   }
 
   /** The view's channel: its bytes and grid to the phone. A channel the stream left (reprint()) is ignored. */
@@ -327,6 +337,7 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
       },
       onResize: (cols, rows) => {
         if (stream.channel !== channel) return;
+        if (stream.reattaching) return; // a new view is coming: its paint and its own RESIZE are in step
         if (cols === stream.cols && rows === stream.rows) {
           logStream(log, peer, 'stream.resize_noop', { s: id, addr: stream.address, grid: `${cols}x${rows}` });
           return;
@@ -420,25 +431,65 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
       if (r.held.length) { stream.outW ??= r.w; stream.out.push(...r.held); stream.flush(); }
       return;
     }
-    r.reattaching = true; // the old channel's bytes are still dropped meanwhile
+    // While the new view attaches, the old one's bytes are still dropped (reprint() keeps taking
+    // them): nothing of a dropped reprint reaches the phone, and its credit is given here.
+    const ok = await reattach(peer, stream, HISTORY_LINES, 'reprint');
+    if (!ok) return;
+    logStream(log, peer, 'stream.reprint.end', { s: stream.id, addr: stream.address, fresh: true, bytes: r.n, ms: Date.now() - r.t0, grid: `${stream.cols}x${stream.rows}` });
+    note(true);
+  }
+
+  /**
+   * The view attaches again with `history` rows: its paint is the screen as it is now plus that
+   * history, sent as one `fresh` frame (the phone drops what it had before it). The old view keeps
+   * sending until the new one is there; then it goes. Returns false when the stream is over.
+   */
+  async function reattach(peer, stream, history, why) {
+    stream.reattaching = true;
     const old = stream.channel;
     let reply = null;
     try {
-      reply = await stream.core.call('terminal.attach', { terminal: stream.address, cols: stream.cols, rows: stream.rows, history: HISTORY_LINES, observe: true, resize_notifications: true });
+      reply = await stream.core.call('terminal.attach', { terminal: stream.address, cols: stream.cols, rows: stream.rows, history, observe: true, resize_notifications: true });
     } catch {}
-    if (stream.stopped) { if (reply) stream.core.release(reply.channel); return; }
+    stream.reattaching = false;
+    if (stream.stopped) { if (reply) stream.core.release(reply.channel); return false; }
     stream.reprint = null;
     stream.resizedAt = null;
-    if (!reply) { stream.stop('closed'); return; } // the terminal is gone: the phone opens it again or says so
+    if (!reply) { stream.stop('closed'); return false; } // the terminal is gone: the phone opens it again or says so
+    // The old view's bytes stop here, before the new paint: a resize on it while we attached must
+    // not reach the phone ahead of the new view's paint (it was drawn at the old grid), and nothing
+    // of the old screen is flushed in front of the paint that replaces it.
     stream.channel = reply.channel;
+    clearTimeout(stream.outTimer);
+    stream.outTimer = null;
+    stream.out = [];
+    stream.outW = null;
     stream.sized = reply.resize_notifications === true;
     stream.tail = null;
     stream.fresh = true;
-    stream.awaitingPaint = 'reprint';
+    stream.hist = history;
+    stream.older = why === 'more';
+    stream.awaitingPaint = why;
     stream.core.release(old);
     listen(peer, stream, reply.channel);
-    logStream(log, peer, 'stream.reprint.end', { s: stream.id, addr: stream.address, fresh: true, bytes: r.n, ms: Date.now() - r.t0, grid: `${stream.cols}x${stream.rows}` });
-    note(true);
+    return true;
+  }
+
+  /**
+   * Older history (term.more, DESIGN.md「往回翻历史」): herdr-core gives the last N rows only, so the
+   * view attaches again with twice what the phone `have`s (at least HISTORY_STEP for this link, at
+   * most HISTORY_MAX). The screen and the rows the phone already has come again; the phone keeps
+   * its place. Ignored while a reprint or another re-attach is under way: the phone asks again.
+   */
+  async function more(peer, stream, have) {
+    if (!stream.sized || stream.reprint || stream.reattaching || stream.channel === null) return; // the page asks again
+    const had = Math.max(0, Math.trunc(Number(have) || 0));
+    const want = Math.min(HISTORY_MAX, Math.max(HISTORY_STEP[stream.via] ?? HISTORY_STEP.relay, 2 * had));
+    if (want <= had) return; // it has as much as we give
+    const t0 = Date.now();
+    if (await reattach(peer, stream, want, 'more')) {
+      logStream(log, peer, 'stream.more', { s: stream.id, addr: stream.address, have: had, want, ms: Date.now() - t0 });
+    }
   }
 
   function streamOf(peer, s) {
@@ -654,6 +705,7 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
       else if (m === 'term.press') { const stream = streamOf(peer, p.s); stopCoast(stream); press(stream, p.keys); }
       else if (m === 'term.coast') coast(streamOf(peer, p.s), p);
       else if (m === 'term.fit') refit(peer, streamOf(peer, p.s), p.fit);
+      else if (m === 'term.more') more(peer, streamOf(peer, p.s), p.have).catch(() => {});
       else if (m === 'term.ack') {
         const stream = streamOf(peer, p.s);
         const n = Math.max(0, Math.min(Number(p.n) || 0, 16 << 20));

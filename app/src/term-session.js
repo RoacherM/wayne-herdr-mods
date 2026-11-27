@@ -19,13 +19,14 @@
  *   {type:'openFailed', message, epoch}
  *   {type:'stream', msg}            an `out` / `size` / `closed` event for this terminal
  *   {type:'input', m, p, after?}    term.input / term.press: sent now, or held until the stream is back
+ *   {type:'more', have}             the reader nears the top: older history (DESIGN.md「往回翻历史」)
  *   {type:'retry'}                  the 800 ms after a closed stream are over
  *   {type:'dispose'}
  *
  * Effects (carried out in order):
  *   {type:'rpc', m:'term.open', p, epoch}   answer with 'opened' / 'openFailed' carrying `epoch`
  *   {type:'rpc', m:'term.close', p}         fire and forget
- *   {type:'notify', m, p, after?}           term.fit / term.input / term.press (after: pause, ms)
+ *   {type:'notify', m, p, after?}           term.fit / term.input / term.press / term.more (after: pause, ms)
  *   {type:'view', msg}                      draw: {t:'open'|'out'|'size', …} (the iOS page's messages)
  *   {type:'notice', text}                   the line under the terminal ('' clears it)
  *   {type:'retry', ms}                      send {type:'retry'} after `ms`
@@ -103,7 +104,11 @@ function dropQueue(st, fx, text) {
 }
 
 const STREAM = {
-  out(st, msg, fx) { fx.push({ type: 'view', msg: { t: 'out', d: msg.d, fresh: Boolean(msg.fresh), w: msg.w } }); return st; },
+  out(st, msg, fx) {
+    const paint = msg.fresh ? { hist: msg.hist, older: Boolean(msg.older) } : {};
+    fx.push({ type: 'view', msg: { t: 'out', d: msg.d, fresh: Boolean(msg.fresh), w: msg.w, ...paint } });
+    return st;
+  },
   size(st, msg, fx) {
     fx.push({ type: 'view', msg: { t: 'size', cols: msg.cols, rows: msg.rows } });
     return { ...st, leads: leadsAfterSize(st.leads, st.fitSent, msg) };
@@ -138,7 +143,9 @@ function onOpened(st, ev, fx) {
   const { r } = ev;
   const sized = r.sized === true;
   let next = { ...st, phase: 'live', s: r.s, sized, fitSent: JSON.stringify(st.openFit), early: [] };
-  fx.push({ type: 'view', msg: { t: 'open', sized, reopened: st.opened, cols: r.cols, rows: r.rows } }, { type: 'notice', text: '' });
+  // hist: the history rows the first paint brings (a Mac that sends more on request says so).
+  const hist = r.hist ? { hist: r.hist } : {};
+  fx.push({ type: 'view', msg: { t: 'open', sized, reopened: st.opened, cols: r.cols, rows: r.rows, ...hist } }, { type: 'notice', text: '' });
   next.opened = true;
   for (const msg of st.early) next = onStream(next, msg, fx);
   if (next.phase !== 'live') return next;
@@ -226,6 +233,13 @@ const STEP = {
   stream: (st, ev, fx) => onStream(st, ev.msg, fx),
   input: onInput,
   retry: (st, ev, fx) => (st.phase === 'retrying' ? tryOpen({ ...st, phase: 'waiting' }, fx) : st),
+  // Only on a live stream that reports sizes (its paints are fresh frames); otherwise there is
+  // nothing to ask, and nothing is kept for later: the page asks again as the reader scrolls.
+  more(st, ev, fx) {
+    if (st.phase !== 'live' || !st.linkReady || !st.sized) return st;
+    fx.push({ type: 'notify', m: 'term.more', p: { s: st.s, have: Math.max(0, Math.trunc(Number(ev.have) || 0)) } });
+    return st;
+  },
   dispose(st, ev, fx) {
     if (st.phase === 'disposed') return st;
     if (st.s !== null && st.linkReady) fx.push({ type: 'rpc', m: 'term.close', p: { s: st.s } });

@@ -197,10 +197,13 @@ export function TermScreen(props: {
       } else if (e.type === "notify" && e.m === "term.fit") {
         clientLog("info", "term.fit_tx", { address, s: e.p?.s, fit: e.p?.fit ?? null });
         notify(e.m, e.p);
+      } else if (e.type === "notify" && e.m === "term.more") {
+        clientLog("info", "term.more_tx", { address, s: e.p?.s, have: e.p?.have });
+        notify(e.m, e.p);
       } else if (e.type === "notify") {
         typed(e);
       } else if (e.type === "view") {
-        post(e.msg.t === "out" ? { t: "out", d: e.msg.d, fresh: e.msg.fresh } : e.msg);
+        post(e.msg.t === "out" ? { t: "out", d: e.msg.d, fresh: e.msg.fresh, hist: e.msg.hist, older: e.msg.older } : e.msg);
         if (e.msg.t === "open" && e.msg.reopened) probeWebView("reopen");
       } else if (e.type === "notice") {
         notice.set(e.text);
@@ -334,6 +337,8 @@ export function TermScreen(props: {
       appCursor.set(Boolean(m.appCursor));
     } else if (m.t === "atLatest") {
       atLatest.set(Boolean(m.on));
+    } else if (m.t === "more") {
+      session.send({ type: "more", have: m.have });
     } else if (m.t === "wheel" && sid() !== null) {
       notify("term.input", { s: sid(), d: m.d });
     } else if (m.t === "coast" && sid() !== null) {

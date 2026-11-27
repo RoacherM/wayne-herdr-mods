@@ -3,8 +3,8 @@
  * repaints (paint.js), VS15 text-style symbols (text-style.js), and finger scrolling (touch-scroll.js).
  * The connection and all controls live in the native app (QuickJS).
  *
- *   app → page  {t:'open', sized, reopened, cols, rows}  {t:'size', cols, rows}
- *               {t:'out', d:<base64>, fresh?}            {t:'reset'}
+ *   app → page  {t:'open', sized, reopened, cols, rows, hist?}  {t:'size', cols, rows}
+ *               {t:'out', d:<base64>, fresh?, hist?, older?}  {t:'reset'}
  *               {t:'typing'}                             {t:'toLatest'}
  *               {t:'ping', id}
  *   page → app  {t:'ready', fit}   {t:'fit', fit}        {t:'ack', n}
@@ -12,6 +12,7 @@
  *               {t:'wheel', d}     {t:'coast', stop?, d?, v?, cell?}
  *               {t:'tap'}          {t:'openUrl', url}    {t:'copy', text}
  *               {t:'haptic'}       {t:'pong', id}        {t:'log', m}
+ *               {t:'more', have}   (older history, DESIGN.md「往回翻历史」)
  *               {t:'diag', ev, ...}
  */
 import { Terminal } from '@xterm/xterm';
@@ -21,6 +22,7 @@ import { atomic, indexOf, SYNC_OFF, SYNC_ON } from '../../app/src/paint.js';
 import { linkAt, rangeLength, safeHttpUrl, selectionFromCells, wordRangeAt } from '../../app/src/term-select.js';
 import { textStyle } from '../../app/src/text-style.js';
 import { coastSteps } from '../../shared/coast.js';
+import { initial as historyInitial, MORE_MAX, step as historyStep, topLabel } from '../../app/src/history-more.js';
 
 const post = (v) => window.nsh?.postMessage(JSON.stringify(v));
 const diag = (ev, detail = {}) => post({ t: 'diag', ev, ...detail });
@@ -42,7 +44,8 @@ const MOUSE_REPORT = /^(\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[M[\s\S]{3})+$/;
 
 let cols = 80, rows = 24, sized = false, clearHistory = false;
 const xterm = new Terminal({
-  cols, rows, scrollback: 3000, fontSize: FONT, lineHeight: 1.0, theme,
+  // Room for the most history the Mac sends (MORE_MAX rows) and the screen.
+  cols, rows, scrollback: MORE_MAX + 200, fontSize: FONT, lineHeight: 1.0, theme,
   fontFamily: 'ui-monospace, Menlo, "SF Mono", monospace', cursorBlink: false, macOptionIsMeta: true,
   allowProposedApi: true,
 });
@@ -370,8 +373,9 @@ viewport.addEventListener('scroll', () => {
   if (Math.abs(viewport.scrollLeft - setLeft) > 1) follow.x = false;
   const y = atLatest(cell);
   if (y !== follow.y) { follow.y = y; showLatest(); }
+  histLabel();
 }, { passive: true });
-xterm.onScroll(() => { showLatest(); if (sel) renderSel(); });
+xterm.onScroll(() => { showLatest(); if (sel) renderSel(); histNear(); });
 xterm.buffer.onBufferChange(() => {
   clearSel();
   if (xterm.buffer.active.type !== 'alternate') setBack(0);
@@ -467,11 +471,97 @@ function flush() {
   if (ackTimer) { clearTimeout(ackTimer); ackTimer = 0; }
   if (unacked) { post({ t: 'ack', n: unacked }); unacked = 0; }
 }
-function write(b64, fresh = false) {
-  const t0 = performance.now();
+// Older history (DESIGN.md「往回翻历史」): history-more.js decides, the page measures and draws.
+const histEl = document.getElementById('hist');
+const HIST_IDLE_MS = 1200, HIST_IDLE_MAX_MS = 4000, HIST_TIMEOUT_MS = 12000;
+// A paint larger than herdr-core's credit window (256 KB: ~5000 colored rows) comes in pieces, the
+// next only after the phone acks: a round trip apart. An older-history paint is COLLECTED and
+// written once, when no piece came for this long (each piece pushes it on, up to the cap): writing
+// a half paint would splice the sync bytes into a multibyte character, measure a partial history
+// (and call it the end), and move the reader's line. The old screen stays until then.
+const HIST_SETTLE_MS = 350, HIST_SETTLE_MAX_MS = 900;
+let hist = historyInitial();
+let histPromise = null;   // the history rows the next paint brings (open / a fresh frame), or null
+let histIdle = 0, histIdleSince = 0, histTimeout = 0;
+// An older-history paint being collected: { parts, promised, keep, timer, since }. keep: rows from
+// the reader's top line to the bottom of the history before it (null: at the bottom).
+let olderBuf = null;
+const normalBuffer = () => xterm.buffer.active.type === 'normal';
+const atTop = () => normalBuffer() && xterm.buffer.active.viewportY === 0 && viewport.scrollTop <= 1;
+function histLabel() {
+  const text = atTop() ? topLabel(hist) : '';
+  if (histEl.textContent !== text) histEl.textContent = text;
+  histEl.classList.toggle('on', Boolean(text));
+}
+function histRun(ev) {
+  const r = historyStep(hist, ev);
+  hist = r.state;
+  if (r.ask !== null) {
+    clearTimeout(histTimeout);
+    histTimeout = setTimeout(() => { histTimeout = 0; histRun({ type: 'timeout' }); }, HIST_TIMEOUT_MS);
+    diag('term.more', { have: r.ask, why: ev.type, baseY: xterm.buffer.active.baseY, vpY: xterm.buffer.active.viewportY });
+    post({ t: 'more', have: r.ask });
+  }
+  histLabel();
+}
+/** Within a screen of the top of the history: time for more. */
+function histNear() {
+  // While a paint is written, xterm fires onScroll for the clear itself: not the reader scrolling.
+  if (olderBuf) return;
+  if (normalBuffer() && xterm.buffer.active.viewportY <= xterm.rows) histRun({ type: 'near' });
+  else histLabel();
+}
+/** The background ask, once the first paint is quiet for a moment (output pushes it on, up to a cap). */
+function histArmIdle() {
+  if (hist.prefetched || hist.earliest) return;
+  const now = performance.now();
+  if (!histIdle) histIdleSince = now;
+  clearTimeout(histIdle);
+  const wait = Math.max(0, Math.min(HIST_IDLE_MS, histIdleSince + HIST_IDLE_MAX_MS - now));
+  histIdle = setTimeout(() => { histIdle = 0; if (normalBuffer()) histRun({ type: 'idle' }); }, wait);
+}
+/** Credit for bytes we have not drawn yet (a collected paint): herdr-core must not stop at its window. */
+function ackNow(n) {
+  unacked += n;
+  if (unacked >= 8 * 1024) flush();
+  else if (!ackTimer) ackTimer = setTimeout(flush, 30);
+}
+/** Every piece of the older-history paint is here: write it once, keep the reader's line. */
+function flushOlder() {
+  const buf = olderBuf;
+  olderBuf = null;
+  clearTimeout(buf.timer);
+  const all = new Uint8Array(buf.parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const part of buf.parts) { all.set(part, at); at += part.length; }
+  diag('term.more_paint', { promised: buf.promised, bytes: all.length, parts: buf.parts.length, ms: Math.round(performance.now() - buf.since) });
+  writeRaw(all, { fresh: true, older: true, promised: buf.promised, keep: buf.keep });
+}
+function collectOlder(bytes) {
+  clearTimeout(olderBuf.timer);
+  olderBuf.parts.push(bytes);
+  ackNow(bytes.length);
+  const wait = Math.max(0, Math.min(HIST_SETTLE_MS, olderBuf.since + HIST_SETTLE_MAX_MS - performance.now()));
+  olderBuf.timer = setTimeout(flushOlder, wait);
+}
+
+function write(b64, fresh = false, older = false) {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  if (older && fresh) {
+    if (olderBuf) { clearTimeout(olderBuf.timer); flushOlder(); } // a newer one replaces it
+    const b = xterm.buffer.active;
+    const keep = normalBuffer() && b.viewportY < b.baseY ? b.baseY - b.viewportY : null;
+    olderBuf = { parts: [], promised: histPromise, keep, timer: 0, since: performance.now() };
+    histPromise = null;
+  }
+  if (olderBuf) { collectOlder(bytes); return; }
+  writeRaw(bytes, { fresh, older, promised: histPromise, keep: null });
+}
+
+function writeRaw(bytes, { fresh = false, older = false, promised = null, keep = null } = {}) {
+  const t0 = performance.now();
   let last = bytes;
   let hasPaint = false;
   if (sized) {
@@ -483,10 +573,19 @@ function write(b64, fresh = false) {
       last = repaint;
     }
   }
+  if (hasPaint && histPromise !== null) { promised = histPromise; histPromise = null; }
   const info = inspectFrame(bytes, fresh, hasPaint);
   if (info.reason) expectFrame = '';
   finishSyncWatch(bytes.length, hasPaint, info.hasSyncOff, fresh);
+  if (!hasPaint && hist.promised && !hist.prefetched) histArmIdle(); // output after the first paint: not quiet yet
   xterm.write(textStyle(last), () => {
+    if (hasPaint && promised !== null) {
+      clearTimeout(histTimeout); histTimeout = 0;
+      if (keep !== null && normalBuffer()) xterm.scrollToLine(Math.max(0, xterm.buffer.active.baseY - keep));
+      histRun({ type: 'painted', promised, baseY: normalBuffer() ? xterm.buffer.active.baseY : 0, older });
+      histArmIdle();
+      histNear(); // still near the top (a fast reader): the next step goes now
+    }
     if (info.reason) {
       diag('term.frame', {
         reason: info.reason, bytes: bytes.length, fresh, hasPaint,
@@ -517,10 +616,18 @@ window.addEventListener('message', (e) => {
     diag('term.open_view', { sized, reopened: Boolean(m.reopened), cols: m.cols, rows: m.rows, prev: `${cols}x${rows}`, fit: fitNow() });
     if (!sized) { xterm.reset(); resizeTo(m.cols, m.rows); }
     else if (m.reopened) clearHistory = true;
+    // A Mac that sends history on request says how much the first paint brings (older ones: none).
+    if (olderBuf) { clearTimeout(olderBuf.timer); olderBuf = null; }
+    hist = historyInitial();
+    histPromise = sized && m.hist ? Number(m.hist) : null;
+    histLabel();
     reportFit();
   } else if (m.t === 'out') {
-    if (m.fresh) { clearSel(); clearHistory = true; }
-    write(m.d, Boolean(m.fresh));
+    if (m.fresh) {
+      clearSel(); clearHistory = true;
+      if (m.hist) histPromise = Number(m.hist);
+    }
+    write(m.d, Boolean(m.fresh), Boolean(m.fresh && m.older));
   } else if (m.t === 'size') {
     const from = `${cols}x${rows}`, to = `${m.cols}x${m.rows}`;
     if (m.cols === cols && m.rows === rows) {

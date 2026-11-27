@@ -94,11 +94,11 @@ test('pair, list, stream, type, send, keys — through the relay', { timeout: 12
   let phoneOut = '';
   let unacked = 0;
   let s;
-  let freshPaints = 0, phoneBytes = 0;
+  let freshPaints = 0, phoneBytes = 0, lastFresh = null;
   const pump = () => {
     for (let i = 0; i < events.length; i++) {
       const e = events[i];
-      if (e.ev === 'out' && e.s === s) { const b = Buffer.from(e.d, 'base64'); phoneOut += b.toString(); unacked += b.length; phoneBytes += b.length; if (e.fresh) freshPaints++; events.splice(i--, 1); }
+      if (e.ev === 'out' && e.s === s) { const b = Buffer.from(e.d, 'base64'); phoneOut += b.toString(); unacked += b.length; phoneBytes += b.length; if (e.fresh) { freshPaints++; lastFresh = { hist: e.hist, older: e.older === true, text: strip(b.toString()) }; } events.splice(i--, 1); }
     }
     if (unacked) { notify('term.ack', { s, n: unacked }); unacked = 0; }
   };
@@ -115,6 +115,7 @@ test('pair, list, stream, type, send, keys — through the relay', { timeout: 12
   const opened = await rpc('term.open', { address });
   s = opened.s;
   assert.deepEqual([opened.cols, opened.rows], [120, 40]);
+  assert.equal(opened.hist, 150, 'the first paint says how much history it brings');
   await until('first paint', () => { pump(); return phoneOut.length > 0; });
 
   // --- Mac types: the phone sees it
@@ -164,6 +165,25 @@ test('pair, list, stream, type, send, keys — through the relay', { timeout: 12
   assert.equal(recs.length, 1, 'the short `clear` is not recorded');
   assert.equal(recs[0].fresh, true);
   assert.ok(recs[0].kb > 64 && recs[0].src === 'mac', JSON.stringify(recs[0]));
+  assert.deepEqual([lastFresh.hist, lastFresh.older], [150, false], 'a reprint paint is not older history');
+  assert.ok(!lastFresh.text.includes('line 19500'), 'the reprint paint brings 150 rows only');
+
+  // --- older history on request (DESIGN.md「往回翻历史」): the view attaches again with twice what the
+  // phone has (at least 600 rows on the relay), as one fresh paint marked `older`.
+  notify('term.more', { s, have: 150 });
+  await until('older history paint', () => { pump(); return freshPaints === 2; }, 15_000);
+  assert.deepEqual([lastFresh.hist, lastFresh.older], [600, true]);
+  assert.ok(lastFresh.text.includes('line 19500'), 'rows the first paint did not have');
+  assert.ok(lastFresh.text.includes('REPRINT_11'), 'and the screen as it is');
+  // The stream still works after the new view took over.
+  notify('term.input', { s, d: 'echo AFTER_MORE_$((6+7))\r' });
+  await until('typing after more', () => { pump(); return strip(phoneOut).includes('AFTER_MORE_13'); });
+  // Asking for no more than the most it gives: nothing comes. The output typed after it comes back
+  // on the same view, so once it is here a paint for that ask would have been too.
+  notify('term.more', { s, have: 5000 });
+  notify('term.input', { s, d: 'echo AT_CAP_$((7+8))\r' });
+  await until('output after the capped ask', () => { pump(); return strip(phoneOut).includes('AT_CAP_15'); });
+  assert.equal(freshPaints, 2, 'at the cap the Mac sends nothing more');
 
   // --- message box path (terminal.send) and keys
   await rpc('term.send', { address, text: 'echo VIA_SEND' });
