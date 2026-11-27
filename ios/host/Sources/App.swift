@@ -7,6 +7,7 @@ import NativeShell
 import QuickLook
 import UIKit
 import UserNotifications
+import WebKit
 
 private final class AppLogger {
   static let shared = AppLogger()
@@ -180,6 +181,20 @@ final class ShellController: UIViewController, QLPreviewControllerDataSource {
   }
 
   override func loadView() { view = app }
+
+  /// The terminal page draws its own selection; the WKWebView's text interaction would add a second
+  /// (DOM) selection with its own Copy/Translate callout. Turn it off on every web view we find.
+  private func disableWebTextInteraction(in view: UIView) {
+    if let web = view as? WKWebView {
+      web.configuration.preferences.isTextInteractionEnabled = false
+    }
+    for sub in view.subviews { disableWebTextInteraction(in: sub) }
+  }
+
+  override func viewDidLayoutSubviews() {
+    super.viewDidLayoutSubviews()
+    disableWebTextInteraction(in: app)
+  }
 
   override func viewDidLoad() {
     super.viewDidLoad()

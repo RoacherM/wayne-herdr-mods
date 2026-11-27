@@ -17,6 +17,9 @@ const html = `<!doctype html><html><head><meta charset="utf-8">
 html,body{margin:0;height:100%;overflow:hidden;-webkit-text-size-adjust:100%;-webkit-touch-callout:none}
 #vp{position:absolute;inset:0;overflow:auto;-webkit-overflow-scrolling:touch;padding:4px 6px;box-sizing:border-box;-webkit-touch-callout:none}
 #host{width:max-content;-webkit-user-select:none;user-select:none}
+/* xterm's accessibility tree re-enables user-select:text; the WebView would then show its own
+   selection and Copy/Translate callout next to ours. Selection here is xterm's, never the DOM's. */
+.xterm .xterm-accessibility-tree{-webkit-user-select:none!important;user-select:none!important;-webkit-touch-callout:none!important}
 /* The terminal has its own selection (xterm) and a system menu via SelectionMenu; the WebView's
    built-in DOM selection would otherwise show a second highlight and its own Copy/Translate menu. */
 #sel-ui{position:fixed;inset:0;pointer-events:none;z-index:20;display:none}
