@@ -411,7 +411,7 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
       stream.core.credit(stream.channel, r.n); // never sent: the phone will not credit them
       logStream(log, peer, 'stream.reprint.drop', { s: stream.id, addr: stream.address, bytes: r.n, ms: Date.now() - r.t0 });
     } else r.held.push(bytes);
-    if (!r.reattaching) {
+    if (!stream.reattaching) {
       clearTimeout(r.timer);
       r.timer = setTimeout(() => endReprint(peer, stream), Math.max(0, Math.min(REPRINT_QUIET_MS, r.t0 + REPRINT_MAX_MS - Date.now())));
     }
@@ -420,7 +420,7 @@ export function createPhones({ state, pairing, push, terminals, voice, files, me
 
   async function endReprint(peer, stream) {
     const r = stream.reprint;
-    if (!r || r.reattaching || stream.stopped) return;
+    if (!r || stream.reattaching || stream.stopped) return;
     clearTimeout(r.timer);
     // To the experience records (DESIGN.md「体验记录」): reprints longer than a screen or so.
     const note = (fresh) => { if (r.n >= REPRINT_NOTE) stream.record({ ev: 'reprint', kb: Math.round(r.n / 1024), fresh, ms: Date.now() - r.t0 }); };

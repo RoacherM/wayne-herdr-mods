@@ -331,7 +331,7 @@ herdr-core（`hc` 0.1.22，2026-11-27 `probe/history.mjs` 实测）能给的：`
 - `node dev/history-smoke.mjs`：真页面（无头 Chrome）+ 真 herdr-core 首屏，手指拖动。后台自己要一次；读到一半时历史到了，同一行还在同一处（`row 2879 → row 2879`）；分成两段到的首屏，两段前后都是同一行（`row 2349`），也不会误判最早；一直往上，要 150 → 600 → 1200 → 2400，到 herdr-core 留的最早一行（`row 0239`）停住，顶上「已到最早」。
 - `test/stream-sync.test.mjs`：重印被丢弃的字节在重新 attach 期间也不会漏到手机；attach 期间旧频道的尺寸通知不会跑到新首屏前面。
 
-评审：2026-11-27 由 gemini-4-carbon-high 独立盲审（`.local/reviews/history/`），四个阻塞问题（分段首屏、重印期间误发请求、旧频道尺寸通知、重印丢弃失效）都按上面改了。
+评审：2026-11-27 由 gemini-4-carbon-high 独立盲审（`.local/reviews/history/`），四个阻塞问题（分段首屏、重印期间误发请求、旧频道尺寸通知、重印丢弃失效）都按上面改了；复审确认全部 FIXED。复审的两条非阻塞提醒也改了：任何 fresh 首屏写入期间都不算读者翻页（`painting` 计数，不只是 older）；`reprint()` 里遗留的 `r.reattaching` 改用 `stream.reattaching`，不会在 attach 期间反复重排结束定时器。
 
 ## 体验记录（2026-11-04）
 

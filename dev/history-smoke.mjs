@@ -135,6 +135,14 @@ try {
   const end = await view();
   check(end.top.includes('row 0001') || end.top.includes('row 0'), `the earliest kept row is reachable (${end.top})`);
   check(end.on && end.label === '已到最早', `the top says 已到最早 (${end.label})`);
+  // A reprint (fresh, not older) clears the buffer: that clear is not the reader scrolling up.
+  // At the bottom there must be no ask at all; (near the top, asking again after a reprint is right.)
+  await send({ t: 'toLatest' });
+  await new Promise((r) => setTimeout(r, 300));
+  const nEnd = (await asks()).length;
+  await send({ t: 'out', d: await paint(150), fresh: true, hist: 150 });
+  await new Promise((r) => setTimeout(r, 400));
+  check((await asks()).length === nEnd, 'a reprint fires no spurious ask');
   console.log('asks:', JSON.stringify(await asks()));
 } finally {
   await browser.close();

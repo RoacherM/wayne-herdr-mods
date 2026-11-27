@@ -486,6 +486,7 @@ let histIdle = 0, histIdleSince = 0, histTimeout = 0;
 // An older-history paint being collected: { parts, promised, keep, timer, since }. keep: rows from
 // the reader's top line to the bottom of the history before it (null: at the bottom).
 let olderBuf = null;
+let painting = 0; // fresh paints being written: their clears fire onScroll, not the reader
 const normalBuffer = () => xterm.buffer.active.type === 'normal';
 const atTop = () => normalBuffer() && xterm.buffer.active.viewportY === 0 && viewport.scrollTop <= 1;
 function histLabel() {
@@ -507,7 +508,7 @@ function histRun(ev) {
 /** Within a screen of the top of the history: time for more. */
 function histNear() {
   // While a paint is written, xterm fires onScroll for the clear itself: not the reader scrolling.
-  if (olderBuf) return;
+  if (olderBuf || painting > 0) return;
   if (normalBuffer() && xterm.buffer.active.viewportY <= xterm.rows) histRun({ type: 'near' });
   else histLabel();
 }
@@ -578,7 +579,9 @@ function writeRaw(bytes, { fresh = false, older = false, promised = null, keep =
   if (info.reason) expectFrame = '';
   finishSyncWatch(bytes.length, hasPaint, info.hasSyncOff, fresh);
   if (!hasPaint && hist.promised && !hist.prefetched) histArmIdle(); // output after the first paint: not quiet yet
+  if (fresh) painting++;
   xterm.write(textStyle(last), () => {
+    if (fresh) painting--;
     if (hasPaint && promised !== null) {
       clearTimeout(histTimeout); histTimeout = 0;
       if (keep !== null && normalBuffer()) xterm.scrollToLine(Math.max(0, xterm.buffer.active.baseY - keep));
